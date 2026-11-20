@@ -31,6 +31,19 @@ ON_RECORD = "on_record"
 #: (``turn_deadline``).
 ATTENDED = "attended"
 
+#: The item key of an automation's notice to the chat it came from (``send_message`` to its
+#: origin), holding the automation's name. A notice is told apart by it, never by its words, so a
+#: message typed to look like one is still her message.
+NOTICE = "notice"
+
+#: How many notices may wait in one chat's queue. A notice past them drops the oldest notice
+#: (``chat_utils.room_for_a_notice``), never a message a person sent, a retry or a report.
+NOTICE_CAP = 50
+
+#: How many messages of any kind may wait in one chat's queue before a notice is refused: it goes
+#: out as a notification instead, and nothing waiting is dropped for it.
+QUEUE_BOUND = 200
+
 
 class ChatQueue:
     """The queue helpers of a chat session, over the session's own ``_queue``."""
@@ -54,6 +67,7 @@ class ChatQueue:
         message_id: str = "",
         receipt: Mapping[str, Any] | None = None,
         from_a_widget: bool = False,
+        notice: str = "",
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -72,6 +86,7 @@ class ChatQueue:
         door gave none), and ``receipt`` what its send was answered (``chat_intake.RECEIPT``).
         ``from_a_widget`` says it came from a widget (``own_words.WIDGET_ACTION``): the page is
         told, so its Edit gives it back still marked, and the row it runs as keeps the marker.
+        ``notice`` names the automation whose notice it is (:data:`NOTICE`).
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
@@ -94,6 +109,8 @@ class ChatQueue:
             item[ATTENDED] = True
         if from_a_widget:
             item[WIDGET_ACTION] = True
+        if notice:
+            item[NOTICE] = notice
         self._queue.append(item)
         return qid
 

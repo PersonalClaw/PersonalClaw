@@ -155,7 +155,8 @@ class Intake:
     ``shown`` when it shows other words than run (a channel's message, masked). ``source`` is where
     the message came from, ``channel`` the chat channel that already shows it, ``files`` what it
     carries, ``asked_for_by`` who asked for the work it reports on, and ``attended`` says the owner
-    typed it where they are (``chat_queue``): each kept on the queue item, when it waits. A door
+    typed it where they are (``chat_queue``), and ``notice`` names the automation whose notice it
+    is (``chat_queue.NOTICE``): each kept on the queue item, when it waits. A door
     whose message starts its turn whatever runs (``starts``: plan mode's next turn) is never
     queued."""
 
@@ -177,6 +178,7 @@ class Intake:
     files: Sequence[str] = ()
     asked_for_by: Mapping[str, str] | None = None
     attended: bool = False
+    notice: str = ""
     starts: bool = False
 
     @classmethod
@@ -362,6 +364,7 @@ def _take(state: DashboardState, session: _ChatSession, intake: Intake) -> Recei
             message_id=intake.message_id,
             receipt={**noted, "disposition": disposition},
             from_a_widget=came_from_a_widget(intake.meta),
+            notice=intake.notice,
         )
     receipt = Receipt(session.key, intake.message_id, accepted_at, disposition, into)
     _taken(session)[intake.message_id] = _Taken(intake.body_digest, receipt)
