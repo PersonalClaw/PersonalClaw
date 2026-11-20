@@ -94,6 +94,7 @@ describe('a server that asks for a sign-in', () => {
     await mount()
     expect(screen.getByText('sign-in needed')).toBeInTheDocument()
     expect(screen.getByText(/asks you to sign in before its tools can be used/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign out of linear' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
     // The tab opened in the click itself, before the gateway answered, and is cut off from this page.
@@ -120,6 +121,9 @@ describe('a server that asks for a sign-in', () => {
     await mount()
     expect(screen.getByText(/You are signed out of/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sign in again' })).toBeInTheDocument()
+    // The sign-in is still stored (its client among it), so it can be signed out of: the one way
+    // to drop what it keeps by hand.
+    expect(screen.getByRole('button', { name: 'Sign out of linear' })).toBeInTheDocument()
   })
 
   it('asks for the app to register when the authorization server will not register PersonalClaw', async () => {

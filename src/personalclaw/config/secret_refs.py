@@ -1259,6 +1259,43 @@ def remove_mcp_sign_in(server: str) -> bool:
     return removed
 
 
+#: The sign-in's keys that name its client: the app the authorization server issues tokens to.
+_MCP_SIGN_IN_CLIENT = ("clientId", "clientSecret", "tokenAuthMethod")
+#: Set on a sign-in whose client ID the owner typed and its authorization server stopped accepting.
+MCP_SIGN_IN_CLIENT_REFUSED = "clientRefused"
+
+
+def refuse_mcp_sign_in_client(server: str, client_id: str) -> bool:
+    """Record that server ``server``'s authorization server no longer knows the client its sign-in
+    names (``invalid_client``), in both documents, through :func:`write_mcp_document`.
+
+    A registration PersonalClaw made is dropped, its client secret with it (the write deletes the
+    value it no longer references), so the next sign-in registers again. A client ID the owner
+    typed is kept and marked :data:`MCP_SIGN_IN_CLIENT_REFUSED`, so the next sign-in asks for a
+    new one rather than sending it again. Only a sign-in that still names ``client_id`` is
+    changed: one a newer sign-in replaced is left as it is. True when either document changed.
+
+    A read, then a write: the caller holds ``mcp.lock``, the lock the dashboard edits the
+    documents under (``mcp_oauth.drop_refused_client``), so neither writes back a document the
+    other has just changed."""
+    changed = False
+    for path in mcp_documents():
+        doc = _read_json(path)
+        servers = doc.get("mcpServers") if isinstance(doc, dict) else None
+        spec = servers.get(server) if isinstance(servers, dict) else None
+        grant = spec.get(MCP_SIGN_IN) if isinstance(spec, dict) else None
+        if not isinstance(grant, dict) or not client_id or grant.get("clientId") != client_id:
+            continue
+        if grant.get("registered"):
+            for key in _MCP_SIGN_IN_CLIENT:
+                grant.pop(key, None)
+        else:
+            grant[MCP_SIGN_IN_CLIENT_REFUSED] = True
+        write_mcp_document(path, doc)
+        changed = True
+    return changed
+
+
 def foreign_mcp_spec(server: str, spec: Mapping[str, Any], *, with_secrets: bool) -> dict[str, Any]:
     """Server ``server``'s spec for ANOTHER tool's config file (Claude Code's), which cannot
     read this store.

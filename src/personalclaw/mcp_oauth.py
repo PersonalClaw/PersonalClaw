@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import ipaddress
 import json
@@ -57,14 +58,14 @@ import re
 import secrets
 import time
 import weakref
-from collections.abc import AsyncGenerator, Generator, Mapping
+from collections.abc import AsyncGenerator, Generator, Iterator, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import httpx
 
-from personalclaw.config.secret_refs import MCP_SIGN_IN
+from personalclaw.config.secret_refs import MCP_SIGN_IN, MCP_SIGN_IN_CLIENT_REFUSED
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,9 @@ _CLIENT_NAME = "PersonalClaw"
 #: Token-endpoint answers that mean the grant itself is no longer good. Anything else a renewal
 #: meets (the network, a 5xx) is the world's condition and leaves the tokens where they are.
 _GRANT_ENDED_STATUSES = frozenset({400, 401})
+#: The token endpoint's error for a client it does not know (RFC 6749 §5.2): a registration it has
+#: forgotten, or a client ID it no longer accepts.
+_CLIENT_UNKNOWN = "invalid_client"
 
 
 class SignInRequired(Exception):
@@ -749,11 +753,94 @@ def _say_signed_out(server: str) -> str:
     return f"You are signed out of {server}. Sign in again on the Tools page."
 
 
-def _say_ended(server: str, reason: str) -> str:
-    return f"Your sign-in to {server} has ended: {reason}. Sign in again on the Tools page."
+#: What to do once a sign-in has ended, as its words say it.
+_SIGN_IN_AGAIN = "Sign in again on the Tools page."
 
 
-def _end_sign_in(server: str, reason: str) -> None:
+def _say_ended(server: str, reason: str, next_step: str = _SIGN_IN_AGAIN) -> str:
+    return f"Your sign-in to {server} has ended: {reason}. {next_step}"
+
+
+def _forgot_client(issuer: str, client: _Client) -> tuple[str, str]:
+    """Why a sign-in whose client the authorization server does not know ended, and what will work
+    next: a registration PersonalClaw made is made again; a client ID the owner typed needs a new
+    one, since sending it again cannot succeed."""
+    if client.registered:
+        return (
+            f"{_host(issuer)} no longer knows PersonalClaw's registration",
+            "Sign in again on the Tools page: signing in registers PersonalClaw again.",
+        )
+    return (
+        f"{_host(issuer)} no longer accepts the client ID you entered",
+        "Sign in on the Tools page with a new client ID.",
+    )
+
+
+#: How long :func:`drop_refused_client` waits for ``mcp.lock`` before it writes nothing.
+_MCP_LOCK_WAIT_SECS = 5.0
+
+
+@contextlib.contextmanager
+def _mcp_file_lock(wait: float) -> Iterator[bool]:
+    """``mcp.lock``, the lock the dashboard's MCP routes edit ``mcp.json`` under
+    (``dashboard.handlers.mcp._McpFileLock``), held for the block: ``True`` once it is, ``False``
+    when another holder kept it past *wait* seconds. Never waits longer: a caller that holds it
+    while a call of its own renews a sign-in must not wait on itself."""
+    import fcntl
+
+    from personalclaw.config.secret_refs import mcp_documents
+    from personalclaw.durability.home_paths import open_lock
+
+    path = mcp_documents()[0].with_suffix(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = open_lock(path)
+    try:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(0.05)
+        try:
+            yield True
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        fd.close()
+
+
+def drop_refused_client(server: str, client_id: str) -> bool:
+    """Stop server ``server``'s sign-in naming the client its authorization server refused
+    (``secret_refs.refuse_mcp_sign_in_client``), under ``mcp.lock`` as the dashboard's edits are.
+    A lock held past :data:`_MCP_LOCK_WAIT_SECS` writes nothing: the sign-in has ended anyway, and
+    its next renewal finds the client refused again. True when a document changed."""
+    from personalclaw.config.secret_refs import refuse_mcp_sign_in_client
+
+    with _mcp_file_lock(_MCP_LOCK_WAIT_SECS) as held:
+        if not held:
+            logger.warning(
+                "MCP server %r: mcp.lock was held past %ss; the refused client is still named",
+                server,
+                _MCP_LOCK_WAIT_SECS,
+            )
+            return False
+        return refuse_mcp_sign_in_client(server, client_id)
+
+
+def _client_refused(server: str, client: _Client) -> None:
+    """The authorization server answered ``invalid_client``: the sign-in stops naming the client
+    (:func:`drop_refused_client`), so the next sign-in does not send it again."""
+    try:
+        drop_refused_client(server, client.id)
+    except Exception:  # noqa: BLE001 — the sign-in still ends; the next one finds out again
+        logger.warning("could not drop the client the sign-in to %r names", server, exc_info=True)
+
+
+def _end_sign_in(server: str, reason: str, next_step: str = _SIGN_IN_AGAIN) -> None:
     """A grant the authorization server no longer honours: its tokens are deleted (they cannot be
     used, and must not be sent again), the security log records it, and the owner is told."""
     from personalclaw.config.credentials import delete_credential
@@ -770,7 +857,7 @@ def _end_sign_in(server: str, reason: str) -> None:
             state.notify(
                 notification_kinds.WARNING,
                 f"Sign in to {server} again",
-                f"{_say_ended(server, reason)} Its tools cannot be used until you do.",
+                f"{_say_ended(server, reason, next_step)} Its tools cannot be used until you do.",
                 meta={"event": "mcp.sign_in_ended", "server": server},
             )
     except Exception:  # noqa: BLE001 — the Tools page and the failed call still say it
@@ -789,6 +876,8 @@ class _Pending:
     redirect_uri: str
     verifier: str
     started: float
+    #: The client is the one the server's sign-in already held, sent again.
+    reused: bool = False
 
 
 _PENDING: dict[str, _Pending] = {}
@@ -813,6 +902,13 @@ def _take(state: str) -> _Pending | None:
     return _PENDING.pop(state, None) if state else None
 
 
+def _reuse_unanswered(server: str) -> bool:
+    """Whether a sign-in to ``server`` that sent its stored registration again is still waiting for
+    the browser to come back, within the time a sign-in may take."""
+    _forget_stale(time.time())
+    return any(p.server == server and p.reused and p.client.registered for p in _PENDING.values())
+
+
 def _pkce() -> tuple[str, str]:
     """A PKCE verifier (RFC 7636: 43-128 unreserved characters; 86 here) and its S256 challenge."""
     verifier = secrets.token_urlsafe(64)
@@ -832,6 +928,12 @@ async def start_sign_in(
 
     ``client_id`` (and ``client_secret``) is an app the owner registered themselves; without one, a
     registration this server's sign-in already holds is reused, else PersonalClaw registers itself.
+
+    A stored client is not sent again where it cannot succeed: a client ID the owner typed that its
+    authorization server refused (``clientRefused``) asks for a new one, and a registration that a
+    sign-in still waiting had already sent is made again. An authorization server that does not
+    know a client shows its own error page and never sends the browser back, so a second Sign in
+    while the first still waits is the only sign PersonalClaw gets of it.
     """
     from personalclaw.config.secret_refs import ForeignSecretReference, resolve_mcp_values
     from personalclaw.mcp_discovery import mcp_transport
@@ -853,14 +955,28 @@ async def start_sign_in(
 
     earlier = spec.get(MCP_SIGN_IN)
     earlier = earlier if isinstance(earlier, Mapping) else {}
-    if client_id:
-        client = _typed_client(client_id, client_secret, found)
-    elif (
+    stored = bool(
         earlier.get("clientId")
         and _issuers_match(str(earlier.get("issuer") or ""), found.issuer)
         and earlier.get("redirectUri") == redirect_uri
+    )
+    reused = False
+    if client_id:
+        client = _typed_client(client_id, client_secret, found)
+    elif stored and not earlier.get("registered") and earlier.get(MCP_SIGN_IN_CLIENT_REFUSED):
+        raise SignInFailed(
+            f"{_host(found.issuer)} no longer accepts the client ID you entered for {server}. "
+            f"Register an app there with the redirect URL {redirect_uri}, then enter its client "
+            "ID.",
+            code="mcp_sign_in_needs_client_id",
+            status=400,
+            extra={"detail": {"redirectUri": redirect_uri, "issuer": found.issuer}},
+        )
+    elif stored and not (
+        earlier.get("registered") and found.registration_endpoint and _reuse_unanswered(server)
     ):
         client = _grant_client(server, earlier)
+        reused = True
     elif found.registration_endpoint:
         client = await _register(server, url, found, redirect_uri)
     else:
@@ -876,7 +992,9 @@ async def start_sign_in(
     state = secrets.token_urlsafe(32)
     _remember(
         state,
-        _Pending(server, url, found, client, redirect_uri, verifier, started=time.time()),
+        _Pending(
+            server, url, found, client, redirect_uri, verifier, started=time.time(), reused=reused
+        ),
     )
     query = {
         "response_type": "code",
@@ -966,6 +1084,13 @@ async def finish_sign_in(params: Mapping[str, str]) -> FinishedSignIn:
         )
     except _TokenRefused as exc:
         _audit(server, "mcp_sign_in", "refused", str(exc), caller="dashboard")
+        if exc.error == _CLIENT_UNKNOWN and (pending.reused or not pending.client.registered):
+            # The client is one the server's sign-in stores, or one the owner just typed: either
+            # way, sending it again cannot succeed.
+            if pending.reused:
+                await asyncio.to_thread(_client_refused, server, pending.client)
+            why, next_step = _forgot_client(found.issuer, pending.client)
+            raise SignInFailed(f"{why}, so it would not finish the sign-in. {next_step}") from exc
         raise SignInFailed(f"{_host(found.issuer)} would not finish the sign-in: {exc}.") from exc
 
     _keep(_tokens_key(server), tokens.to_json())
@@ -1117,9 +1242,14 @@ class _SignedInAuth(httpx.Auth):
                         f"{_host(issuer)} could not renew the sign-in to {self._server} right now "
                         f"({exc}); PersonalClaw will try again on the next call."
                     ) from exc
-                reason = f"{_host(issuer)} refused to renew it ({exc.error or exc})"
-                await asyncio.to_thread(_end_sign_in, self._server, reason)
-                raise SignInRequired(_say_ended(self._server, reason)) from exc
+                if exc.error == _CLIENT_UNKNOWN:
+                    await asyncio.to_thread(_client_refused, self._server, client)
+                    reason, next_step = _forgot_client(issuer, client)
+                else:
+                    reason = f"{_host(issuer)} refused to renew it ({exc.error or exc})"
+                    next_step = _SIGN_IN_AGAIN
+                await asyncio.to_thread(_end_sign_in, self._server, reason, next_step)
+                raise SignInRequired(_say_ended(self._server, reason, next_step)) from exc
             except SignInFailed as exc:
                 raise RuntimeError(
                     f"PersonalClaw could not renew the sign-in to {self._server} right now: {exc}"

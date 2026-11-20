@@ -52,8 +52,8 @@ MCP_SIGN_IN = "signIn"
 
 # The resource server and its authorization server, in one uvicorn process. Its state (clients,
 # codes, tokens) lives in memory; a CONTROL file it re-reads on every request lets a test switch
-# dynamic registration off, revoke a token, or refuse every refresh; an EVENTS file logs what it
-# saw.
+# dynamic registration off, revoke a token, refuse every refresh, or forget clients it knew; an
+# EVENTS file logs what it saw.
 _FAKE_SERVER = textwrap.dedent("""
     import base64, hashlib, json, os, secrets, socket, sys, time
     from urllib.parse import urlencode
@@ -102,6 +102,8 @@ _FAKE_SERVER = textwrap.dedent("""
         for pre in c.get("preregistered", []):
             clients.setdefault(pre["client_id"], {"redirect_uris": pre["redirect_uris"],
                                                   "secret": pre.get("secret")})
+        for gone in c.get("forgotten", []):
+            clients.pop(gone, None)
         issuer = BASE + "/auth"
         if path == "/.well-known/oauth-protected-resource" + MCP_PATH:
             resp = JSONResponse({"resource": BASE + MCP_PATH, "authorization_servers": [issuer],
@@ -795,3 +797,215 @@ def test_the_callback_is_reachable_without_a_session_and_nothing_else_of_it_is()
 
     assert "/api/mcp/oauth/callback" in _BYPASS_EXACT
     assert not any(p.startswith("/api/mcp/servers") for p in _BYPASS_EXACT)
+
+
+# ── a client the authorization server has forgotten ────────────────────────
+
+
+def _block(home: Path) -> dict:
+    return _servers(home / "mcp.json")[NAME][MCP_SIGN_IN]
+
+
+def _query(authorization_url: str) -> dict[str, str]:
+    return {k: v[0] for k, v in parse_qs(urlsplit(authorization_url).query).items()}
+
+
+def test_a_registration_the_server_forgot_is_made_again_at_the_next_sign_in(
+    home, http_remote
+) -> None:
+    """🔴 Red before: a renewal answered ``invalid_client`` ended the sign-in and kept the dead
+    registration, and every later Sign in sent it again, so signing in could never succeed."""
+    _add(home, http_remote)
+
+    async def scenario(gw: Gateway) -> None:
+        first = _query(await gw.sign_in())["client_id"]
+        http_remote.control(forgotten=[first])
+        _set_expiry(home, time.time() - 5)
+
+        ok, said = await _say_hello()
+        assert not ok and "no longer knows PersonalClaw's registration" in said, said
+        assert "registers PersonalClaw again" in said, said
+        for doc in (home / "mcp.json", home / "agents" / "personalclaw.json"):
+            grant = _servers(doc)[NAME][MCP_SIGN_IN]
+            assert not {"clientId", "clientSecret", "tokenAuthMethod"} & set(grant), (doc, grant)
+        assert _owned_sign_in_keys() == set(), "the dead sign-in's values were kept"
+        assert (await gw.row())["auth"] == {"method": "oauth", "state": "signed_out"}
+
+        http_remote.forget()
+        second = _query(await gw.sign_in())["client_id"]
+        registered = http_remote.events("register")
+        assert [r["client_id"] for r in registered] == [second] and second != first, registered
+        assert _block(home)["clientId"] == second
+        assert await _say_hello() == (True, "hello claw")
+
+    _drive(scenario)
+
+
+def test_a_typed_client_id_the_server_stopped_accepting_is_kept_and_a_new_one_asked_for(
+    home, http_remote
+) -> None:
+    """A client ID the owner typed is never dropped silently: the sign-in keeps it, says the
+    authorization server no longer accepts it, and the next Sign in asks for a new one."""
+    _add(home, http_remote)
+    http_remote.control(dcr=False)
+
+    async def scenario(gw: Gateway) -> None:
+        redirect = gw.origin + "/api/mcp/oauth/callback"
+        old = {"client_id": "typed-old", "redirect_uris": [redirect]}
+        http_remote.control(preregistered=[old])
+        await gw.sign_in(clientId="typed-old")
+        http_remote.control(preregistered=[], forgotten=["typed-old"])
+        _set_expiry(home, time.time() - 5)
+
+        ok, said = await _say_hello()
+        assert not ok and "no longer accepts the client ID you entered" in said, said
+        assert "new client ID" in said and "Sign in again" not in said, said
+        grant = _block(home)
+        assert grant["clientId"] == "typed-old" and grant["clientRefused"] is True, grant
+
+        http_remote.forget()
+        status, refused = await gw.start()
+        assert status == 400, refused
+        error = refused["error"]
+        assert error["code"] == "mcp_sign_in_needs_client_id", error
+        assert "no longer accepts the client ID you entered" in error["message"], error
+        assert http_remote.events("authorize") == [], "the refused client ID was sent again"
+
+        http_remote.control(preregistered=[{"client_id": "typed-new", "redirect_uris": [redirect]}])
+        await gw.sign_in(clientId="typed-new")
+        grant = _block(home)
+        assert grant["clientId"] == "typed-new" and "clientRefused" not in grant, grant
+        assert await _say_hello() == (True, "hello claw")
+
+    _drive(scenario)
+
+
+def test_a_stored_registration_refused_at_the_code_exchange_is_made_again_next_time(
+    home, http_remote
+) -> None:
+    """The authorization server let the browser back, then refused the code for a registration
+    it had forgotten meanwhile: the sign-in stops naming it, and the next one registers."""
+    _add(home, http_remote)
+
+    async def scenario(gw: Gateway) -> None:
+        first = _query(await gw.sign_in())["client_id"]
+        status, started = await gw.start()
+        assert status == 200 and _query(started["authorizationUrl"])["client_id"] == first
+        async with httpx.AsyncClient(follow_redirects=False, timeout=30) as browser:
+            answer = await browser.get(started["authorizationUrl"])
+            assert answer.status_code == 302, answer.text
+            http_remote.control(forgotten=[first])
+            page = await browser.get(answer.headers["location"])
+        await gw.settle()
+        assert page.status_code == 502 and "registers PersonalClaw again" in page.text, page.text
+        assert "clientId" not in _block(home), _block(home)
+
+        http_remote.forget()
+        second = _query(await gw.sign_in())["client_id"]
+        assert [r["client_id"] for r in http_remote.events("register")] == [second]
+        assert await _say_hello() == (True, "hello claw")
+
+    _drive(scenario)
+
+
+def test_a_second_sign_in_while_a_reused_registration_never_came_back_registers_again(
+    home, http_remote
+) -> None:
+    """An authorization server that does not know a client shows its own error page and never
+    sends the browser back, so PersonalClaw never hears it. A Sign in while the one that sent the
+    stored registration still waits registers afresh rather than sending it a third time."""
+    _add(home, http_remote)
+
+    async def scenario(gw: Gateway) -> None:
+        first = _query(await gw.sign_in())["client_id"]
+        http_remote.control(forgotten=[first])
+        http_remote.forget()
+        status, started = await gw.start()
+        assert status == 200 and _query(started["authorizationUrl"])["client_id"] == first
+        async with httpx.AsyncClient(follow_redirects=False, timeout=30) as browser:
+            stuck = await browser.get(started["authorizationUrl"])
+        assert stuck.status_code == 400 and "unknown client" in stuck.text, stuck.text
+        assert http_remote.events("register") == []
+
+        second = _query(await gw.sign_in())["client_id"]
+        assert second != first
+        assert [r["client_id"] for r in http_remote.events("register")] == [second]
+        assert await _say_hello() == (True, "hello claw")
+
+    _drive(scenario)
+
+
+def _signed_in_with(home: Path, client_id: str) -> Path:
+    """A server whose sign-in names the registration ``client_id``, in both documents; the lock
+    the dashboard edits them under."""
+    grant = {
+        "issuer": "https://auth.invalid",
+        "clientId": client_id,
+        "tokenAuthMethod": "none",
+        "registered": True,
+        "redirectUri": "http://127.0.0.1:1/api/mcp/oauth/callback",
+    }
+    for doc in (home / "mcp.json", home / "agents" / "personalclaw.json"):
+        servers = {NAME: {"type": "http", "url": "https://mcp.invalid/mcp", MCP_SIGN_IN: grant}}
+        write_mcp_document(doc, {"mcpServers": servers})
+    return (home / "mcp.json").with_suffix(".lock")
+
+
+def test_a_refused_client_is_dropped_under_the_lock_the_dashboard_edits_mcp_json_under(
+    home, monkeypatch
+) -> None:
+    """The drop reads and writes the documents under ``mcp.lock``, so it never writes back a
+    document a dashboard edit has just changed (a server the owner had just removed, say)."""
+    import fcntl
+
+    from personalclaw import mcp_oauth
+    from personalclaw.config import secret_refs
+    from personalclaw.durability.home_paths import open_lock
+
+    lock = _signed_in_with(home, "dcr-gone")
+    real, held = secret_refs.write_mcp_document, []
+
+    def _write(path, data):
+        probe = open_lock(lock)  # a second holder, as the dashboard's edit is
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            held.append(True)
+        else:
+            held.append(False)
+            fcntl.flock(probe, fcntl.LOCK_UN)
+        finally:
+            probe.close()
+        real(path, data)
+
+    monkeypatch.setattr(secret_refs, "write_mcp_document", _write)
+    assert mcp_oauth.drop_refused_client(NAME, "dcr-gone") is True
+    assert held == [True, True], "a document was written with mcp.lock free"
+    assert "clientId" not in _block(home)
+
+
+def test_a_refused_client_waits_only_so_long_for_a_lock_held_elsewhere(
+    home, monkeypatch, caplog
+) -> None:
+    """A holder that keeps ``mcp.lock`` (one whose own call renewed the sign-in, say) is not waited
+    on for ever: the drop gives up, writes nothing and says so, and the next renewal tries again."""
+    import fcntl
+    import logging
+
+    from personalclaw import mcp_oauth
+    from personalclaw.durability.home_paths import open_lock
+
+    lock = _signed_in_with(home, "dcr-gone")
+    monkeypatch.setattr(mcp_oauth, "_MCP_LOCK_WAIT_SECS", 0.3)
+    holder = open_lock(lock)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    try:
+        began = time.monotonic()
+        with caplog.at_level(logging.WARNING, logger="personalclaw.mcp_oauth"):
+            assert mcp_oauth.drop_refused_client(NAME, "dcr-gone") is False
+        assert time.monotonic() - began < 5, "it waited past its bound"
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        holder.close()
+    assert _block(home)["clientId"] == "dcr-gone"
+    assert "mcp.lock was held" in caplog.text

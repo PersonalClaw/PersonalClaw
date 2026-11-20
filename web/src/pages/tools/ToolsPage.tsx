@@ -828,7 +828,9 @@ function GroupBlock({ g, openName, onOpen, onToggleServer, onEditServer, onRemov
                 <ShieldCheck size={13} />
               </SquareIconButton>
             )}
-            {signInState === 'signed_in' && (
+            {/* Whenever a sign-in is stored, signed out of included: Sign out is the one way to drop
+                what it keeps by hand, the client its authorization server may have forgotten too. */}
+            {(signInState === 'signed_in' || signInState === 'signed_out') && (
               <SquareIconButton icon={LogOut} iconSize={13} label={`Sign out of ${g.server.name}`}
                 title="Sign out: PersonalClaw deletes the tokens it holds for this server" onClick={() => onSignOut(g.server!)} />
             )}
