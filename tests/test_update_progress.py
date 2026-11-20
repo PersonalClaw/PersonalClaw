@@ -780,13 +780,14 @@ class TestReexecPreservesAuthMode:
     @staticmethod
     def _requested(monkeypatch, tmp_path, **kwargs):
         import asyncio
+        import os
 
         import personalclaw.dashboard.handlers.updates as U
         from personalclaw import restart_request, shutdown_event
 
         state = _make_state(monkeypatch, tmp_path)
-        monkeypatch.setattr(U.os.path, "isfile", lambda p: True)
-        monkeypatch.setattr(U.os, "access", lambda p, m: True)
+        monkeypatch.setattr(os.path, "isfile", lambda p: True)
+        monkeypatch.setattr(os, "access", lambda p, m: True)
         monkeypatch.setattr(restart_request, "_pending", None)
         try:
             asyncio.run(U._graceful_reexec(state, **kwargs))

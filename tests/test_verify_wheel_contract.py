@@ -344,7 +344,8 @@ def test_the_build_backend_is_the_setuptools_the_lock_resolves() -> None:
 def _inspectable_project(tmp_path: Path) -> Path:
     """A small package built by this repository's ``setup.py``, ``MANIFEST.in`` and
     package-data reader, with every kind of member the inspection derives: a module, a
-    package-data file, a bundled app, the dashboard, the entry point and the licence."""
+    package-data file, a bundled app, the dashboard, the changelog, the entry point and the
+    licence."""
     project = tmp_path / "project"
     package = project / "src" / "personalclaw"
     app = package / "apps" / "native" / "demo"
@@ -366,6 +367,7 @@ def _inspectable_project(tmp_path: Path) -> Path:
     shutil.copy2(_REPO_ROOT / "MANIFEST.in", project)
     (project / "LICENSE").write_text("MIT License\n", encoding="utf-8")
     (project / "README.md").write_text("# Fixture\n", encoding="utf-8")
+    (project / "CHANGELOG.md").write_text("# Changelog\n\n## [0.0.1]\n", encoding="utf-8")
     (project / "pyproject.toml").write_text(
         """
 [build-system]
@@ -483,6 +485,37 @@ def test_the_inspection_passes_a_real_distribution_and_fails_a_broken_one(
     with pytest.raises(SystemExit):
         verify_wheel._assert_versions(Path(sys.executable), {wheel.name: version}, root=project)
     assert "is not pyproject.toml's version" in capsys.readouterr().err
+    pyproject.write_text(declared, encoding="utf-8")
+
+
+def test_every_distribution_carries_the_changelog_the_updates_panel_reads(
+    verify_wheel, tmp_path, capsys
+) -> None:
+    """🔴 Red before: no distribution carried ``CHANGELOG.md``, so the Updates panel of every
+    install but a checkout said "No changelog available.". The wheel carries the root file inside
+    the package, the sdist carries it at its root so a wheel built from it does too, and the
+    inspection refuses either without it."""
+    project = _inspectable_project(tmp_path)
+    sdist = _backend(project, "build_sdist", tmp_path / "sdist")
+    wheel = _backend(project, "build_wheel", tmp_path / "wheel")
+
+    with zipfile.ZipFile(wheel) as archive:
+        assert archive.read("personalclaw/CHANGELOG.md") == (project / "CHANGELOG.md").read_bytes()
+    with tarfile.open(sdist) as archive:
+        assert any(name.endswith("/CHANGELOG.md") for name in archive.getnames())
+
+    without = tmp_path / "without.whl"
+    _rewrite_wheel(wheel, without, drop="personalclaw/CHANGELOG.md")
+    with pytest.raises(SystemExit):
+        verify_wheel.inspect_wheel(without, root=project)
+    assert "personalclaw/CHANGELOG.md" in capsys.readouterr().err
+
+    (project / "CHANGELOG.md").rename(tmp_path / "moved-CHANGELOG.md")
+    bare = _backend(project, "build_sdist", tmp_path / "bare")
+    (tmp_path / "moved-CHANGELOG.md").rename(project / "CHANGELOG.md")
+    with pytest.raises(SystemExit):
+        verify_wheel.inspect_sdist(bare, root=project)
+    assert "CHANGELOG.md" in capsys.readouterr().err
 
 
 # ── A relative --wheel reaches every process that opens it ────────────────────

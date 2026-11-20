@@ -119,9 +119,15 @@ class TestDataFilesReachTheBundle:
         """
         assert manifest.undeclared_package_files(_REPO_ROOT) == []
 
-    def test_the_spa_is_carried_when_built(self, manifest):
-        """`web/dist` is the one entry not derived from pyproject, so it needs its own rail."""
-        assert manifest.EXTRA_DATAS == (("web/dist", "personalclaw/static/dist"),)
+    def test_the_spa_and_the_changelog_are_carried(self, manifest):
+        """`web/dist` and the root files the package carries (the changelog the Updates panel
+        reads) are the entries not derived from pyproject, so they need their own rail. The
+        changelog goes into the package folder, as the wheel carries it (`setup.py`)."""
+        assert manifest.EXTRA_DATAS == (
+            ("web/dist", "personalclaw/static/dist"),
+            ("CHANGELOG.md", "personalclaw"),
+        )
+        assert ("CHANGELOG.md", "personalclaw") in manifest.bundle_datas(_REPO_ROOT)
         if (_REPO_ROOT / "web" / "dist").exists():
             assert ("web/dist", "personalclaw/static/dist") in manifest.bundle_datas(_REPO_ROOT)
 

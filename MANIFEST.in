@@ -9,6 +9,10 @@
 # web/dist is a gitignored build artifact; `make build` builds it first.
 graft web/dist
 
+# The changelog, which setup.py's BuildWithWeb copies into the package for the in-app Updates
+# panel: the wheel built from the sdist can carry only what the sdist does.
+include CHANGELOG.md
+
 # Keep the sdist lean: no editor/OS cruft or compiled caches.
 global-exclude *.py[cod]
 global-exclude .DS_Store

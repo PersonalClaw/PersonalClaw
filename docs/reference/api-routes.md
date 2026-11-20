@@ -294,7 +294,7 @@ The 969 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/browse/kill/release` | re-enable unattended browsing. |
 | `GET` | `/api/browse/status` | the mirror's read model: kill state, expired sites, pending grants. |
 | `GET` | `/api/buddy/policy` | the buddy's effective policy now (``buddy_policy.policy``). |
-| `GET` | `/api/changelog` | read full CHANGELOG.md from project. |
+| `GET` | `/api/changelog` | the changelog of the release this install runs. |
 | `POST` | `/api/channel/profile` | read the owner's profile on the channel whose owner id it is. |
 | `POST` | `/api/channel/upload-file` | upload a file to the active channel (internal, called by notify_attachment). |
 | `GET` | `/api/channels` | all comms transports with info + health. |

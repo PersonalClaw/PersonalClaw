@@ -134,6 +134,13 @@ The same test also requires `package-lock.json`'s record of the desktop workspac
 check it. From the repo root, `npm install --package-lock-only --ignore-scripts` moves
 exactly that line.
 
+Every distribution carries `CHANGELOG.md` inside the package as the tagged tree has it
+(`setup.py` `BuildWithWeb`, the image's builder stage, the desktop bundle's data), and
+Settings › Updates shows it on an install that runs from no checkout. So what the bump leaves in
+the file is what every install of the release shows: its `## [X.Y.Z]` section, and the
+`## [Unreleased]` heading above it, empty. `scripts/verify_wheel.py` fails a wheel or an sdist
+without the file.
+
 **Four more files move on every bump, and this gate reads none of them:**
 
 | File | What moves | What fails without it |

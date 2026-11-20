@@ -7,6 +7,7 @@ hold to.
 
 from __future__ import annotations
 
+import ast
 import glob
 import os
 import tomllib
@@ -41,6 +42,19 @@ class TestDataFilesReachTheBundle:
         missing = sorted(declared - carried)
         assert not missing, f"declared for the wheel but not carried into the bundle: {missing}"
         assert not sorted(carried - declared), "the bundle carries package data pyproject omits"
+
+    def test_setup_py_packages_the_root_files_the_bundle_carries(self, manifest):
+        """The wheel (`setup.py`) and the desktop bundle (this manifest) carry the same root files:
+        setup.py can't import this module, since the sdist a wheel is built from has no
+        `scripts/`."""
+        tree = ast.parse((_REPO_ROOT / "setup.py").read_text(encoding="utf-8"))
+        declared = next(
+            node.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(getattr(t, "id", "") == "PACKAGED_ROOT_FILES" for t in node.targets)
+        )
+        assert ast.literal_eval(declared) == manifest.PACKAGED_ROOT_FILES
 
 
 class TestTheSpecActuallyUsesTheDerivation:

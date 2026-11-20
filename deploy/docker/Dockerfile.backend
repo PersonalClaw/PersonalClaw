@@ -103,7 +103,9 @@ RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build --workspace=web
 FROM deps AS builder
 
 COPY src/ ./src/
-COPY pyproject.toml setup.py ./
+# CHANGELOG.md: setup.py's BuildWithWeb copies it into the installed package, where the in-app
+# Updates panel reads it.
+COPY pyproject.toml setup.py CHANGELOG.md ./
 # At the FIRST path setup.py's BuildWithWeb._find_web_dist looks in (<root>/web/dist),
 # and before the install below — build_py copies it into the installed package as
 # personalclaw/static/dist, which is where frontend.py resolves the SPA from.

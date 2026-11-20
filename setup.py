@@ -22,14 +22,31 @@ for _fallback in ("", "C.UTF-8", "C"):
 from setuptools import setup  # noqa: E402
 from setuptools.command.build_py import build_py  # noqa: E402
 
+#: The root files every distribution carries inside the package, as the same name: the in-app
+#: Updates panel reads the changelog from the package when it runs from no checkout
+#: (``dashboard/handlers/updates.py``). ``scripts/backend_bundle_manifest.py`` names the same files
+#: for the desktop bundle, and ``scripts/verify_wheel.py`` fails a wheel without them.
+PACKAGED_ROOT_FILES = ("CHANGELOG.md",)
+
 
 class BuildWithWeb(build_py):
-    """build_py that copies the web ``dist/`` into the package static dir."""
+    """build_py that copies the web ``dist/`` into the package static dir, and the changelog into
+    the package."""
 
     def run(self) -> None:
         super().run()
         base = os.path.dirname(__file__) or "."
         self._copy_dist(base)
+        self._copy_root_files(base)
+
+    def _copy_root_files(self, base: str) -> None:
+        # A tree without one (a partial copy) still builds; the wheel check is what fails it.
+        package = os.path.join(self.build_lib, "personalclaw")
+        for name in PACKAGED_ROOT_FILES:
+            source = os.path.join(base, name)
+            if os.path.isfile(source):
+                os.makedirs(package, exist_ok=True)
+                shutil.copyfile(source, os.path.join(package, name))
 
     def _copy_dist(self, base: str) -> None:
         # No built dashboard is a supported build, not an error: the apps repo's CI, the
