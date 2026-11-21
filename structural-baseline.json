@@ -275,6 +275,7 @@
       "ocr",
       "path_form",
       "periodic_sweep",
+      "persistence_paths",
       "preference_facets",
       "pricing",
       "private_key_blocks",
