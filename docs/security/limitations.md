@@ -1454,24 +1454,26 @@ agent's "Always allow" and your Approval mode "Auto" answer only what you ask fo
 in a channel that runs its turns itself, and in the work such a turn starts (`approval_grants`, rule
 4). Its calls are asked of you, their card naming who asked, and it searches none of your chats:
 `chat_search` and the inbound door's `sessions_search` answer it with a sentence that names who
-asked.
+asked. It reads none of your memory either, nor does the work it starts (`memory_reads`): its
+context carries none of your saved facts, lessons, standing instructions or earlier conversations,
+`memory_recall` and the other memory tools answer it with a sentence that names who asked, and your
+memory documents are withheld from its file tools and its shell. Nothing is shared with such a turn
+yet, so none of your memory is.
 
 What this does not hold:
 
 - **What a call's tool declares.** A call whose tool declares that it only reads asks nobody, in
-  their turn as in yours: a file read, a memory recall, a list of your tasks, a connector's read of
-  an account of yours. What it finds can be answered into the shared thread.
-- **What the turn is handed.** The turn's context carries your memory as any turn of the chat does
-  (saved facts, lessons, standing instructions, what it recalls of earlier conversations), and
-  `memory_recall` answers it. Only the transcripts of your other chats are withheld.
+  their turn as in yours: a file read outside your memory, a list of your tasks, a connector's read
+  of an account of yours. What it finds can be answered into the shared thread.
+- **What the agent is.** The turn runs as the chat's agent, with that agent's own prompt and skills.
 - **The operator's hook settings and patterns**, which answer their calls as before, and a grant
   given for that one run (§20).
 - **Where the call is asked.** It is asked where the chat's calls are asked: in a shared thread,
   the thread's own prompt, which your colleague sees and only you can answer.
 
 **What this means for you:** a shared thread is a conversation your colleagues have with what the
-agent reads of yours. Connect a shared channel to an agent whose memory and read-only tools you are
-content to have used for them, and answer the calls they ask for yourself.
+agent reads of yours. Connect a shared channel to an agent whose read-only tools you are content to
+have used for them, and answer the calls they ask for yourself.
 
 ## 24. A browser's sign-in, and what still opens without its page
 
