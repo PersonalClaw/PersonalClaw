@@ -496,6 +496,13 @@ chat, channel thread, loop worker, webhook, subagent).
   with no live session reads `history_for_model()`. `model_window()` is the one
   message budget both use, and it keeps a summary first. Deleting a chat
   deletes its record, and the pass drops any record whose transcript is gone.
+  A summary is never written from another person's lines: the condenser reads
+  yours and the agent's, and every line someone else sent in the span follows
+  the summary word for word, fenced as theirs (`turn_source.kept_word_for_word`).
+  When those lines come to more than `THEIRS_KEPT_CAP`, the span is not
+  summarized, and a record made before summaries kept them (no `keeps_theirs`)
+  is not read for a span that holds one. `context.compress_thread_history`
+  condenses a long history the same way.
 - **`sessions/archive/`** holds lines EARLIER versions trimmed out of chats
   (2 MB rotation and the old background rewrite). Nothing writes it and nothing
   prunes it — for those chats a batch can be the only copy — and neither the

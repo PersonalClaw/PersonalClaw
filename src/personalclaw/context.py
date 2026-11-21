@@ -941,6 +941,24 @@ def build_cancelled_turn_preamble(
     )
 
 
+def _apart_from_theirs(
+    recent: list[dict], lines: list[str], head: int, tail: int
+) -> tuple[str, str] | None:
+    """What a compressed history hands its condenser of *recent* (each turn as *lines* reads it),
+    and the lines someone else sent between its verbatim head (``lines[:head]``) and tail
+    (``lines[tail:]``), kept word for word (``turn_source.kept_word_for_word``); ``None`` when
+    those do not fit, so nothing is condensed. The condenser reads no line someone else sent,
+    wherever it stands: its summary is prose that names no speaker, and the next turn reads it as
+    the conversation's own history, so a colleague's request could come back as the owner's."""
+    from personalclaw.turn_source import kept_word_for_word, someone_elses
+
+    theirs = kept_word_for_word(recent[head:tail], lambda m: redact_for_model(str(m["content"])))
+    if theirs is None:
+        return None
+    condensed = "\n".join(line for m, line in zip(recent, lines) if not someone_elses(m))
+    return condensed, theirs
+
+
 async def compress_thread_history(
     prior_turns: list[dict],
     session_key: str,
@@ -999,7 +1017,7 @@ async def compress_thread_history(
     if not recent:
         return None
 
-    from personalclaw.turn_source import turn_line
+    from personalclaw.turn_source import THEIRS_KEPT_HEADING, turn_line
 
     lines: list[str] = []
     for m in recent:
@@ -1020,6 +1038,13 @@ async def compress_thread_history(
 
     head_lines = lines[:_HEAD_TAIL_MESSAGES]
     tail_lines = lines[-_HEAD_TAIL_MESSAGES:] if len(lines) > _HEAD_TAIL_MESSAGES else []
+    apart = _apart_from_theirs(recent, lines, len(head_lines), len(lines) - len(tail_lines))
+    if apart is None:
+        logger.info(
+            "history of %s not condensed: other people's lines in it are kept whole", session_key
+        )
+        return None
+    condensed, theirs = apart
 
     # The compression instruction lives in the prompt system (bundled
     # ``task-history-compression``, bindable in Settings → Prompts), rendered with
@@ -1028,7 +1053,7 @@ async def compress_thread_history(
 
     prompt = render_use_case_prompt(
         "history_compression",
-        {"cap": _COMPRESSED_HISTORY_CAP, "query": query, "transcript": transcript},
+        {"cap": _COMPRESSED_HISTORY_CAP, "query": query, "transcript": condensed},
     )
     if not prompt:
         logger.debug("history compression prompt unresolved — skipping compression")
@@ -1047,6 +1072,8 @@ async def compress_thread_history(
         # app calls this through the SDK, outside `_Parts.add`. Masked like the lines around it,
         # before the cap cuts it.
         parts.append("## Compressed history\n" + redact_for_model(result)[:_COMPRESSED_HISTORY_CAP])
+        if theirs:
+            parts.append(f"## {THEIRS_KEPT_HEADING}\n{theirs}")
         if tail_lines:
             parts.append("## Recent exchanges (verbatim)\n" + "\n".join(tail_lines))
         final = "\n\n".join(parts)

@@ -69,6 +69,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat's plan and its approval belong to that chat alone. Each chat's plan is kept in a file of its own, even when its name differs from another chat's only in punctuation, and a chat shows, approves and cancels only its own plan.**
 - **The gateway image runs its agent CLIs on Node 24.22.3, which carries Node's security fixes for HTTP/2 and TLS.**
 - **Large merged ranges in a workbook are read within the cell cap.**
+- **A long conversation that other people write in is condensed from your messages and the agent's only. Each message someone else sent follows the summary word for word, as theirs, so a summary never words their request as yours. A summary written before this is not read for a span that holds one.**
 
 ## [0.3.9] — 2026-11-16
 
