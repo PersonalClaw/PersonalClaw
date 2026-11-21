@@ -423,49 +423,62 @@ def _last_trip(loop_id: str) -> tuple[str, float]:
     return found
 
 
-def _loop_questions(loops: list[Any], now: float) -> list[dict[str, Any]]:
+def _loop_question(loop: Any, now: float) -> dict[str, Any] | None:
+    """What *loop* waits on its owner for, or ``None`` for a loop that waits on nobody."""
     from personalclaw.loop import files as loop_files
     from personalclaw.loop.loop import WAITS_ON_YOU
 
+    status = str(getattr(loop.status, "value", loop.status))
+    if status not in WAITS_ON_YOU:
+        return None
+    if status == "needs_input":
+        q = loop_files.pending_question(loop.id) or {}
+    else:
+        # A stalled or blocked loop asks for a steer to start it again, its reason the why:
+        # masked as a question's why is (``pending_question``).
+        why, at = _stopped_why(loop, status)
+        q = {"why": _shown(why), "ts": at}
+    brief: dict[str, Any] = {"name": _shown(loop.name), "question": q.get("question") or ""}
+    if status != "needs_input":
+        brief["status"] = status
+    for key in ("why", "asked_by", "merge", "conflict", "spend_cap", "declined", "no_tools"):
+        if key in q:
+            brief[key] = q[key]
+    base = _path("/api/loops", loop.id)
+    if "merge" in q:
+        consequence, answer = "changes", _answer("POST", f"{base}/merge", ("confirm",))
+    elif "conflict" in q:
+        consequence, answer = "changes", _answer("POST", f"{base}/conflict", ("redo", "drop"))
+    else:
+        consequence, answer = "asks", _answer("POST", f"{base}/nudge", ("text",))
+    return _item(
+        kind="loop_question",
+        ident=loop.id,
+        work=f"loop:{loop.id}",
+        session="",
+        brief=brief,
+        consequence=consequence,
+        answer=answer,
+        route=_loop_route(loop),
+        asked_at=float(q.get("ts") or 0.0) or None,
+        now=now,
+    )
+
+
+def _loop_questions(loops: list[Any], now: float, unreadable: list[str]) -> list[dict[str, Any]]:
+    """What each loop waits on its owner for, each loop read on its own: a loop whose question
+    cannot be read is said (``unreadable``) and leaves every other loop's listed."""
     out = []
     for loop in loops:
-        status = str(getattr(loop.status, "value", loop.status))
-        if status not in WAITS_ON_YOU:
+        try:
+            item = _loop_question(loop, now)
+        except Exception:  # noqa: BLE001 - one loop's file never hides the others'
+            logger.warning("waiting list: the question of loop %s could not be read", loop.id)
+            if "loop_question" not in unreadable:
+                unreadable.append("loop_question")
             continue
-        if status == "needs_input":
-            q = loop_files.pending_question(loop.id) or {}
-        else:
-            # A stalled or blocked loop asks for a steer to start it again, its reason the why:
-            # masked as a question's why is (``pending_question``).
-            why, at = _stopped_why(loop, status)
-            q = {"why": _shown(why), "ts": at}
-        brief: dict[str, Any] = {"name": _shown(loop.name), "question": q.get("question") or ""}
-        if status != "needs_input":
-            brief["status"] = status
-        for key in ("why", "asked_by", "merge", "conflict", "spend_cap", "declined", "no_tools"):
-            if key in q:
-                brief[key] = q[key]
-        base = _path("/api/loops", loop.id)
-        if "merge" in q:
-            consequence, answer = "changes", _answer("POST", f"{base}/merge", ("confirm",))
-        elif "conflict" in q:
-            consequence, answer = "changes", _answer("POST", f"{base}/conflict", ("redo", "drop"))
-        else:
-            consequence, answer = "asks", _answer("POST", f"{base}/nudge", ("text",))
-        out.append(
-            _item(
-                kind="loop_question",
-                ident=loop.id,
-                work=f"loop:{loop.id}",
-                session="",
-                brief=brief,
-                consequence=consequence,
-                answer=answer,
-                route=_loop_route(loop),
-                asked_at=float(q.get("ts") or 0.0) or None,
-                now=now,
-            )
-        )
+        if item is not None:
+            out.append(item)
     return out
 
 
@@ -980,7 +993,9 @@ def read(snap: Snapshot) -> tuple[list[dict[str, Any]], list[str]]:
     items += _questions(snap.questions, snap.window, now)
     all_loops = _taken("loop_question", loops.list_all, unreadable, None)
     if all_loops is not None:
-        items += _taken("loop_question", lambda: _loop_questions(all_loops, now), unreadable, [])
+        items += _taken(
+            "loop_question", lambda: _loop_questions(all_loops, now, unreadable), unreadable, []
+        )
         items += _taken("plan_review", lambda: _loop_plans(all_loops, now), unreadable, [])
     else:
         unreadable.append("plan_review")
