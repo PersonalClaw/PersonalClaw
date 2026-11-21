@@ -566,9 +566,12 @@ class MemoryService:
         vs = self._vs
         return vs.delete_episodic(mem_id, source=source) if vs else False
 
-    def lint(self, *, purge: bool = True) -> dict:
-        """Run the memory-health sweep over the backing store; report dict. ``purge`` runs its
-        one auto-fix (``memory_lint.lint_memory``); off, the sweep only reads.
+    def lint(self, *, purge: bool = False) -> dict:
+        """Run the memory-health sweep over the backing store; report dict. It only reads, and
+        counts what its one auto-fix would remove under ``fixable``; ``purge=True`` runs that fix,
+        a permanent delete of what was superseded long ago (``memory_lint.lint_memory``). A caller
+        that deletes says so: ``POST /api/memory/lint``, which waits for the owner's word when
+        someone else asked, and the maintenance pass, the owner's standing retention.
 
         Also runs the readable-vault checks when a vault is configured — the
         vault is where a two-way edit can get stuck, so its conflicts belong in the

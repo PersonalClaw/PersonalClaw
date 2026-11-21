@@ -102,7 +102,9 @@ def _memory_lint_pass(*, batch_size: int = 0) -> int:
     service = memory_service.service_for(cast("MemoryProvider", MemoryStore()))
     if service is None:
         return 0
-    report = service.lint()
+    # The owner's standing retention, on its cadence: the one caller besides the route's POST
+    # that asks the sweep for its purge (`MemoryService.lint` only reads unless asked).
+    report = service.lint(purge=True)
     if not isinstance(report, dict):
         return 0
     # Count the findings rather than trusting a top-level total the report may not carry:
