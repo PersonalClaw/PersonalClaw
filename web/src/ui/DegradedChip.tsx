@@ -107,7 +107,10 @@ export function DegradedChip({ className }: {
       .catch(() => setHasProvider(null))
   }, 20000)
 
-  const down = (surfaces ?? []).filter((s) => !s.available)
+  // An optional surface with no model chosen (Transcription without a speech-to-text app) is off
+  // by choice: counting it read "Choose a model" on every page of a finished setup. Once a model is
+  // chosen for it and cannot serve, it counts.
+  const down = (surfaces ?? []).filter((s) => !s.available && !(s.optional && s.model_chosen === false))
   // The surfaces whose model IS chosen and cannot serve — the ones that declined. A surface on
   // its floor because no model is chosen for it yet (`model_chosen: false`: an instance saved
   // without a Default Model, nothing bound in Settings → Models) is waiting on a choice; calling
