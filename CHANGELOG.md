@@ -12,6 +12,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Hooks on a tool call now run at the same time: the policy commands and scripts bound to an agent start together, so a call waits only for the slowest one, and the first block in the hooks' order still refuses the call in its words. Copies of one hook (the same action, matcher, timeout and grant) run once per fire. A hook that doesn't answer in time refuses the call too, naming itself and how long it had, and each hook keeps how long its last run took. A policy script that writes a file another hook also writes should lock it, or the two should be merged into one hook. A hook that sends a message, writes a store or comes from an app, and every hook on any other event, still runs one after another in its configured order.**
 
+### Fixed
+
+- **A write to your editor's project settings (`.vscode/settings.json`, a `.code-workspace` file, `.zed/settings.json`), which name the interpreter, formatter or terminal your editor starts when you open the folder, asks you every time, whatever Trust, YOLO or a standing grant would answer. The card names the file and what runs it, and unattended work is refused it.**
+
 ## [0.4.2] — 2026-11-27
 
 This release holds a turn, a run and a file to where they belong: a stopped turn runs nothing more, a rewound or regenerated answer and a run's history keep what happened, a tool call, a command or a fetch that reaches past what you allowed is asked about first, and a file the agent sends shows only in its own chat. Each app capability has its own switch, every incident is kept with why and who, and Settings › Updates splits the desktop app from its gateway.
