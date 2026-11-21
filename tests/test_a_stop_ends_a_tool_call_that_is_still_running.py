@@ -99,13 +99,14 @@ def _read(call_id: str, path: str) -> AgentEvent:
     )
 
 
-async def _runtime(tool: _Hangs, *calls: AgentEvent) -> NativeAgentRuntime:
+async def _runtime(tool: _Hangs, *calls: AgentEvent, session_key: str = "") -> NativeAgentRuntime:
     """A turn whose model asks for *calls*, then, once they are answered, says it is done."""
     said = [AgentEvent(kind=EVENT_TEXT_CHUNK, text="Done."), AgentEvent(kind=EVENT_COMPLETE)]
     rt = NativeAgentRuntime(
         definition=_defn(),
         model_provider=_ScriptedModel([[*calls, AgentEvent(kind=EVENT_COMPLETE)], said]),
         tool_providers=[tool],
+        session_key=session_key,
     )
     await rt.start()
     rt.set_approval_policy("auto")
@@ -192,6 +193,56 @@ async def test_a_call_that_ignores_its_cancel_is_left_and_the_turn_ends_anyway(m
     # The call was let go as the turn was put away: give it the moment it needs to end, so
     # nothing is left running after the test.
     await asyncio.sleep(0.05)
+
+
+class _OpensASecretAfter(_Hangs):
+    """``read_file`` that ignores its cancel and, once let go, opens the project secret file at
+    *path*, keeping whether the file scope's check let it."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__(ignores_cancel=True)
+        self.path = path
+        self.opened: list[bool] = []
+
+    async def invoke(self, tool_name, arguments):
+        from personalclaw import secret_file_grants
+
+        self.running += 1
+        while not self.release.is_set():
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancelled += 1
+        self.opened.append(secret_file_grants.opens(self.path, change=False))
+        return ToolResult(success=True, output="read")
+
+
+async def test_a_call_left_running_past_the_stop_reaches_no_secret_file_its_chat_was_allowed(
+    tmp_path, monkeypatch
+):
+    """A call a stop left running kept its chat's secret-file binding: after the turn ended it
+    could still open a file the chat was allowed, and that use was never logged. The binding ends
+    with the call."""
+    from personalclaw import secret_file_grants
+
+    monkeypatch.setattr(cancellation, "CANCEL_GRACE_SECS", 0.3)
+    secret = tmp_path / "project" / ".env"
+    secret.parent.mkdir()
+    secret.write_text("TOKEN=x\n", encoding="utf-8")
+    chat = "dashboard:stopped-reader"
+    assert secret_file_grants.allow(chat, str(secret), secret_file_grants.READ)
+    tool = _OpensASecretAfter(str(secret))
+    try:
+        rt = await _runtime(tool, _read("c1", str(secret)), session_key=chat)
+        await _stop_while_it_runs(rt, tool)
+        for _ in range(100):
+            if tool.opened:
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        secret_file_grants.end(chat)
+
+    assert tool.opened == [False], "a call left running past its stop opened a granted secret file"
 
 
 async def test_a_stopped_call_is_not_counted_as_a_failure_of_its_tool():
