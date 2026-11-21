@@ -14,8 +14,9 @@ parse, one too large for a row — is named with why, in the export's result, th
 and the sync's report.
 
 The rail: every folder store and every one-file store the inventory declares, given a file of each
-shape, is exported whole, and a sync brings each file to the other machine as it was. A store the
-exporter cannot read fails here, by name.
+shape, is exported whole, and a sync brings each file to the other machine as it was. A folder
+store that is one machine's own stays on it: a sync sends none of it, and a pull takes none in. A
+store the exporter cannot read fails here, by name.
 """
 
 from __future__ import annotations
@@ -100,11 +101,16 @@ def test_a_backup_carries_every_file_of_a_folder_store(tmp_path, entry_id):
 
 @pytest.mark.parametrize("entry_id", FOLDER_STORES)
 def test_a_sync_brings_every_file_of_a_folder_store_to_the_other_machine(tmp_path, entry_id):
+    """Every file of a store that syncs reaches the other machine as it was; a store that is one
+    machine's own (``machine_local``) stays on that machine instead, which is checked as firmly."""
     entry = inv.by_id(entry_id)
     a, b = tmp_path / "A", tmp_path / "B"
     _plant(a, entry)
     export_shards(a, tmp_path / "sync", for_sync=True)
     rows = import_shards(tmp_path / "sync").rows.get(entry.id, [])
+    if entry.machine_local:
+        _stays_on_its_machine(tmp_path, entry, rows)
+        return
     result = reconcile.reconcile_entry(b, entry, rows)
     assert result.verdict == CONSUMED, result.detail
     for rel, raw in SHAPES.items():
@@ -114,6 +120,21 @@ def test_a_sync_brings_every_file_of_a_folder_store_to_the_other_machine(tmp_pat
             assert json.loads(there.read_bytes()) == json.loads(raw)
         else:
             assert there.read_bytes() == raw, f"{entry.path}/{rel} arrived changed"
+
+
+def _stays_on_its_machine(tmp_path: Path, entry: inv.StateEntry, sent: list[dict]) -> None:
+    """*entry*, one machine's own store, stays on it: a sync sends none of it (*sent*), and a pull
+    leaves the other machine's copy of the store as it is, even from a peer that still sends its
+    rows (a backup's export carries them)."""
+    assert sent == [], f"a sync sent {entry.path}, which stays on its machine"
+    export_shards(tmp_path / "A", tmp_path / "backup")
+    peer_rows = import_shards(tmp_path / "backup").rows.get(entry.id, [])
+    assert peer_rows, f"the backup carries none of {entry.path}: nothing for a peer to send"
+    reconcile.reconcile_entry(tmp_path / "B", entry, peer_rows)
+    arrived = sorted(
+        str(p.relative_to(tmp_path / "B")) for p in (tmp_path / "B").rglob("*") if p.is_file()
+    )
+    assert not arrived, f"another machine's {entry.path} reached this one: {arrived}"
 
 
 @pytest.mark.parametrize("entry_id", FILE_STORES)
