@@ -112,6 +112,7 @@ async def api_side_turn(request: web.Request) -> web.Response:
     run_id = uuid.uuid4().hex
     side.last_run_id = run_id
     side.is_complete = False
+    side.partial = ""
     side.append("user", question.strip())
 
     task = asyncio.create_task(_run_side_turn(state, name, session, side, question.strip(), run_id))
@@ -151,9 +152,20 @@ async def _run_side_turn(
         # Drop stale frames: the side chat was closed or a newer turn started.
         if session._side is not side or side.last_run_id != run_id:
             return
+        said = _redact(delta)
+        if not done:
+            side.partial += said
+        # Stamped like a chat's chunk, in the step that grew the partial, so a page that reads the
+        # chat mid-answer skips the deltas its snapshot already holds.
         state.broadcast_ws(
             SIDE_RESULT_EVENT,
-            {"session": name, "run_id": run_id, "delta": _redact(delta), "done": done},
+            {
+                "session": name,
+                "run_id": run_id,
+                "delta": said,
+                "done": done,
+                "seq": state.next_stream_seq(),
+            },
         )
 
     accumulated = ""
@@ -198,6 +210,7 @@ async def _run_side_turn(
         if session._side is side and side.last_run_id == run_id:
             side.append("assistant", accumulated)
             side.is_complete = True
+            side.partial = ""
             # Persist the side buffer attached to the session so it reloads with
             # it (sidecar meta, not the main transcript). force=True since the
             # side turn doesn't add to session.messages.

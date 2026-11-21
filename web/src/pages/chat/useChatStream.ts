@@ -84,14 +84,17 @@ const LISTEN_BEFORE_READ_MS = 2_000
 const HOLD_LIMIT_MS = 4_000
 
 /** The frames whose effect lives in what a snapshot adoption replaces — the turns, the text
- *  run, the streaming claim. A snapshot adopted after its frames flowed live (HOLD_LIMIT_MS)
- *  paints over them, so they are applied again on top of it; every other frame's effect
- *  survives an adoption and is not repeated (a voice chunk would play twice, a side-chat delta
- *  would be appended twice). */
+ *  run, the streaming claim, the queue, the title and bookmarks, the side chat. A snapshot adopted
+ *  after its frames flowed live (HOLD_LIMIT_MS) paints over them, so they are applied again on top
+ *  of it; every other frame's effect survives an adoption and is not repeated (a voice chunk would
+ *  play twice). A side-chat delta is stamped, so one already applied, or already in the snapshot,
+ *  is not added again. */
 const TRANSCRIPT_FRAMES = new Set([
   'chat_chunk', 'work_phase', 'chat_thinking', 'chat_message', 'activity_event', 'tool_call',
   'tool_result', 'approval', 'approval_resolved', 'chat_segment', 'chat_variant_switch',
   'chat_done', 'chat_user_message', 'session_clear',
+  'queue_push', 'queue_pop', 'queue_cancel', 'queue_promoted', 'session_title', 'sessions',
+  'chat.side_result',
 ])
 
 /** A message waiting in the chat's queue, as the strip shows it: their words with each block they
@@ -330,6 +333,9 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   const [sideMsgs, setSideMsgs] = useState<{ q: string; a: string; runId: string; done: boolean }[]>([])
   const [sideBusy, setSideBusy] = useState(false)
   const sideOpenedRef = useRef(false)  // side buffer opened/exists for this session
+  // The newest side-chat delta stamp the side answer shows: the snapshot's `stream_seq` once the
+  // chat's opening read restored it, then each delta's. A delta at or below it is already there.
+  const sideSeqRef = useRef(0)
   const sessionRef = useRef<string | null>(sessionId)
   // Wall-clock of the last WS frame seen for THIS session — drives the idle
   // approval-reconciler: a turn that parks on an approval sends no `chat_done`
@@ -491,10 +497,38 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     const partial = running ? livePartialOf(messages) : null
     if (partial !== null) textRun.adopt(); else textRun.release()
     coalescer.resume(partial, d.stream_seq ?? 0)
+    // The chat beside its transcript as the snapshot holds it, so a frame held behind the read
+    // (a queued message starting, the title landing) lands on top of it, and a read after the link
+    // came back takes what changed while it was down: the messages still queued (mid-stream FIFO)
+    // above the composer, the title and the bookmarks.
+    setQueued(Array.isArray(d.queue) ? d.queue.filter((q) => q && q.id).map((q) => queuedMessage(q.id, q.content, q.pastes, undefined, q.widget_action)) : [])
+    setTitle(d.title || '')
+    setTitleNeed(d.title_needs_model || '')
+    setBookmarks(Array.isArray(d.bookmarks) ? d.bookmarks : [])
     // What the ring was last told, so a chat opened after its turn draws the same ring.
     if (d.context_usage && !contextSaidLive.current) takeContextUsage(d.context_usage)
     setAutoChain(d.auto_chain ?? '')
     setWorkingDir(d.workspace_dir ?? '')
+  }
+  // The side chat as the chat's opening read holds it (flat role list → {q,a} pairs), with the
+  // answer still being written open and holding what has streamed of it (`partial`, the deltas
+  // stamped up to the snapshot's `stream_seq`), so the deltas after it continue it. Only the
+  // opening read restores it: a later one can predate a side question just asked on this page.
+  const restoreSideChat = (d: ChatDetail) => {
+    sideSeqRef.current = d.stream_seq ?? 0
+    const side = d.side
+    if (!side?.messages?.length) return
+    const pairs: { q: string; a: string; runId: string; done: boolean }[] = []
+    for (const m of side.messages) {
+      if (m.role === 'user') pairs.push({ q: m.content, a: '', runId: '', done: true })
+      else if (pairs.length) pairs[pairs.length - 1].a += m.content
+    }
+    const last = pairs[pairs.length - 1]
+    const writing = side.is_complete === false && !!side.last_run_id && side.messages[side.messages.length - 1].role === 'user'
+    if (writing) pairs[pairs.length - 1] = { ...last, a: side.partial || '', runId: side.last_run_id || '', done: false }
+    setSideMsgs(pairs)
+    setSideBusy(writing)
+    sideOpenedRef.current = true  // buffer already exists server-side
   }
   // Read session detail with this chat's live frames HELD, adopt the snapshot, then replay every
   // frame since the read was issued on top of it — see snapshotReplay.ts for why that one rule
@@ -582,6 +616,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         if (handedOffRef.current && snapshotPredatesSend(seededDetail?.messages, d.messages || [])) return false
         handedOffRef.current = false
         adoptSnapshot(d)
+        restoreSideChat(d)
         // Its `running` is the truth as of the read, and every frame after the read replays
         // on top — so a turn that fails fast inside this round trip ends on its replayed
         // terminal frame, and a turn that ENDED before this chat was listening (its
@@ -596,15 +631,9 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         // cache the settled detail so the next revisit paints instantly (writeCachedDetail
         // skips running turns to avoid seeding a stale mid-stream snapshot).
         writeCachedDetail(sessionId, d)
-        // rehydrate any still-pending queued messages (mid-stream FIFO) so a reload
-        // mid-queue shows them again above the composer.
-        setQueued(Array.isArray(d.queue) ? d.queue.filter((q) => q && q.id).map((q) => queuedMessage(q.id, q.content, q.pastes, undefined, q.widget_action)) : [])
         // What the page keeps of the chat beside its stream (the composer's posture, ↑/↓ recall) is
         // restored by the page from this same read.
         sinks.current.onOpened(d)
-        setTitle(d.title || '')
-        setTitleNeed(d.title_needs_model || '')
-        setBookmarks(Array.isArray(d.bookmarks) ? d.bookmarks : [])
         // Seed the session cost chip from the ledger for a revisited chat.
         refreshSessionCost(sessionId)
         // Branch lineage — restore the "Branched from" breadcrumb on every open,
@@ -630,16 +659,6 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
           reasoning_effort: d.reasoning_effort || '',
         }
         setBindingNonce((n) => n + 1)
-        // restore the persisted side chat (flat role list → {q,a} pairs).
-        if (d.side?.messages?.length) {
-          const pairs: { q: string; a: string; runId: string; done: boolean }[] = []
-          for (const m of d.side.messages) {
-            if (m.role === 'user') pairs.push({ q: m.content, a: '', runId: '', done: true })
-            else if (pairs.length) pairs[pairs.length - 1].a += m.content
-          }
-          setSideMsgs(pairs)
-          sideOpenedRef.current = true  // buffer already exists server-side
-        }
         setLoadingHistory(false)
       })
     }).catch((e) => {
@@ -1152,6 +1171,13 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
       // but fall back to the last not-yet-done entry — frames can arrive before
       // the sideTurn POST resolves and stamps the runId onto the entry.
       case 'chat.side_result': {
+        // Stamped like a chunk: one the side answer already shows (in the snapshot it was restored
+        // from, or applied before a late snapshot was) is not added again.
+        const seq = stampOf(d)
+        if (seq !== undefined) {
+          if (seq <= sideSeqRef.current) break
+          sideSeqRef.current = seq
+        }
         const rid = String(d.run_id ?? '')
         const delta = String(d.delta ?? '')
         const done = !!d.done

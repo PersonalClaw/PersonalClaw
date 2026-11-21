@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import threading
 from types import SimpleNamespace
 from typing import Any
@@ -349,7 +350,12 @@ async def _side_question(mode: str) -> tuple[NativeAgentRuntime, Any]:
         def release(self, key: str) -> None:
             return None
 
-    state = SimpleNamespace(sessions=_SideSessions(), broadcast_ws=lambda *a, **k: None)
+    # A side delta is stamped from the gateway's stream count (`next_stream_seq`).
+    state = SimpleNamespace(
+        sessions=_SideSessions(),
+        broadcast_ws=lambda *a, **k: None,
+        next_stream_seq=itertools.count(1).__next__,
+    )
     chat = _ChatSession(CHAT, memory_mode=mode)
     chat.append("user", REQUEST, "msg msg-u", broadcast=False)
     chat.append("assistant", ANSWER, "msg msg-a", broadcast=False)
