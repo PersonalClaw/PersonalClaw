@@ -1144,7 +1144,11 @@ the ceiling did not bound.
   request, within the step's time limit, `approval_grants.APPROVED_BEFORE_RESUME`), a subagent
   batch's tasks starting on what allowed that batch's start (`approval_grants.BATCH_ALLOWED`: her
   answer to its one ask, or, for a batch that only reads, the grant that starts its chat's
-  subagents; an app's batch never starts on a grant of hers, `apps.app_work`),
+  subagents; an app's batch never starts on a grant of hers, `apps.app_work`), a task of a batch
+  she allowed herself reading, or editing files, inside its own folder (`approval_grants.BATCH_TASK`,
+  `batch_task_scope`: a command that may write, a delete, a path outside the folder, a path the
+  built-in agent's file tools do not reach such as PersonalClaw's own stores, and an input holding
+  what the reader does not know still ask),
   the triage digest's auto-execution, a heartbeat task's calls on the task's own Allow
   (`approval_grants.HEARTBEAT_TASK`), a subagent's announce turn, an app's conversation, the
   agent CLI of an Unattended loop its owner let approve its own calls, a session policy that never

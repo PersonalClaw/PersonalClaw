@@ -127,6 +127,12 @@ APPROVED_BEFORE_RESUME = "approved_before_resume"
 #: starts on that, and asks nobody again. It covers the starts only; each task's own calls ask as
 #: any agent's do.
 BATCH_ALLOWED = "batch_allowed"
+#: Her Allow of a subagent batch, for a call of one of its tasks inside what the batch's ask showed
+#: (`batch_task_scope.covers`): a read that names nothing outside the task's folder, or an edit of
+#: files inside it. Only her own answer to the ask (:func:`batch_allowed_by_her`), never a grant
+#: that started a batch that only reads, and never an app's batch; every other call of the task
+#: asks.
+BATCH_TASK = "batch_task"
 #: A workflow run's own gate policy for an origin nobody watches (a schedule, an event).
 GATE_POLICY = "gate_policy"
 #: An ACP agent's own permission mode that makes its CLI approve its own calls
@@ -192,23 +198,37 @@ def batch_allowed(parent_run: str) -> bool:
     subagent batch whose start was allowed (`workflows.batch_start.CONSENT_KEY`: her answer, or the
     grant that started a batch that only reads), so its task starts on that (:data:`BATCH_ALLOWED`).
     Fails closed: a record that cannot be read is no Allow."""
+    return _batch_consent(parent_run) is not None
+
+
+def batch_allowed_by_her(parent_run: str) -> bool:
+    """Whether *parent_run*'s batch started on her own answer to its ask, the one that named each
+    task and what it may change, so its tasks' calls inside that are hers too
+    (:data:`BATCH_TASK`).
+    Fails closed, as :func:`batch_allowed`."""
+    consent = _batch_consent(parent_run)
+    return consent is not None and consent.get("by") == YOU
+
+
+def _batch_consent(parent_run: str) -> dict | None:
+    """What allowed *parent_run*'s batch to start, or ``None`` for a run that is no allowed
+    batch."""
     from personalclaw.workflows import store
     from personalclaw.workflows.batch_start import CONSENT_KEY
     from personalclaw.workflows.models import OriginKind
     from personalclaw.workflows.ownership import OWNED_PREFIX
 
     if not parent_run.startswith(OWNED_PREFIX):
-        return False
+        return None
     try:
         run = store.get(parent_run[len(OWNED_PREFIX) :])
     except Exception:  # noqa: BLE001 - an unreadable record is no Allow
         logger.debug("run of %s unreadable for its batch's Allow", parent_run, exc_info=True)
-        return False
-    return bool(
-        run is not None
-        and run.origin.kind == OriginKind.SUBAGENT_TOOL
-        and isinstance((run.extra or {}).get(CONSENT_KEY), dict)
-    )
+        return None
+    if run is None or run.origin.kind != OriginKind.SUBAGENT_TOOL:
+        return None
+    consent = (run.extra or {}).get(CONSENT_KEY)
+    return consent if isinstance(consent, dict) else None
 
 
 def declared_answer(event: object) -> str:
