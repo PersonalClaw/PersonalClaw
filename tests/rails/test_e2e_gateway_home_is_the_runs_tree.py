@@ -398,6 +398,37 @@ await askTheGatewayWhereItWaits({ PW_E2E_HOME: process.argv[1], PW_OUTPUT_DIR: p
 STALL_MARK = "The event loop has not answered for"
 
 
+def _stop_group(leader: subprocess.Popen, grace: float = 15.0) -> None:
+    """End the process group *leader* leads and wait until none of its processes is left.
+
+    The leader can end while the gateway it started is still running: the shell that starts it
+    ended at the SIGTERM while the gateway, its child in the same group, went on shutting down and
+    writing in the run's home (its state history among them). A run cleaned up then fails on a
+    home that is not empty (ENOTEMPTY) before any log is read. So the wait is for the whole group,
+    and a group still there after *grace* seconds is sent SIGKILL.
+    """
+    os.killpg(leader.pid, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    killed = False
+    while True:
+        try:
+            leader.wait(timeout=0.05)
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            os.killpg(leader.pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            # macOS answers EPERM for a group whose processes have all ended and wait to be
+            # reaped: none of them runs, so none writes.
+            return
+        if not killed and time.monotonic() > deadline:
+            os.killpg(leader.pid, signal.SIGKILL)
+            killed = True
+        time.sleep(0.05)
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -507,12 +538,7 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
         assert gateway.poll() is None, f"the gateway ended after the ask ({gateway.poll()})"
         assert _get(port, "/api/themes", **signed_in).status == 200
     finally:
-        os.killpg(gateway.pid, signal.SIGTERM)
-        try:
-            gateway.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            os.killpg(gateway.pid, signal.SIGKILL)
-            gateway.wait()
+        _stop_group(gateway)
     keep = subprocess.run(
         [
             _node(),
@@ -526,9 +552,10 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
         timeout=20,
         cwd=WEB,
     )
-    assert keep.returncode == 0, keep.stderr
+    # The log is kept before the home is removed, so the credential checks below read it whatever
+    # the removal did; a removal that failed is said after them, as a clean-up failure.
     kept = sorted(Path(places["outputDir"]).glob("gateway.log*"))
-    assert kept, "the failed run kept no gateway log"
+    assert kept, f"the failed run kept no gateway log (the clean-up said: {keep.stderr[-1000:]})"
     text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in kept)
     assert STALL_MARK in text, "the watch dumped no stack, so no dump was checked"
     values = {f"the planted {name}": value for name, value in planted.items()}
@@ -538,6 +565,10 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
     record = (Path(places["outputDir"]) / "gateway-unanswered.txt").read_text(encoding="utf-8")
     shown = sorted(what for what, value in values.items() if value in printed + record)
     assert shown == [], f"the record the job's log shows holds {shown} in clear"
+    assert keep.returncode == 0, (
+        "no credential was found, but the run's clean-up failed (not a credential finding): "
+        + keep.stderr[-2000:]
+    )
 
 
 #: A gateway as busy as the rail's above, standing in for it so the ask can be checked against a

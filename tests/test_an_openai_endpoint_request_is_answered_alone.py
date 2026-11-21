@@ -150,8 +150,10 @@ class _World:
         registry.register_entry(ProviderEntry(name=ENTRY, type=ENTRY, model="research-1"))
         monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: registry)
         # Short deadlines, so a reader left waiting on a turn it will never be handed fails the
-        # test in seconds rather than holding it for the endpoint's ten minutes.
-        monkeypatch.setattr(dialect, "TURN_TIMEOUT_SECS", 8.0)
+        # test in seconds rather than holding it for the endpoint's ten minutes. A turn of the
+        # scripted agent CLI starts a real process and its handshake each time, which on a loaded
+        # machine takes longer than the fake model's turn: its deadline bounds a hang, not a speed.
+        monkeypatch.setattr(dialect, "TURN_TIMEOUT_SECS", 30.0 if cli else 8.0)
         monkeypatch.setattr(dialect, "_POLL_TIMEOUT_SECS", 0.5)
 
         cfg = AppConfig.load()
