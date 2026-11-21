@@ -32,6 +32,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The approvals route answers an approval by the id `GET /api/waiting` lists it under (`approval:<id>`) as well as its own, and an id no approval waits under answers 404 `approval_not_found`, saying it was answered, it expired, or there never was one, where every such id read as expired.**
 - **Stop ends a turn while one of its tool calls is still running. The call is told to stop and the turn ends at once; a call that doesn't stop within a few seconds is left behind, and what it returns is not read. Before, the turn ran until the call returned by itself, so a hung call kept it running, and a `personalclaw run` whose `--timeout` passed during one waited for it too.**
 - **An agent can edit a file that holds two hidden values side by side. Before, every edit of such a file was refused, however far from the hidden values, and the refusal said the file had changed though it hadn't. A file whose masked view still can't be mapped back now says so plainly.**
+- **When the model watchdog's record of your model bindings can't be read, it revokes every standing autonomy grant and queues the re-benchmarks, as a rebind does, and its one notice names the record and the copy kept of it. It used to read the damaged record as a first run and revoke nothing.**
 
 ### Security
 
