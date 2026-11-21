@@ -273,7 +273,7 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
             client_id=client_id,
             rate_limited=True,
         )
-    clients_mod.touch_last_seen(client_id)
+    clients_mod.admitted(client)
 
     # 6) The body, capped: as declared, then as read.
     declared = request.content_length or 0

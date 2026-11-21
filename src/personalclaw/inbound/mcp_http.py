@@ -299,8 +299,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
             refused="concurrency cap",
         )
 
-    if client_id:
-        clients_mod.touch_last_seen(client_id)
+    clients_mod.admitted(client)
 
     try:
         # 6) Body size, checked BEFORE reading the whole body where possible.

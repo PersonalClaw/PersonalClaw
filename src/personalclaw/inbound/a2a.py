@@ -63,7 +63,7 @@ from aiohttp import web
 from personalclaw.http_errors import json_error
 from personalclaw.inbound import auth
 from personalclaw.inbound import caps as caps_mod
-from personalclaw.inbound import framing, tokens
+from personalclaw.inbound import clients, framing, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
 
@@ -283,6 +283,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
             client_id,
             caps,
         )
+    clients.admitted(client)
     return None, client_id, caps
 
 
