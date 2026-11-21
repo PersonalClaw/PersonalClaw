@@ -21,6 +21,8 @@ export async function newCollection(): Promise<string> {
     label: 'Search that fills it (leave empty to add items by hand)',
     placeholder: 'rust ownership',
     confirmLabel: 'Create collection',
+    // Empty is the hand-filled collection the label offers, so the field is not required.
+    required: false,
   })
   if (q === null) return ''
   const res = await api.createKnowledgeCollection(q.trim() ? { name: name.trim(), kind: 'smart', query: q.trim() } : { name: name.trim() })
