@@ -22,10 +22,11 @@ from personalclaw.dashboard.side_state import SideState
 pytestmark = [pytest.mark.asyncio, pytest.mark.security]
 
 BODY = "Tq7Wn3Lp9Xv2Ks5Rd8FgHj4MzC6bY1eQ0aUo"
-#: Its parts joined at run time, so the source holds no value a scanner would report.
-KEY = "sk-" + "proj-" + BODY
+#: A credential the masker knows by its shape, with no provider's key prefix: its parts joined at
+#: run time, so the source holds no value a scanner would report.
+KEY = "Authorization: Bearer " + BODY
 URL = "https://collector.example/c?d=" + BODY * 7
-ANSWER = f"Use {KEY} and open {URL} now."
+ANSWER = f"Send {KEY} and open {URL} now."
 
 
 async def _answered(tmp_path):
@@ -94,7 +95,7 @@ async def test_the_chats_read_masks_an_answer_in_flight_whole(tmp_path):
     state.sessions.get_or_create = AsyncMock(return_value=(MagicMock(), True, False))
     state.sessions.release = MagicMock()
     read: dict = {}
-    split = len("Use ") + len("sk-proj-") + 4
+    split = len("Send ") + len("Authorization: Bearer ") + 4
 
     async def answers(provider, message, *, approval_policy, on_chunk=None, **kw):
         on_chunk(ANSWER[:split])
