@@ -1791,7 +1791,7 @@ def _offer_to_resume(pc: Path, done: dict) -> None:
 
 def _hold_what_was_in_flight(pc: Path, restored: list[str]) -> dict[str, list[str]]:
     """Hold what the stores a replace restore just wrote had in flight: ``runs_held``,
-    ``loops_held`` and ``agents_settled``, by id.
+    ``loops_held`` and ``agents_settled``, by id, and ``turns_dropped``, by chat.
 
     A snapshot is a moment in the past. The watchdogs pick up at start every workflow run and
     loop they find working, and the start settles every agent folder with no tombstone as one
@@ -1802,9 +1802,10 @@ def _hold_what_was_in_flight(pc: Path, restored: list[str]) -> dict[str, list[st
     Each store holds its own (``workflows.store.hold_restored``,
     ``loop.store.hold_restored``, ``subagent_persistence.settle_restored``), and nothing starts
     until someone resumes it. Whichever machine took the archive: this machine's own run went on
-    after the snapshot too.
+    after the snapshot too. A chat turn the archive held waiting on an answer to a call is dropped
+    (``parked_turns.settle_restored``): it is not asked again, nor its call run.
     """
-    from personalclaw import subagent_persistence
+    from personalclaw import parked_turns, subagent_persistence
     from personalclaw.loop import store as loop_store
     from personalclaw.workflows import store as run_store
 
@@ -1816,6 +1817,9 @@ def _hold_what_was_in_flight(pc: Path, restored: list[str]) -> dict[str, list[st
         "loops_held": loop_store.hold_restored(pc) if restored_store("loop/loops.db") else [],
         "agents_settled": (
             subagent_persistence.settle_restored(pc) if restored_store("subagents") else []
+        ),
+        "turns_dropped": (
+            parked_turns.settle_restored(pc) if restored_store(parked_turns.PARKED_DIR) else []
         ),
     }
 

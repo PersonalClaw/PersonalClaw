@@ -66,6 +66,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An MCP server's sign-in whose authorization server has forgotten PersonalClaw's registration registers again at the next Sign in instead of failing every time. A client ID you entered that it stops accepting is kept, and the next Sign in asks for a new one. A signed-out card offers Sign out too.**
 - **The browser connector extension can pair from its own origin with a code from Settings › Devices, and attach, in the default sign-in mode. Its session reaches the connector's own routes and nothing else, and signing the device out forgets its origin.**
 - **A file you attach in a chat reaches a tool that takes a file path. The agent is told where the file is saved, so a tool such as Design Critique can open your screenshot. The chat still shows the file by the name you attached it with.**
+- **A chat turn waiting on your answer to a tool call is kept through a gateway restart. The approval is asked again after the restart, and your answer carries the reply on from that call without asking the model again. A turn on an agent CLI, or in an Incognito or Temporary chat, ends at a restart as before.**
 
 ### Security
 

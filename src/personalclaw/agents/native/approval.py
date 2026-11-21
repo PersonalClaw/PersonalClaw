@@ -90,6 +90,14 @@ class ApprovalGate:
 
     def __init__(self) -> None:
         self._pending: dict[str, asyncio.Future[str]] = {}
+        self._ahead: dict[str, str] = {}
+
+    def answer_ahead(self, request_id: str, decision: str) -> None:
+        """Answer *request_id* before it is asked: the call a turn carried on after a restart
+        waits on, answered through the approval kept for it (``parked_turns``). Its
+        :meth:`register` returns a Future already resolved with *decision*, once, so the call is
+        not asked again."""
+        self._ahead[request_id] = decision
 
     def register(self, request_id: str) -> asyncio.Future[str]:
         """Create + register the pending Future for a request.
@@ -97,10 +105,14 @@ class ApprovalGate:
         MUST be called *before* the caller surfaces the permission request to
         the UI, so an approve/reject that arrives immediately (or even before
         the caller awaits) still finds a pending entry — otherwise the resolve
-        is a no-op and the wait deadlocks.
+        is a no-op and the wait deadlocks. A request answered ahead (:meth:`answer_ahead`)
+        is resolved already, and the caller asks nobody.
         """
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[str] = loop.create_future()
+        decision = self._ahead.pop(request_id, None)
+        if decision is not None:
+            fut.set_result(decision)
         self._pending[request_id] = fut
         return fut
 
@@ -140,6 +152,8 @@ class ApprovalGate:
         return self.resolve(request_id, Refusal(reason, kind))
 
     def cancel_all(self) -> None:
-        """Reject every pending request (session shutdown / cancel)."""
+        """Reject every pending request (session shutdown / cancel), and drop every answer given
+        ahead of its ask."""
+        self._ahead.clear()
         for request_id in list(self._pending):
             self.resolve(request_id, REJECT)

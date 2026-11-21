@@ -30,6 +30,7 @@ from personalclaw.dashboard import chat_turns
 from personalclaw.dashboard.api_version_gate import api_version_middleware
 from personalclaw.dashboard.chat import (
     api_chat,
+    api_chat_session_approve,
     api_chat_session_edit_resend,
     api_chat_session_stop,
 )
@@ -83,7 +84,8 @@ class Model:
 
 class World:
     """The chat surface over the home *tmp_path*'s history, answered by :class:`Model`, each chat on
-    a *runtime* (the native runtime, or a test's subclass of it)."""
+    a *runtime* (the native runtime, or a test's subclass of it), with the *tools* a test gives it,
+    and answered by the *model* a test gives instead, when it gives one."""
 
     def __init__(
         self,
@@ -91,8 +93,10 @@ class World:
         *replies: str,
         hold: bool = False,
         runtime: type[NativeAgentRuntime] = NativeAgentRuntime,
+        tools: list[Any] | None = None,
+        model: Any = None,
     ) -> None:
-        self.model = Model(*replies, hold=hold)
+        self.model = model if model is not None else Model(*replies, hold=hold)
 
         def factory(session_key=None, **_kwargs):
             return runtime(
@@ -100,7 +104,7 @@ class World:
                     name="PersonalClaw", provider="native", model="scripted"
                 ),
                 model_provider=self.model,
-                tool_providers=[],
+                tool_providers=list(tools or []),
                 cwd=tmp_path,
             )
 
@@ -133,6 +137,7 @@ class World:
             "/api/chat/sessions/{session}/edit-resend", api_chat_session_edit_resend
         )
         app.router.add_post("/api/chat/sessions/{session}/stop", api_chat_session_stop)
+        app.router.add_post("/api/chat/sessions/{session}/approve", api_chat_session_approve)
         app.router.add_get(
             "/api/chat/sessions/{session}/turns/{message_id}", chat_turns.api_chat_turn
         )

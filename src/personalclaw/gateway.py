@@ -146,6 +146,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _loop_running() -> bool:
+    """Whether an event loop runs this call, which the background work a boot pass starts needs.
+    A pass driven with none (a test of its notices) starts none."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 #: The row a loop's cycle starts its turn with: a ``nudge`` row, shown as one.
 _NUDGE_ROW = ("nudge", "msg msg-nudge")
 
@@ -2113,6 +2124,15 @@ class GatewayOrchestrator:
             settle = asyncio.create_task(self._settle_left_behind_agents())
             self._background_tasks.add(settle)
             settle.add_done_callback(self._background_tasks.discard)
+        state = getattr(self, "dashboard_state", None)
+        if state is not None and _loop_running():
+            # The chat turns the previous run stopped while they waited on an answer to a call:
+            # asked again in their chats, and carried on by the answer (`parked_chat_turns`).
+            from personalclaw.dashboard.parked_chat_turns import take_back
+
+            kept = asyncio.create_task(take_back(state))
+            self._background_tasks.add(kept)
+            kept.add_done_callback(self._background_tasks.discard)
         try:
             from personalclaw.triggers import legacy_import
             from personalclaw.triggers.store import TriggerStore
