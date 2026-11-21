@@ -32,6 +32,7 @@ from personalclaw.history import (
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import VALID_TASK_MODES
+from personalclaw.transcript_rewrites import messages_unchanged
 from personalclaw.turn_source import TURN_STARTS, source_of
 
 
@@ -885,6 +886,22 @@ def _where_and_whose(session: _ChatSession, history_key: str) -> dict:
     }
 
 
+def _read_so_far(
+    state: DashboardState, history_key: str, outgoing: list[dict], existing: dict, force: bool
+) -> object:
+    """How many of the transcript's messages consolidation has read (``last_consolidated``), as a
+    save of *outgoing* leaves it. A save that only adds keeps the count. A forced one rewrites the
+    transcript (an /undo, a regenerate, an edit-and-resend), and the count then stops where its
+    messages first differ from the file's: every message from there on, the edited one and each
+    sent since, is read by the next consolidation once."""
+    count = existing.get("last_consolidated", 0)
+    log = state.conversation_log
+    if not force or log is None:
+        return count
+    kept = messages_unchanged(log.read_messages(history_key), outgoing)
+    return min(count, kept) if type(count) is int else 0
+
+
 def save_session_to_history(
     state: DashboardState,
     session: _ChatSession,
@@ -1014,7 +1031,7 @@ def save_session_to_history(
         meta_line: dict = {
             "_type": "metadata",
             "created_at": existing_meta.get("created_at") or session.created_at,
-            "last_consolidated": existing_meta.get("last_consolidated", 0),
+            "last_consolidated": _read_so_far(state, history_key, outgoing, existing_meta, force),
         }
         # UN-ARCHIVING IS EXPLICIT. This function rebuilds the whole meta line from the
         # in-memory session, so omitting `closed` silently CLEARED it on every save — a

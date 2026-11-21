@@ -42,6 +42,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.credential_locations import CREDENTIAL_LOCATIONS
 from personalclaw.guardrails.incident import incident_active
 from personalclaw.instants import as_instant, utc_iso, utc_now_iso
+from personalclaw.search_snippets import match_snippet
 from personalclaw.security import (
     MaskConflict,
     keep_masked_lines,
@@ -50,6 +51,7 @@ from personalclaw.security import (
 )
 from personalclaw.sel import sel
 from personalclaw.skills import AutoSkillProvenance
+from personalclaw.transcript_rewrites import messages_unchanged
 from personalclaw.turn_source import arrived_on, model_text, provenance
 
 
@@ -85,42 +87,6 @@ _CONSOLIDATION_THRESHOLD = 30  # preferences/projects update threshold (messages
 SEARCH_MIN_CHARS = 2  # shortest query string that triggers backend search
 _TITLE_BOOST = 10  # field-boost multiplier for title matches in search_sessions
 _SEARCH_SCAN_WINDOW = 500  # cap files scanned per search to bound I/O
-#: How much of a message a direct read's snippet shows around the match, before and after it —
-#: short before, so the match is on screen in the chat list's one truncated line.
-_SNIPPET_BEFORE = 48
-_SNIPPET_AFTER = 96
-
-
-def match_snippet(texts: list[str], needle: str) -> str:
-    """The passage around the first place *needle* (already casefolded) is said in *texts*, with
-    the match marked ``<<…>>`` as the search index marks its own; ``""`` when no text says it.
-
-    What a chat a direct read found shows of why it matched, the way an index hit does. Matched by
-    full case folding, as the read counts matches, so the passage is cut from the text as it was
-    written: where folding keeps a text's length every character folds to one and the offsets
-    agree; otherwise each folded character is mapped back to the one it came from.
-    """
-    for text in texts:
-        folded = text.casefold()
-        at = folded.find(needle)
-        if at < 0:
-            continue
-        if len(folded) == len(text):
-            start, end = at, at + len(needle)
-        else:
-            origin = [i for i, ch in enumerate(text) for _ in ch.casefold()]
-            start, end = origin[at], origin[at + len(needle) - 1] + 1
-        lead = re.sub(r"\s+", " ", text[max(0, start - _SNIPPET_BEFORE) : start])
-        tail = re.sub(r"\s+", " ", text[end : end + _SNIPPET_AFTER])
-        # A word the cut went through is dropped rather than shown in part.
-        cut_lead, cut_tail = start > _SNIPPET_BEFORE, end + _SNIPPET_AFTER < len(text)
-        if cut_lead and " " in lead:
-            lead = lead.split(" ", 1)[1]
-        if cut_tail and " " in tail:
-            tail = tail.rsplit(" ", 1)[0]
-        before, after = ("…" if cut_lead else ""), ("…" if cut_tail else "")
-        return f"{before}{lead}<<{text[start:end]}>>{tail}{after}"
-    return ""
 
 
 def _live_restricted(session_key: str) -> bool:
@@ -680,6 +646,8 @@ class ConversationLog:
         #: which a channel that runs it may name after that chat opened
         #: (``DashboardState.take_conversation_title``).
         self.title_listeners: list[Callable[[str, str], None]] = []
+        #: What a consolidation pass read of each transcript, for its :meth:`mark_consolidated`.
+        self._consolidation_reads: dict[str, list[dict]] = {}
 
     def init(self) -> None:
         """Create sessions directory if missing."""
@@ -837,14 +805,28 @@ class ConversationLog:
         ]
 
     def get_unconsolidated(self, key: str) -> tuple[list[dict], int]:
-        """Return (messages_after_last_consolidated, total_message_count)."""
+        """Return (messages_after_last_consolidated, total_message_count); what was read is kept
+        for the pass's :meth:`mark_consolidated`."""
         messages = self._read_messages(key)
         offset = self._read_metadata(key).get("last_consolidated", 0)
+        self._consolidation_reads[key] = messages
         return messages[offset:], len(messages)
 
+    def _end_consolidation_read(self, key: str) -> None:
+        """Let go of what a pass read of *key* once it is over, marked or not: held, it keeps a
+        second copy of the transcript alive once a write replaces the cached one."""
+        self._consolidation_reads.pop(key, None)
+
     def mark_consolidated(self, key: str, offset: int) -> None:
-        """Record the last_consolidated offset in the session's record (:meth:`update_metadata`)."""
-        self.update_metadata(key, {"last_consolidated": offset, "updated_at": utc_now_iso()})
+        """Record that consolidation read *key*'s first *offset* messages (``last_consolidated``:
+        :meth:`update_metadata`), up to the first that is not the one the pass read
+        (``transcript_rewrites``): a rewrite while its model answered leaves the rest unread."""
+        now = self._read_messages(key)
+        read = self._consolidation_reads.pop(key, None)
+        mark = min(offset, len(now) if read is None else messages_unchanged(read, now))
+        if mark < offset:
+            logger.info("%s changed while it was consolidated: marked %d of %d", key, mark, offset)
+        self.update_metadata(key, {"last_consolidated": mark, "updated_at": utc_now_iso()})
 
     def unconsolidated_count(self, key: str) -> int:
         """Count messages not yet processed by the consolidator."""
@@ -1844,7 +1826,10 @@ class HistoryConsolidator:
                     )
                     self._running.discard(key)
                     return
-                await self._consolidate_locked(key, include_history=include_history)
+                try:
+                    await self._consolidate_locked(key, include_history=include_history)
+                finally:  # a pass that ends before its mark keeps nothing it read either
+                    self._log._end_consolidation_read(key)
 
     def _kept_in(self, folder: str) -> _KeptMemory | None:
         """The memory a chat working in *folder* keeps (``memory_locality.chat_folder``): the

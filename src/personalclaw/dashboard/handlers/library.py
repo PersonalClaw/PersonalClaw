@@ -829,8 +829,8 @@ def _knowledge_arm(store: Any, q: str, reports: dict[str, str]) -> tuple[list[st
     """The knowledge search's hits as row refs, best first: the hybrid search (keyword, graph and
     meaning, fused), a mirror's hit folded into its artifact and a write-up's into its report."""
     from personalclaw.dashboard.handlers import knowledge as kh
-    from personalclaw.history import match_snippet
     from personalclaw.knowledge.retrieval import HybridRetriever
+    from personalclaw.search_snippets import match_snippet
 
     embedder = kh._embedder()
     embed_fn = embedder.embed if embedder and embedder.is_available() else None
@@ -871,7 +871,7 @@ def _knowledge_arm(store: Any, q: str, reports: dict[str, str]) -> tuple[list[st
 
 def _findings_arm(store: Any, q: str) -> tuple[list[str], dict]:
     """Findings logs whose findings say *q*, the one with the newest such finding first."""
-    from personalclaw.history import match_snippet
+    from personalclaw.search_snippets import match_snippet
 
     needle = q.casefold()
     escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -892,7 +892,7 @@ def _findings_arm(store: Any, q: str) -> tuple[list[str], dict]:
 def _artifact_arm(prov: Any, q: str) -> tuple[list[str], dict, int]:
     """The artifact store's own search, ranked: a name match first, then its description or tags,
     then its body, each newest first."""
-    from personalclaw.history import match_snippet
+    from personalclaw.search_snippets import match_snippet
 
     needle = q.casefold()
     found = list(prov.list(q=q))
