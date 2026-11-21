@@ -614,7 +614,7 @@ class ScheduleRunStore:
 
     def _count_since_sync(self, job_id: str, since: float) -> int:
         from personalclaw.triggers import run_source
-        from personalclaw.triggers.models import INERT_OUTCOMES
+        from personalclaw.triggers.models import INERT_OUTCOMES, Outcome
 
         rows = self._read_jsonl(self._job_path(job_id))
         total = 0
@@ -647,11 +647,18 @@ class ScheduleRunStore:
             # hold the automation's first runs once what it needs is back.
             if str(row.get("trigger") or "") == "refused":
                 continue
+            # Nor is a payload the injection screen stopped (`gateway._record_blocked_fire`, its
+            # status and trigger both `blocked_injection`): refused before anything ran, it did no
+            # work, and counted, enough of them would hold the automation's real fires as running
+            # away.
+            if str(row.get("status") or "") == Outcome.BLOCKED_INJECTION.value:
+                continue
             total += 1
         return total
 
     async def count_since(self, job_id: str, since: float) -> int:
-        """How many runs this job recorded at or after `since` (a UTC epoch), yours left out.
+        """How many runs this job recorded at or after `since` (a UTC epoch), yours left out, and
+        none that did no work: a suppression, a refusal, a payload the injection screen stopped.
 
         🔴 THE WINDOWED QUERY three rate caps were waiting on. `rate_cap`,
         `max_runs_per_hour` and `max_actions_per_hour` were all validated, carried, and enforced by
