@@ -870,18 +870,51 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
     // user's own row (the page draws it), so this branch draws what the normal send path would:
     // the user's bubble, then a stream for its reply. Unrendered, the message ran with nothing
     // on screen anywhere.
+    //
+    // 📎 WHAT THE COMPOSER HOLDS GOES WITH IT. Her attached files, and the files, knowledge items
+    // and artifacts she mentioned, ride this send as they ride one between turns. A steer joins a
+    // turn whose inputs were put together already, so a message that carries any of them is
+    // queued for a turn of its own, and the composer lets them go once the send is taken in.
+    //
+    // Held while a file it carries uploads (`uploadHold`), whichever way this send came: the
+    // composer, a follow-up chip, the prompt palette, a spoken submit, mid-turn or not. Refused
+    // where the user is looking, and the text is kept: a caller that emptied the draft to send it
+    // gets it back there, unless the user has typed something else since.
+    if (uploadHold) {
+      // Back into an empty composer only, still marked when it came from a widget: the owner's own
+      // draft is never marked by it.
+      if (!opts?.uiLabel) setDraft((d) => (d.text.trim() ? d : { text: t, widget: fromWidget ? (d.widget ?? { text: t }) : null }))
+      notice.showError(uploadHold, 'upload')
+      return
+    }
     if (isStreaming) {
       const messageId = idFor(llmText)
       if (fromWidget) widgetSentIds.current.add(messageId)
-      const meta = turnPastes.length || fromWidget
-        ? { ...(turnPastes.length ? { pastes: turnPastes } : {}), ...(fromWidget ? { widget_action: true } : {}) }
-        : undefined
+      const sentFiles = [...mentionedFiles, ...attachedPaths]
+      const sentKnowledge = mentionedKnowledge.map((k) => k.id)
+      const sentArtifacts = mentionedArtifacts.map((a) => a.slug)
+      const sentBlocks = pasteBlocks
+      const carries = sentFiles.length > 0 || sentKnowledge.length > 0 || sentArtifacts.length > 0
+      const extra: Record<string, unknown> = {
+        ...(turnPastes.length ? { pastes: turnPastes } : {}),
+        ...(sentFiles.length ? { files: sentFiles } : {}),
+        ...(sentKnowledge.length ? { knowledge: sentKnowledge } : {}),
+        ...(sentArtifacts.length ? { artifacts: sentArtifacts } : {}),
+        ...(fromWidget ? { widget_action: true } : {}),
+      }
+      const meta = Object.keys(extra).length ? extra : undefined
       const deliver = (mode: string | undefined, expectedMessageId: string | undefined) => {
         ensureSession()
           .then((s) => api.sendChat(llmText, s, meta, mode, undefined, { messageId, expectedMessageId }).then((r) => [s, r] as const))
           .then(([s, r]) => {
             forgetId(llmText)
             setInput((cur) => (cur === t ? '' : cur))
+            // What it carried leaves the composer with it; what she added since stays.
+            setPasteBlocks((cur) => cur.filter((b) => !sentBlocks.includes(b)))
+            setMentionedFiles((cur) => cur.filter((f) => !sentFiles.includes(f)))
+            setAttachedPaths((cur) => cur.filter((f) => !sentFiles.includes(f)))
+            setMentionedKnowledge((cur) => cur.filter((k) => !sentKnowledge.includes(k.id)))
+            setMentionedArtifacts((cur) => cur.filter((a) => !sentArtifacts.includes(a.slug)))
             if (r.disposition === 'steered') {
               setSteered((prev) => (prev.some((x) => x.id === r.message_id) ? prev : [...prev, { text: t, id: r.message_id }]))
               return
@@ -908,18 +941,8 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
             reportActionFailure('steer this turn')(e)
           })
       }
-      deliver(takesSteersRef.current ? 'steer' : 'followup', takesSteersRef.current ? runningTurnId(turns) : undefined)
-      return
-    }
-    // Held while a file it carries uploads (`uploadHold`) — whichever way this send came: the
-    // composer, a follow-up chip, the prompt palette, a spoken submit. Refused where the user is
-    // looking, and the text is kept: a caller that emptied the draft to send it gets it back
-    // there, unless the user has typed something else since. A steer (above) carries no files.
-    if (uploadHold) {
-      // Back into an empty composer only, still marked when it came from a widget: the owner's own
-      // draft is never marked by it.
-      if (!opts?.uiLabel) setDraft((d) => (d.text.trim() ? d : { text: t, widget: fromWidget ? (d.widget ?? { text: t }) : null }))
-      notice.showError(uploadHold, 'upload')
+      const steers = takesSteersRef.current && !carries
+      deliver(steers ? 'steer' : 'followup', steers ? runningTurnId(turns) : undefined)
       return
     }
     // meta.files = @-mentioned workspace files + uploaded attachments.

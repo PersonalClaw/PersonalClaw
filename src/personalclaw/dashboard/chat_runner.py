@@ -4875,9 +4875,9 @@ async def run_chat(
                 is_subagent = next_msg.startswith(SUBAGENT_COMPLETION_PREFIX)
                 cron_label, _ = redact_exfiltration_urls(cron_label)
                 cron_label, _ = redact_credentials(cron_label)
-                # The files the queued messages came with, which the turn carries as its own.
-                queued_files = [p for item in consumed for p in item.get("files") or []]
-                queued_meta: dict[str, Any] = {"files": queued_files} if queued_files else {}
+                # What the queued messages came with besides their words (`chat_intake.CARRIED`):
+                # their files, knowledge items and artifacts, which the turn reads as its own.
+                queued_meta: dict[str, Any] = chat_intake.what_they_carry(consumed)
                 # And which of the row's words their senders typed (`queued_words`).
                 if (_queued_own := queued_words(consumed)) is not None:
                     queued_meta[OWN_WORDS] = _queued_own

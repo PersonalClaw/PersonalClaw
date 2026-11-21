@@ -68,6 +68,8 @@ class ChatQueue:
         receipt: Mapping[str, Any] | None = None,
         from_a_widget: bool = False,
         notice: str = "",
+        knowledge: Sequence[str] = (),
+        artifacts: Sequence[str] = (),
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -87,6 +89,8 @@ class ChatQueue:
         ``from_a_widget`` says it came from a widget (``own_words.WIDGET_ACTION``): the page is
         told, so its Edit gives it back still marked, and the row it runs as keeps the marker.
         ``notice`` names the automation whose notice it is (:data:`NOTICE`).
+        ``knowledge`` and ``artifacts`` are the knowledge items and artifacts it mentions, which
+        its turn reads as a message sent between turns does (``referenced_content``).
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
@@ -97,6 +101,10 @@ class ChatQueue:
             item["channel"] = channel
         if files:
             item["files"] = list(files)
+        if knowledge:
+            item["knowledge"] = list(knowledge)
+        if artifacts:
+            item["artifacts"] = list(artifacts)
         if own_words is not None:
             item[OWN_WORDS] = own_words
         if pastes:

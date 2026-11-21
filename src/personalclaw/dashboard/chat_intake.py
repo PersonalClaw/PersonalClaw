@@ -291,6 +291,26 @@ def _settle(session: _ChatSession, message_id: str, held: _Held) -> None:
         held.settled.set_result(None)
 
 
+#: What a message carries besides its words, on the meta its send gave: the files attached to it
+#: and the files it mentions, and the knowledge items and artifacts it mentions.
+CARRIED = ("files", "knowledge", "artifacts")
+
+
+def what_it_carries(intake: Intake) -> dict[str, list[str]]:
+    """What *intake* carries besides its words (:data:`CARRIED`): its door's ``files`` and what
+    its meta names, each once, in order. A message that carries any of them is queued while a turn
+    runs, never steered into it: a steer joins a turn whose inputs were put together already, so
+    the turn would never read them, and they would wait for the next message instead."""
+    meta = intake.meta or {}
+    found: dict[str, list[str]] = {}
+    for key in CARRIED:
+        given = [*(intake.files if key == "files" else ()), *(meta.get(key) or ())]
+        kept = list(dict.fromkeys(str(v) for v in given if isinstance(v, str) and v))
+        if kept:
+            found[key] = kept
+    return found
+
+
 def take_in(state: DashboardState, session: _ChatSession, intake: Intake) -> Receipt | Refusal:
     """Take *intake* into *session*, or refuse it, in one step with no wait in it: two identical
     sends racing take one message.
@@ -335,6 +355,7 @@ def _take(state: DashboardState, session: _ChatSession, intake: Intake) -> Recei
     elif (
         intake.queue_mode == "steer"
         and not intake.replaces
+        and not what_it_carries(intake)
         and running_turn.steer(
             state,
             session,
@@ -352,10 +373,13 @@ def _take(state: DashboardState, session: _ChatSession, intake: Intake) -> Recei
         disposition, into = STEERED_IN, _id_of(current)
     else:
         disposition = REPLACED if intake.replaces else QUEUED
+        extras = what_it_carries(intake)
         session.queue_append(
             intake.message,
             channel=intake.channel,
-            files=list(intake.files) or None,
+            files=extras.get("files"),
+            knowledge=extras.get("knowledge", ()),
+            artifacts=extras.get("artifacts", ()),
             own_words=intake.own_words,
             source=intake.source,
             asked_for_by=intake.asked_for_by,
@@ -389,6 +413,18 @@ def with_message_id(role: str, ts: str, meta: dict | None) -> dict | None:
     if role not in TURN_STARTS or ts or (meta or {}).get(MESSAGE_ID) or (meta or {}).get(STEERED):
         return meta
     return {**(meta or {}), MESSAGE_ID: ids.new_id("msg")}
+
+
+def what_they_carry(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """What the queued *items* carry besides their words (:data:`CARRIED`), merged in the order
+    they were queued, each once: the meta of the row their turn runs as, which its readers take its
+    attachments and mentions from."""
+    merged: dict[str, Any] = {}
+    for key in CARRIED:
+        found = list(dict.fromkeys(str(v) for item in items for v in item.get(key) or ()))
+        if found:
+            merged[key] = found
+    return merged
 
 
 def write_drained(
