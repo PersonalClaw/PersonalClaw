@@ -148,16 +148,24 @@ def get_extractor() -> AttachmentExtractor:
     return _INSTANCE
 
 
-def file_block(name: str, got: Extracted) -> str:
-    """One attached file as a turn hands it to the model: core's label, then the text read from
-    it, masked and fenced as data (``security.fence_untrusted``), as a fetched page or an Inbox
+def saved_at(name: str, path: str) -> str:
+    """*name*, an attachment's display name, with where it is saved (*path*), as a turn names it
+    to the model: the path a tool that takes a file is given, beside the name the model calls the
+    file by when it writes to the user. Just *name* when there is no path."""
+    return f"{name} (saved at {path})" if path else name
+
+
+def file_block(name: str, got: Extracted, *, path: str = "") -> str:
+    """One attached file as a turn hands it to the model: core's label (its name, and where it is
+    saved, *path*, for a tool that takes a file: :func:`saved_at`), then the text read from it,
+    masked and fenced as data (``security.fence_untrusted``), as a fetched page or an Inbox
     message is. Where that text is a cut of what was read, core's line after the fence says how
     much of it the model was given. Where nothing was read, core says what it hands instead: the
     file's size and format, or why its text is withheld."""
     from personalclaw.knowledge.extract import withheld
     from personalclaw.security import fence_untrusted, redact_for_model
 
-    head = f"### Attached file: {name}\n\n"
+    head = f"### Attached file: {saved_at(name, path)}\n\n"
     if got.read and got.text:
         text = redact_for_model(got.text)
         fenced = fence_untrusted(
@@ -183,7 +191,8 @@ def display_name(path: str) -> str:
     """The name an upload was attached with: its stored name without the uuid prefix.
 
     What the prompt labels the file, and what its extracted text calls it when it can only
-    describe it. The stored name is the upload route's alone and never reaches a user."""
+    describe it. The stored name reaches no user: the model is given the file's saved path only
+    for the tools it calls (:func:`saved_at`), and told to call the file by this name."""
     base = os.path.basename(path)
     # uploads are saved as "<32-hex>_<original>"
     if len(base) > 33 and base[32] == "_" and all(c in "0123456789abcdef" for c in base[:32]):
