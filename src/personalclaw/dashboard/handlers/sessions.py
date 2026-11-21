@@ -456,9 +456,12 @@ async def api_approvals(request: web.Request) -> web.Response:
 
 
 async def api_approval_resolve(request: web.Request) -> web.Response:
-    """POST /api/approvals/{id}/{action} — approve or reject."""
+    """POST /api/approvals/{id}/{action} — approve or reject.
+
+    *id* is the approval's registry id, or the id ``GET /api/waiting`` lists it under
+    (``approval:<id>``). One no approval waits under answers 404 ``approval_not_found``."""
     state: DashboardState = request.app["state"]
-    approval_id = request.match_info["id"]
+    approval_id = state.approval_id_of(request.match_info["id"])
     action = request.match_info["action"]
     if action not in ("approve", "reject"):
         return web.json_response({"error": "invalid action"}, status=400)
@@ -473,9 +476,22 @@ async def api_approval_resolve(request: web.Request) -> web.Response:
     ended = state.refuse_ended_owner(approval_id)
     if ended:
         return json_error("approval_owner_ended", message=f"Nothing was run: {ended}.", status=409)
+    if approval_id not in state._pending_approvals:
+        return json_error(
+            "approval_not_found",
+            message=(
+                "No approval is waiting under this id: it was answered, it expired, or there "
+                "never was one."
+            ),
+            status=404,
+        )
     ok = state.resolve_approval(approval_id, action == "approve", by=by)
     if not ok:
-        return web.json_response({"error": "not found or expired"}, status=404)
+        return json_error(
+            "approval_not_answered",
+            message="This approval is still waiting, and nothing was decided here.",
+            status=409,
+        )
     return web.json_response({"ok": True})
 
 

@@ -1726,6 +1726,15 @@ class DashboardApprovalState:
             by, what=f"approval:{approval_id}", asked_by=str(entry.get("asked_by") or "")
         )
 
+    def approval_id_of(self, given: str) -> str:
+        """The registry id *given* names: itself, or the approval the waiting list names as
+        ``approval:<id>`` (``waiting``'s id for an item, its kind before its own id), when one is
+        pending under the rest. Any other id is given back as it is, and answers nothing."""
+        if given in self._pending_approvals:
+            return given
+        bare = given.removeprefix("approval:")
+        return bare if bare and bare in self._pending_approvals else given
+
     def resolve_approval(self, approval_id: str, approved: bool, *, by: Principal) -> bool:
         """Answer a pending approval by its REGISTRY id, from any surface. False if not pending.
 

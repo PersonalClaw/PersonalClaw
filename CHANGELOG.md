@@ -28,6 +28,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An artifact linked to a file says when it can't follow it: after a restore elsewhere, an upgrade from a release whose workspace was under your home folder, or the file's deletion, the artifact's page names the file and why it shows its last saved copy, and a save or revert that could not change the file says so. Before, both happened without a word.**
 - **A helper in a batch whose file reads were refused says why. A batch of two or more tasks runs its helpers in their run's own folder, and one given no `cwd` reads nothing of the chat's folder; its helper now ends naming that, and that starting the batch with `cwd` set to the chat's folder lets it read there, instead of "it was refused". A file tool's refusal of a path outside its reach names the folder the session works in when that isn't the workspace.**
 - **Settings › Devices shows when each client last used its token on every inbound surface: the OpenAI-compatible endpoint, A2A, the capture proxy and the control bridge, not only MCP and trigger runs. A refused request counts as no use. A last-used time ahead of the clock, from a clock set back or a hand-edited file, is written over at the next use.**
+- **The approvals route answers an approval by the id `GET /api/waiting` lists it under (`approval:<id>`) as well as its own, and an id no approval waits under answers 404 `approval_not_found`, saying it was answered, it expired, or there never was one, where every such id read as expired.**
 
 ### Security
 
