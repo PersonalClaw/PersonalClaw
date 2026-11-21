@@ -139,9 +139,10 @@ def build_backend_sandbox_spec(
       passes ``data_dir=None`` when it is not, mirroring the storage gate). Without storage the
       backend gets no writable host path beyond the workspace boundary.
 
-    ``expose_ports`` carries the backend's port so the tier maps it to the host (the gateway
-    reaches the backend over loopback). ``env`` becomes the container/guest environment verbatim —
-    it is already the allowlisted, secret-filtered child env the launcher built.
+    ``expose_ports`` carries the backend's port so the tier maps it to the host's loopback only
+    (the gateway reaches the backend at ``127.0.0.1``). ``env`` becomes the container/guest
+    environment verbatim — it is already the allowlisted, secret-filtered child env the launcher
+    built.
     """
     from personalclaw.sandbox import PROFILE_TOOL
     from personalclaw.sandbox_providers import SandboxSpec

@@ -80,7 +80,8 @@ class SandboxSpec:
     * ``env`` — the container's environment, already secret-filtered upstream. This is the
       ONLY environment the container receives; the host's environment is never copied in.
     * ``safety_profile`` — the guardrails safety profile name (drives the ``pclaw-tool`` surface).
-    * ``expose_ports`` — container ports mapped to the host for a localhost preview.
+    * ``expose_ports`` — container ports mapped to the host for a localhost preview, published on
+      the host's loopback (``127.0.0.1``) only.
     * ``grant_paths`` — host paths explicitly granted into the sandbox (e.g. a model dir). NOT
       mounted unless listed, so an ungranted sandbox cannot see — let alone delete — them.
     """

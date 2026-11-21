@@ -163,9 +163,12 @@ def build_docker_argv(
     for key in sorted(spec.env):
         argv += ["--env", f"{key}={spec.env[key]}"]
 
-    # Ports mapped to the host for the localhost preview; ephemeral, torn down with --rm.
+    # Ports mapped to the host for the localhost preview; ephemeral, torn down with --rm. Each is
+    # published on 127.0.0.1 only, the address the gateway dials (RunningBackend.base_url): with no
+    # host address a container runtime publishes on every interface of the host, which would let a
+    # device on the network reach the backend past the gateway.
     for port in spec.expose_ports:
-        argv += ["-p", f"{int(port)}:{int(port)}"]
+        argv += ["-p", f"127.0.0.1:{int(port)}:{int(port)}"]
 
     argv.append(sandbox_image())
     argv += list(inner_argv)

@@ -673,6 +673,11 @@ The honest, complete statement of limitations lives in
 [`../security/limitations.md`](../security/limitations.md); this section is the architectural
 summary, not a substitute for them.
 
+The container tier (`sandbox_providers/docker.py`) publishes an app backend's port on `127.0.0.1`
+only, the address the gateway dials. On Linux, Docker Engine before 28 let a host on the same
+network segment reach a port published on `127.0.0.1` by routing to the container's bridge
+address; Engine 28 closes that, so run the tier on Engine 28 or later there.
+
 ### What runs as the owner is owner-only (`owner_only.py`)
 
 Five places in the home hold what runs as the owner and what they allowed: `config.json` (among
