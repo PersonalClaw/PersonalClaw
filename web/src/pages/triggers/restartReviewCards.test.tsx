@@ -32,6 +32,13 @@ const SLEPT: TriggerReviewCard = {
   reason: '', count_is_floor: false, cause: 'paused', name: 'Pack the soccer bag', open_id: 'schedule:clock:pack',
 }
 
+// A reminder that yields to you, due while you were active: its own rules held it at its time.
+const HELD: TriggerReviewCard = {
+  trigger_id: 'clock:remind', kind: 'missed', count: 1, latest: now() - 5 * 60, oldest: now() - 5 * 60,
+  reason: 'it yields to you, and you were active', count_is_floor: false, cause: 'held',
+  name: 'Call the dentist', open_id: 'schedule:clock:remind',
+}
+
 const { automationsFrom } = await vi.hoisted(() => import('../../test/automationsRead'))
 const { STATE } = vi.hoisted(() => ({
   STATE: {
@@ -106,7 +113,7 @@ describe('the review above the Triggers list', () => {
     mount()
     const section = await screen.findByTestId('trigger-review')
     expect(within(section).getByRole('heading', { name: 'Waiting for your decision' })).toBeInTheDocument()
-    expect(section).toHaveTextContent('because PersonalClaw was stopped or restarting, or the computer was asleep. None of them runs on its own')
+    expect(section).toHaveTextContent('These did not run when they were due, and each says why. None of them runs on its own')
     const missed = await cardFor('Hourly digest')
     expect(missed).toHaveTextContent('Missed 3 scheduled runs while PersonalClaw was not running; the latest was 2h ago. Run now runs it once.')
     const cut = await cardFor('Nightly backup')
@@ -118,6 +125,14 @@ describe('the review above the Triggers list', () => {
     const slept = await cardFor('Pack the soccer bag')
     expect(slept).toHaveTextContent('Missed 1 scheduled run 9m ago, while PersonalClaw was paused or the computer was asleep.')
     expect(slept).not.toHaveTextContent('not running')
+  })
+
+  it('says a one-shot its own rules held at its time was missed for the reason its gate gave', async () => {
+    STATE.cards = [HELD]
+    mount()
+    const held = await cardFor('Call the dentist')
+    expect(held).toHaveTextContent('Missed 1 scheduled run 5m ago, because it yields to you, and you were active.')
+    expect(held).not.toHaveTextContent('asleep')
   })
 
   it('Run now sends the decision for that card and the card leaves the review', async () => {

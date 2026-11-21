@@ -92,18 +92,29 @@ GATE_OUTCOMES: dict[str, str] = {
     "duty": Outcome.SKIPPED_GATE.value,
     "budget": Outcome.SKIPPED_BUDGET.value,
     "claim": Outcome.SKIPPED_OVERLAP.value,
-    # "refuses over-capacity starts with a typed RESOURCE_BUSY … (a `deferred`
-    # ledger row)". DEFERRED rather than a skip: the slot frees on its own, so this fire
-    # is postponed by contention, not dropped by policy.
-    "slot": Outcome.DEFERRED.value,
-    # The `skip_if_active` liveness guard. DEFERRED for the same reason as `slot`
-    # and `yield`: the target that looks busy (a dirty worktree, a lock file, a just-touched
-    # path) settles on its own, so the fire is postponed by state, not dropped by policy — it
-    # re-evaluates next tick with no auto-retry storm.
-    "active": Outcome.DEFERRED.value,
-    "yield": Outcome.DEFERRED.value,
+    # The three gates that hold a fire because something it needs is busy (`BUSY_GATES`): a
+    # resource slot another run holds (the typed refusal that names its holder), a target that
+    # looks busy (`skip_if_active`: a dirty worktree, a lock file, a just-touched path), or you,
+    # active, when it yields to you. `SKIPPED_GATE`, said as a skip of THIS fire: once called
+    # `deferred`, which here means work that still starts (a launched run, a queued one, one
+    # waiting on you), but no door retries a held fire. The clock has already moved on to the next
+    # time, an event fire is passed over and a webhook's caller is told to try again, so "deferred
+    # until it frees" promised a run that never came. A one-shot held at its time goes to the
+    # review instead (`service.tick`).
+    "slot": Outcome.SKIPPED_GATE.value,
+    "active": Outcome.SKIPPED_GATE.value,
+    "yield": Outcome.SKIPPED_GATE.value,
     "capability": Outcome.REFUSED.value,
 }
+
+#: The gates that hold a fire because something it needs is busy, not because a rule of its own
+#: says it must not fire now (quiet hours, spacing, its budget): what it works with is busy, or you
+#: are active. A one-shot held by one of them is a run you still wanted, so the tick puts it on the
+#: review rather than letting its taken slot be its last word (`service.tick`).
+BUSY_GATES: frozenset[str] = frozenset({"slot", "active", "yield"})
+
+#: How a held fire's reason begins: this fire is skipped, and nothing runs it later.
+SKIPPED_THIS_TIME = "skipped this time: "
 
 
 @dataclass
@@ -437,7 +448,7 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     if slot:
         return _refuse(
             "slot",
-            f"resource slot {slot!r} is busy (held by {holder}); deferred until it frees",
+            f"{SKIPPED_THIS_TIME}resource slot {slot!r} is busy (held by {holder})",
             passed,
             claim=claim,
         )
@@ -446,20 +457,20 @@ async def evaluate(ctx: FireContext) -> FireDecision:
     # ── 5c. skip_if_active liveness guard ──
     #
     # An OPTIONAL guard on a mutating trigger, using cheap liveness heuristics (dirty
-    # worktree, lockfiles, recent mtime) at fire time: a busy target defers rather than fires. The
+    # worktree, lockfiles, recent mtime) at fire time: a busy target skips this fire. The
     # signal is PRE-COMPUTED by the caller (`service.tick` → `liveness.is_target_active`) and only
     # honoured here, exactly as `busy_slot`/`user_active` are — a gate that ran its own `git status`
     # mid-walk would break the purity the module docstring depends on.
     #
-    # AFTER the slot gate, deliberately: both are "the target isn't ready → DEFERRED", and this is
-    # the same class of deferral as a contended slot (the resource is the working STATE, not a
-    # named slot). The claim is threaded back on the decision (`claim=claim`) so the caller RELEASES
-    # it — a deferred fire that kept the lock would block the very retry it is waiting for, the same
-    # reason the `slot` and `yield` gates hand their claim back.
+    # AFTER the slot gate, deliberately: both are "the target isn't ready", and this is the same
+    # class of hold as a contended slot (the resource is the working STATE, not a named slot). The
+    # claim is threaded back on the decision (`claim=claim`) so the caller RELEASES it — a held fire
+    # that kept the lock would block the automation's next fire, the same reason the `slot` and
+    # `yield` gates hand their claim back.
     if ctx.target_active:
         return _refuse(
             "active",
-            ctx.target_active_reason or "the target is active; deferred until it settles",
+            SKIPPED_THIS_TIME + (ctx.target_active_reason or "the target is active"),
             passed,
             claim=claim,
         )
@@ -467,12 +478,12 @@ async def evaluate(ctx: FireContext) -> FireDecision:
 
     # ── 6. foreground yield / resource slots ──
     if ctx.yield_to_user and ctx.user_active:
-        # The claim is RELEASED by returning it on the decision — a deferred fire that kept the
-        # lock would block the retry it is waiting for. Reported as `deferred`, not `skipped_*`:
-        # the fire is coming back.
+        # The claim is RELEASED by returning it on the decision — a held fire that kept the lock
+        # would block the automation's next fire. Said as a skip (`GATE_OUTCOMES`): nothing brings
+        # this fire back.
         return _refuse(
             "yield",
-            "yielding to foreground user activity",
+            f"{SKIPPED_THIS_TIME}it yields to you, and you were active",
             passed,
             claim=claim,
         )

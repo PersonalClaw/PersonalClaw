@@ -171,10 +171,12 @@ def test_a_second_fire_is_refused_by_single_flight():
 
 
 def test_a_yielded_fire_RETURNS_its_claim_so_it_cannot_wedge():
-    """A deferred fire that kept the lock would block the retry it is waiting for."""
+    """A held fire that kept the lock would block the automation's next fire. It is skipped this
+    time, not deferred: nothing brings it back (`test_a_held_fire_leaves_a_history_row`)."""
     decision, _ = _evaluate(yield_to_user=True, user_active=True)
     assert decision.gate == "yield"
-    assert decision.outcome == Outcome.DEFERRED.value
+    assert decision.outcome == Outcome.SKIPPED_GATE.value
+    assert decision.reason == "skipped this time: it yields to you, and you were active"
     assert decision.claim is not None  # handed back for release
 
 
@@ -479,17 +481,17 @@ class TestSkipIfActiveGate:
         assert decision.allowed is True
         assert "active" in decision.passed
 
-    def test_a_busy_target_DEFERS(self) -> None:
+    def test_a_busy_target_skips_this_fire(self) -> None:
         decision, _ = _evaluate(
             target_active=True, target_active_reason="git worktree /w has uncommitted changes"
         )
         assert decision.allowed is False
         assert decision.gate == "active"
-        assert decision.outcome == Outcome.DEFERRED.value
+        assert decision.outcome == Outcome.SKIPPED_GATE.value
 
-    def test_a_deferred_fire_RETURNS_its_claim_so_it_cannot_wedge(self) -> None:
-        """The gate lands after the claim is acquired, so a defer that kept the lock would block the
-        very retry it is waiting for — the claim is threaded back for release, like `slot`/`yield`.
+    def test_a_held_fire_RETURNS_its_claim_so_it_cannot_wedge(self) -> None:
+        """The gate lands after the claim is acquired, so a held fire that kept the lock would block
+        the automation's next fire — the claim is threaded back for release, like `slot`/`yield`.
         """
         decision, _ = _evaluate(target_active=True, target_active_reason="a lock file is present")
         assert decision.gate == "active"
@@ -500,10 +502,10 @@ class TestSkipIfActiveGate:
             target_active=True, target_active_reason="notes/todo.md was modified within 300s"
         )
         row = F.ledger_row(decision, ctx)
-        assert row["outcome"] == Outcome.DEFERRED.value
-        assert "modified within 300s" in row["reason"]
+        assert row["outcome"] == Outcome.SKIPPED_GATE.value
+        assert row["reason"] == "skipped this time: notes/todo.md was modified within 300s"
 
-    def test_an_active_target_with_no_reason_still_defers_with_a_default(self) -> None:
+    def test_an_active_target_with_no_reason_still_says_one(self) -> None:
         """A reason is MANDATORY for a suppression; a caller that set the flag but no text
         must not produce a reasonless row."""
         decision, ctx = _evaluate(target_active=True, target_active_reason="")
@@ -511,8 +513,8 @@ class TestSkipIfActiveGate:
         assert F.ledger_row(decision, ctx)["reason"]
 
     def test_active_runs_AFTER_the_slot_gate(self) -> None:
-        """Both are "target not ready → DEFERRED"; `skip_if_active` is the same class of deferral as
-        a contended slot (the resource is the working state, not a named slot), so it follows it."""
+        """Both are "target not ready"; `skip_if_active` is the same class of hold as a contended
+        slot (the resource is the working state, not a named slot), so it follows it."""
         assert F.GATE_ORDER.index("active") > F.GATE_ORDER.index("slot")
         assert F.GATE_ORDER.index("active") > F.GATE_ORDER.index("claim")
 

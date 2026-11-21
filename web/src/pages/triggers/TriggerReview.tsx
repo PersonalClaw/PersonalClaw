@@ -71,7 +71,7 @@ export function TriggerReview({ cards, error, onRetry, onDecided, onOpen }: {
     <section aria-labelledby="trigger-review-heading" data-testid="trigger-review" className="mb-l rounded-lg border border-outline-variant/50 bg-surface-container px-l py-m">
       <Eyebrow as="h2" id="trigger-review-heading">Waiting for your decision</Eyebrow>
       <p data-type="body-s" className="mt-xs text-on-surface-var">
-        These did not run when they were due, because PersonalClaw was stopped or restarting, or the computer was asleep. None of them runs on its own: run each now, or dismiss it.
+        These did not run when they were due, and each says why. None of them runs on its own: run each now, or dismiss it.
       </p>
       <ul className="mt-m flex flex-col gap-s">
         {cards.map((card) => {
@@ -111,6 +111,7 @@ const MISSED_WHILE: Record<TriggerReviewCard['cause'], string> = {
   paused: 'while PersonalClaw was paused or the computer was asleep',
   stopped_or_paused: 'while PersonalClaw was stopped, paused or asleep',
   unseen: 'before this automation reached PersonalClaw',
+  held: 'because something it works with was busy, or you were active',
 }
 
 /** The card's one sentence: what did not happen, when, and why it is waiting for you. */
@@ -120,7 +121,8 @@ export function reviewSentence(card: TriggerReviewCard): string {
   }
   const n = card.count
   const many = `${card.count_is_floor ? 'at least ' : ''}${n} scheduled run${n === 1 ? '' : 's'}`
-  const why = MISSED_WHILE[card.cause]
+  // A one-shot its own rules held at its time: the gate's own words say what was busy.
+  const why = card.cause === 'held' && card.reason ? `because ${card.reason}` : MISSED_WHILE[card.cause]
   return n === 1
     ? `Missed ${many} ${relPast(card.latest)}, ${why}.`
     : `Missed ${many} ${why}; the latest was ${relPast(card.latest)}. Run now runs it once.`
