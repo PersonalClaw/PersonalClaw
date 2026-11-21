@@ -26,6 +26,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **`allow_remote` does what it says for the MCP, OpenAI-compatible and A2A surfaces. With it on, a program on another machine is taken when its `Host` is `external_access.public_url`'s and it carries the surface's token, and refused with a bare 401 or 403 otherwise. With it off, the default, nothing changes. Capture and the control bridge stay on this machine whatever it says, and Settings › External Access no longer marks capture as reachable from outside.**
 - **Pair a device names an address a phone can reach when the dashboard is open on this computer: the network address the gateway listens on, and the phone's redeem and changes are taken from there. A gateway that listens only on this computer says what to turn on instead of showing a QR code no phone could use.**
 - **An automation running while the computer sleeps keeps its claim, so no second run of it starts beside the first when the machine wakes. A run's claim, and the half-hour deadline after which a run is called timed out, count the time the machine was awake, not the time it slept.**
 - **An edit saved to an automation while the scheduler was deciding its fire, or to a lifecycle hook while it ran, is kept: the scheduler's and the hook's own bookkeeping no longer write the whole record back from the copy they read before. An automation or hook switched off meanwhile stays off.**

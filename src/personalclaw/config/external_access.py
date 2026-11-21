@@ -97,8 +97,9 @@ class ExternalAccessSurfaceConfig:
         metadata=_meta(
             "Allow remote",
             "Permit non-loopback callers. Requires external_access.public_url, and the "
-            "request's Host must match it exactly. Prefer an SSH tunnel to loopback. "
-            "The control bridge ignores this flag entirely — loopback-only forever.",
+            "request's Host must match it exactly; each call still needs the surface's "
+            "token. Prefer an SSH tunnel to loopback. The control bridge and the capture "
+            "proxy ignore this flag entirely — loopback-only forever.",
         ),
     )
 

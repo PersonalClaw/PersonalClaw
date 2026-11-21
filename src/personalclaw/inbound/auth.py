@@ -269,16 +269,48 @@ def surface_of_path(path: str) -> str | None:
     return webhook.SURFACE if webhook.is_door(path) else None
 
 
+#: The surfaces on the dashboard's port a program on another machine may reach, when the owner
+#: turns ``allow_remote`` on for one. Never capture, the webhook's two doors or the control
+#: bridge: each is loopback-only whatever the setting, by its own check.
+REMOTE_SURFACES: tuple[str, ...] = ("mcp", "openai", "a2a")
+
+
+def takes_remote(request) -> bool:
+    """Whether *request* comes from another machine to a surface whose owner lets remote callers
+    in (``allow_remote`` on for it), so the surface's own rule decides it, not the dashboard's
+    origin check: :func:`peer_allowed` (``public_url`` set, the Host matching it), then its bearer
+    token, compared in constant time. Each surface reads only ``Authorization``, never a cookie, so
+    no browser credential rides along.
+
+    False for a loopback peer, whose requests meet the origin check as they always did; for every
+    other path; and when the config can't be read (fail-closed).
+    """
+    if is_loopback(request):
+        return False
+    surface = surface_of_path(str(getattr(request, "path", "") or ""))
+    if surface not in REMOTE_SURFACES:
+        return False
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        surface_cfg = getattr(AppConfig.load().external_access, surface, None)
+    except Exception:  # noqa: BLE001 — unreadable config ⇒ the origin check decides (fail-closed)
+        logger.debug("inbound: config unreadable during the remote check", exc_info=True)
+        return False
+    return bool(getattr(surface_cfg, "allow_remote", False))
+
+
 def off_machine_refusal(request) -> str:
     """What a program on another machine is told when it calls an inbound surface, or ``""`` when
     the request is not that.
 
     Such a request carries no browser origin, and the dashboard refuses a state-changing request
-    from another address that carries none before any surface reads it — so the surfaces take
-    their requests only from programs on the machine PersonalClaw runs on, whatever
-    ``allow_remote`` says. The sentence says that, which address the request came from, and the
-    two things that do reach it: a client on that machine, or an SSH tunnel to its loopback. It
-    says the same whether the surface is on or off, so it tells a prober nothing a 404 hides.
+    from another address that carries none before any surface reads it, unless the owner turned
+    ``allow_remote`` on for that surface (:func:`takes_remote`): so a surface without it takes its
+    requests only from programs on the machine PersonalClaw runs on, and capture and the webhook
+    always do. The sentence says that, which address the request came from, and the two things
+    that do reach it: a client on that machine, or an SSH tunnel to its loopback. It says the same
+    whether the surface is on or off, so it tells a prober nothing a 404 hides.
     """
     surface = surface_of_path(str(getattr(request, "path", "") or ""))
     if surface is None or is_loopback(request):

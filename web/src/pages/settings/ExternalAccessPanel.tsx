@@ -452,7 +452,7 @@ function SurfaceRow({
         {surface.enabled && !blocked && ended && (
           <StatusPill tone="warn" className="shrink-0" title={endedWhy}>{ended}</StatusPill>
         )}
-        {surface.enabled && !blocked && surface.allow_remote && (
+        {surface.enabled && !blocked && surface.allow_remote && !surface.loopback_only && (
           <span
             data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5"
             style={{

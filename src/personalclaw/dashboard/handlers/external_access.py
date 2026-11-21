@@ -60,9 +60,10 @@ def _surface_rows() -> list[dict]:
                 # revocation refuse the TOKEN, not the surface, so a registered client's own
                 # token keeps working and `token_configured` stays true.
                 **lifetime,
-                # The bridge's exception is reported as data so the FE does not have to
-                # re-derive a rule the backend already enforces.
-                "loopback_only": surface == auth.BRIDGE_SURFACE,
+                # The bridge's and capture's exception is reported as data so the FE does not
+                # have to re-derive a rule the backend already enforces: neither ever takes a
+                # caller on another machine, whatever its `allow_remote` says.
+                "loopback_only": surface not in auth.REMOTE_SURFACES,
                 # Every surface on the dashboard's port serves from the next request; the bridge
                 # listens on its own port, started with the gateway, so it is the one that can be
                 # on, with a token, and not listening yet.

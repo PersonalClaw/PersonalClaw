@@ -736,10 +736,13 @@ audit trail names the switch that refused it: every request (allowed or refused)
 restart — except the control bridge, whose own loopback listener starts with the gateway.
 
 Remote access (`external_access.<surface>.allow_remote` + `external_access.public_url`)
-exists but is **discouraged**, and does not work for an MCP client at all — see
-[Use from your IDE](../guides/use-from-your-ide.md). Neither knob is editable from the
-dashboard; they are config-file-only on purpose, and the PATCH endpoint refuses them
-rather than ignoring them.
+lets a program on another machine call the MCP, OpenAI-compatible or A2A surface, when its
+`Host` is the public URL's and it carries the surface's token. It's **discouraged**: an SSH
+tunnel to loopback puts nothing new on the network. See
+[Use from your IDE](../guides/use-from-your-ide.md#remote-access). Capture and the control bridge
+ignore it, and the webhook has no such setting. Neither knob is editable from the dashboard;
+they are config-file-only on purpose, and the PATCH endpoint refuses them rather than ignoring
+them.
 
 ## Other commands
 

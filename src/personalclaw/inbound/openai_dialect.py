@@ -60,6 +60,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw import session_keys
+from personalclaw.http_errors import HTTP_ERROR_CODES
 from personalclaw.inbound import auth, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
@@ -251,8 +252,17 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, Any |
     allowed, why = auth.peer_allowed(request, OPENAI_SURFACE)
     if not allowed:
         audit(OPENAI_SURFACE, route=route, status=403, refused=why)
+        # The reason is the audit row's, not the caller's: with `allow_remote` on, a caller on
+        # another machine reaches this check, and "Host 'x' does not match public_url" or
+        # "public_url is unset" would tell it how this gateway is set up. The MCP and A2A
+        # surfaces answer the same fixed sentence.
         return (
-            openai_error(why, code="forbidden", type_="invalid_request_error", status=403),
+            openai_error(
+                HTTP_ERROR_CODES["forbidden"],
+                code="forbidden",
+                type_="invalid_request_error",
+                status=403,
+            ),
             None,
             "",
         )

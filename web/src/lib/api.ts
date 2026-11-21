@@ -309,7 +309,8 @@ export interface ExternalAccessSurface {
   token_state?: 'live' | 'expired' | 'revoked' | 'replaced' | 'unavailable'
   /** When the configured token stops working (epoch seconds; 0 when unknown). */
   token_expires_at?: number
-  /** True for the control bridge, which ignores `allow_remote` by construction. */
+  /** True for the control bridge and the capture proxy, which ignore `allow_remote` by
+   *  construction: neither ever takes a caller on another machine. */
   loopback_only: boolean
   /** The control bridge only: whether its listener is up. It starts with the gateway, so one
    *  turned on while the gateway runs listens from the next start. Absent for every other surface,
