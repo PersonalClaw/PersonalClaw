@@ -226,6 +226,7 @@
       "cli_server",
       "cli_setup",
       "command_effects",
+      "command_identity",
       "command_operands",
       "command_shell",
       "command_unsplit",
