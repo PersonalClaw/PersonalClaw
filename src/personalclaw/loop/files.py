@@ -664,7 +664,17 @@ def write_question(loop_id: str, question: str, **extra: Any) -> None:
         _waiting_moved()
 
 
-def pending_question(loop_id: str) -> dict | None:
+class QuestionUnreadable(Exception):
+    """A loop's question file is there but cannot be read as a question (:func:`pending_question`
+    with *strict*)."""
+
+
+def pending_question(loop_id: str, *, strict: bool = False) -> dict | None:
+    """The question the loop *loop_id* waits on its owner for, or ``None`` for none.
+
+    A file that is there but cannot be read, or is not a question, reads as none; with *strict*
+    it raises :class:`QuestionUnreadable` instead, so the waiting list says it could not read it
+    rather than list the loop as waiting on nothing."""
     d = safe_loop_dir(loop_id)
     f = d / "questions.json" if d else None
     if not f or not f.exists():
@@ -672,9 +682,13 @@ def pending_question(loop_id: str) -> dict | None:
     try:
         q = json.loads(f.read_text())
         asked_at = f.stat().st_mtime
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        if strict:
+            raise QuestionUnreadable(f"loop {loop_id}'s question could not be read") from exc
         return None
     if not isinstance(q, dict):
+        if strict:
+            raise QuestionUnreadable(f"loop {loop_id}'s question is not a question")
         return None
     # When it was asked, as a number: a worker writes its own question, with no time or a time in
     # words of its own ("2026-11-12T18:30:00"), and then its file's is read. The waiting list and
