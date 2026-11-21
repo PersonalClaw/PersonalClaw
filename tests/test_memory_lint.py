@@ -68,7 +68,7 @@ def test_auto_purges_long_superseded(vs):
     vs.set_semantic("pref.new", "new", 1.0, "user_explicit")
     vs.supersede_semantic("pref.gone", "pref.new", "user_explicit")
     _age(vs, "pref.gone", invalidated="2020-01-01T00:00:00+00:00")
-    report = lint_memory(vs)
+    report = lint_memory(vs, purge=True)
     assert report.auto_fixed["superseded_purged"] == 1
     assert (
         vs.db.execute("SELECT COUNT(*) FROM semantic_memory WHERE key='pref.gone'").fetchone()[0]
@@ -80,7 +80,7 @@ def test_recent_superseded_not_purged(vs):
     vs.set_semantic("pref.gone", "old", 1.0, "user_explicit")
     vs.set_semantic("pref.new", "new", 1.0, "user_explicit")
     vs.supersede_semantic("pref.gone", "pref.new", "user_explicit")  # invalidated_at = now
-    report = lint_memory(vs)
+    report = lint_memory(vs, purge=True)
     assert report.auto_fixed["superseded_purged"] == 0
     assert (
         vs.db.execute("SELECT COUNT(*) FROM semantic_memory WHERE key='pref.gone'").fetchone()[0]

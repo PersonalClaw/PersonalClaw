@@ -43,6 +43,15 @@ def test_a_lint_only_reads_and_counts_what_the_purge_would_remove(vs):
     assert report["fixable"] == {"superseded_purged": 1}
 
 
+def test_the_sweep_itself_only_reads_unless_asked(vs):
+    """🔴 Red before: ``memory_lint.lint_memory``, which in-process code can call on the store
+    directly, still deleted by default."""
+    from personalclaw.memory_lint import lint_memory
+
+    assert lint_memory(vs).auto_fixed["superseded_purged"] == 0
+    assert _kept(vs) == 1
+
+
 def test_a_lint_asked_to_purge_deletes_it(vs):
     report = MemoryService.over_vector_store(vs).lint(purge=True)
     assert _kept(vs) == 0

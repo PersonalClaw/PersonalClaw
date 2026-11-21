@@ -16,7 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
-- **For apps: `personalclaw.sdk.channel.MemoryService.lint()` only reads, and counts what its purge would remove under the report's `fixable`. A keyword-only `lint(purge=True)` runs the purge, a permanent delete of memories superseded more than 90 days ago. No shipped app calls it.**
+- **For apps: `personalclaw.sdk.channel.MemoryService.lint()` no longer purges unless asked. It only reads, and counts what its purge would remove under the report's `fixable`. A keyword-only `lint(purge=True)` runs the purge, a permanent delete of memories superseded more than 90 days ago. No shipped app calls it.**
 - **An agent's settings say its tool list holds for the PersonalClaw tools an agent CLI is offered, and that the CLI's own built-in tools follow its permission mode.**
 - **Saving the tool list of an agent on an agent CLI warns of each entry that lets the CLI call nothing.**
 

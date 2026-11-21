@@ -95,7 +95,7 @@ def _purge_superseded(vs, report: LintReport, *, now: datetime, purge: bool) -> 
 
 
 def lint_memory(
-    vs, *, now: datetime | None = None, judge=None, vault=None, purge: bool = True
+    vs, *, now: datetime | None = None, judge=None, vault=None, purge: bool = False
 ) -> LintReport:
     """Run the health checks over a vector store. Returns a :class:`LintReport`.
 
@@ -109,8 +109,8 @@ def lint_memory(
     user's real home, and a caller that has no vault gets no vault flags rather than
     a config read with a surprising side effect.
 
-    ``purge`` runs the one auto-fix, the purge of long-superseded rows. With it off the sweep
-    only reads, and the report counts what the purge would remove under ``fixable``: a GET of
+    ``purge=True`` runs the one auto-fix, the purge of long-superseded rows. Off by default, the
+    sweep only reads, and the report counts what the purge would remove under ``fixable``: a GET of
     the Health tab reports, and the purge runs only on a POST or in the maintenance pass.
     """
     now = now or datetime.now(tz=timezone.utc)
