@@ -53,6 +53,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **One damaged byte in an automation's run history no longer breaks it. A line that is not UTF-8 (an append a crash cut inside a character, a damaged disk block) is skipped and said once in the log. The automation's History, the run feed and each later run's record carry on, its hourly cap still counts its fires, and every rewrite of the file keeps the line as it was.**
 - **An automation's run whose text holds a character UTF-8 cannot write (a lone surrogate, as a payload's `\ud800` decodes to) is recorded in its History like any other. Its row was never written.**
 - **An automation run whose row the run history cannot write, on a full disk or in a history folder that cannot be written, still counts as one of its automation's runs, and the log says once why its runs are not being recorded, where it said nothing above debug.**
+- **An MCP server that never answers one call no longer blocks every call after it. The call is told it may have gone through, as before, and the next one is sent on the same connection, so you don't have to press Reconnect.**
 
 ### Security
 

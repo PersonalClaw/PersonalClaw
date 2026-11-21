@@ -49,6 +49,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
@@ -774,7 +775,15 @@ class McpServerConn:
         gone through, when the connection ends with it out or what came back cannot be read as an
         answer; or that it was not sent, when the session's connection had already ended. A
         connection that ended is not served again, so its next call starts the server again
-        (:meth:`ensure_started`)."""
+        (:meth:`ensure_started`).
+
+        Each call is waited for at most ``_CALL_TIMEOUT_SECS`` after it is sent, as its caller
+        waits (the SDK's read timeout). A server that never answers one (it dropped the response
+        stream, which the Streamable HTTP client never reports) held the only sender, so every
+        later call queued behind it and was dropped as not sent, for as long as calls kept coming.
+        Timed out, the call may have gone through, and the connection is kept, so a stateful
+        server keeps its session; the next call is sent on it, and only a call's own failure
+        ends it."""
         import anyio
         from mcp.shared.exceptions import McpError
 
@@ -785,7 +794,11 @@ class McpServerConn:
                 continue
             call.sent = True
             try:
-                result = await session.call_tool(call.tool, call.arguments)
+                result = await session.call_tool(
+                    call.tool,
+                    call.arguments,
+                    read_timeout_seconds=timedelta(seconds=_CALL_TIMEOUT_SECS),
+                )
             except asyncio.CancelledError:
                 # The connection is closing with the call out: shut down, or its transport failed.
                 self._settle(
@@ -802,6 +815,24 @@ class McpServerConn:
                 )
                 return
             except McpError as exc:
+                if _read_timed_out(exc):
+                    # No answer came in time: not the server's refusal. The connection is kept.
+                    self._settle(
+                        call,
+                        True,
+                        _may_have_gone_through_text(
+                            call.tool,
+                            self.name,
+                            f"it did not answer within {_CALL_TIMEOUT_SECS:g} seconds",
+                        ),
+                    )
+                    logger.warning(
+                        "MCP server '%s' did not answer '%s' within %g s; its next call is sent",
+                        self.name,
+                        call.tool,
+                        _CALL_TIMEOUT_SECS,
+                    )
+                    continue
                 if _connection_closed(exc):
                     self._settle(
                         call, True, _may_have_gone_through_text(call.tool, self.name, ended_out)
@@ -827,6 +858,13 @@ class McpServerConn:
             else:
                 ok = not getattr(result, "isError", False)
                 self._settle(call, ok, _coerce_output(result), answered=True)
+
+
+def _read_timed_out(exc: BaseException) -> bool:
+    """Whether *exc* is the SDK session's "no answer came within the read timeout" (408)."""
+    from mcp.shared.exceptions import McpError
+
+    return isinstance(exc, McpError) and getattr(exc.error, "code", None) == 408
 
 
 def _connection_closed(exc: BaseException) -> bool:
