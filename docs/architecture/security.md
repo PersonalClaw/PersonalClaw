@@ -283,8 +283,9 @@ Both keep the inbound surfaces' rules:
   with the same rows: `dashboard/origin.py::origin_refusal`.)
 - **Held, capped and audited.** An active incident refuses both (`503`). Each is rate-capped
   (`429`, `Retry-After`): a sender token per sender, the agent-turn door per caller before its
-  token is read. Every request either door answers, and every one the gateway refuses before it
-  for coming from another machine, is one row of `inbound_audit.jsonl` (surface `webhook`); a
+  token is read. Every request either door answers is one row of `inbound_audit.jsonl` (surface
+  `webhook`), and so is each one the gateway refuses before it for coming from another machine, up
+  to 10 a minute from one caller, with one more row counting the rest; a
   refusal is a Security-log row too, and so is an accepted call, under its sender
   (`inbound:webhook:<client>` or `inbound:webhook`, outcome `allowed`), since it starts work
   nobody watches.

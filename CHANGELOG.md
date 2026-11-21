@@ -64,6 +64,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **For apps, `personalclaw.sdk.action.ActionContext` has `cwd`: the folder the action runs in, which only its dispatch sets (a lifecycle hook's chat folder, or the workspace), and `""` from every other dispatch, whose command runs in the gateway's own folder as before.**
 - **An MCP server's sign-in whose authorization server has forgotten PersonalClaw's registration registers again at the next Sign in instead of failing every time. A client ID you entered that it stops accepting is kept, and the next Sign in asks for a new one. A signed-out card offers Sign out too.**
 - **The browser connector extension can pair from its own origin with a code from Settings › Devices, and attach, in the default sign-in mode. Its session reaches the connector's own routes and nothing else, and signing the device out forgets its origin.**
+- **A caller refused before any token admits it, by the MCP, OpenAI-compatible or A2A surface or by the origin check, writes at most 10 inbound audit rows and 10 Security-log rows a minute. One more row in each says how many refusals it had besides, when the minute ends or the gateway stops. Every such call is still refused with the same answer, and a signed-in caller's refusals are each written as before.**
 
 ### Security
 

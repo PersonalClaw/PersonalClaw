@@ -732,8 +732,10 @@ guard flag, because for an inbound surface OFF is the safe state.
 
 A surface that is off, or has no working token, answers `404` on its next request, and the
 audit trail names the switch that refused it: every request (allowed or refused) is recorded in
-`<home>/inbound_audit.jsonl`, and refusals also land in the security event log. Nothing needs a
-restart — except the control bridge, whose own loopback listener starts with the gateway.
+`<home>/inbound_audit.jsonl`, and refusals also land in the security event log. A caller refused
+before any token admits it (a surface that's off, another machine, no token or a wrong one) writes
+at most 10 rows a minute to each, and one more row says how many it was refused besides. Nothing
+needs a restart — except the control bridge, whose own loopback listener starts with the gateway.
 
 Remote access (`external_access.<surface>.allow_remote` + `external_access.public_url`)
 lets a program on another machine call the MCP, OpenAI-compatible or A2A surface, when its

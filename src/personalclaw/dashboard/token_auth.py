@@ -2630,9 +2630,13 @@ def flush_success_tally() -> None:
 
 def flush_auth_logs() -> None:
     """Write what token auth still holds, on gateway stop: every open success window's summary,
-    and the gateway log's count of each refusal window still open."""
+    the gateway log's count of each refusal window still open, and the inbound audit's count of
+    each caller's refusals before sign-in (``inbound.audit.flush_refused_rows``)."""
+    from personalclaw.inbound.audit import flush_refused_rows
+
     flush_success_tally()
     flush_refusal_lines()
+    flush_refused_rows()
 
 
 def _log_denied(request: web.Request, credentials: _Credentials) -> None:

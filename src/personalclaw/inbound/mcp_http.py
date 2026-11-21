@@ -147,6 +147,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
     started = time.monotonic()
     bytes_in = 0
     client_id = ""
+    unknown_caller: web.Request | None = request  # until a credential admits it (audit.audit)
 
     def _done(
         status: int,
@@ -203,6 +204,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
             tool=tool,
             client_id=client_id,
             rate_limited=rate_limited,
+            unknown_caller=unknown_caller,
         )
         return response
 
@@ -210,7 +212,6 @@ async def handle_mcp(request: web.Request) -> web.Response:
     #    guardrails incident check, re-evaluated per request so flipping any of them
     #    takes effect on the next call rather than needing a restart. An incident
     #    answers 503 (come back later), a disabled surface 404 (nothing here).
-    #
     #    Both codes stay GENERIC on purpose. `gate.admission_problem` answers 404 so a
     #    switched-off surface does not confirm its own existence to a prober; a code that
     #    named this surface, or named which of the three kill switches fired, would hand
@@ -218,9 +219,8 @@ async def handle_mcp(request: web.Request) -> web.Response:
     #    into the audit trail, which is where it belongs.
     problem, status = admission_problem(SURFACE)
     if problem:
-        # Two literal calls, not one `json_error(<ternary>)`: a computed code is opaque
-        # to the append-only registry check and lands in the census's list of dynamic-code
-        # sites, which only shrinks. `admission_problem` returns only 404 or 503.
+        # Two literal calls, not one `json_error(<ternary>)`, which the append-only registry
+        # check can't read (a dynamic-code site); `admission_problem` returns only 404 or 503.
         if status == 503:
             return _refuse(
                 json_error("service_unavailable", status=503, headers=_NO_STORE),
@@ -228,8 +228,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
             )
         return _refuse(json_error("not_found", status=404, headers=_NO_STORE), refused=problem)
 
-    # 2) Peer, then 3) token. Peer first: a non-loopback caller shouldn't get to
-    #    probe token validity at all.
+    # 2) Peer, then 3) token: a non-loopback caller shouldn't get to probe token validity.
     peer_ok, peer_reason = auth.peer_allowed(request, SURFACE)
     if not peer_ok:
         return _refuse(json_error("forbidden", status=403, headers=_NO_STORE), refused=peer_reason)
@@ -264,6 +263,7 @@ async def handle_mcp(request: web.Request) -> web.Response:
             or client_reason
             or "bad or missing bearer token",
         )
+    unknown_caller = None
 
     # 4) Caps — per CLIENT, so one noisy integration cannot starve another. Falls back
     #    to the peer for a surface-token caller, which has no client identity.

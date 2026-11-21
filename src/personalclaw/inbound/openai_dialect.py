@@ -224,7 +224,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, Any |
     """
     problem, status = admission_problem(OPENAI_SURFACE)
     if problem:
-        audit(OPENAI_SURFACE, route=route, status=status, refused=problem)
+        audit(OPENAI_SURFACE, route=route, status=status, refused=problem, unknown_caller=request)
         # Two explicit branches rather than one call with conditional arguments. Both
         # codes are LITERAL so the append-only registry check can read them statically —
         # a `code=... if ... else ...` expression is invisible to it, which
@@ -251,7 +251,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, Any |
 
     allowed, why = auth.peer_allowed(request, OPENAI_SURFACE)
     if not allowed:
-        audit(OPENAI_SURFACE, route=route, status=403, refused=why)
+        audit(OPENAI_SURFACE, route=route, status=403, refused=why, unknown_caller=request)
         # The reason is the audit row's, not the caller's: with `allow_remote` on, a caller on
         # another machine reaches this check, and "Host 'x' does not match public_url" or
         # "public_url is unset" would tell it how this gateway is set up. The MCP and A2A
@@ -277,7 +277,11 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, Any |
         # is told so; the code stays `unauthorized` for every refusal.
         ended = tokens.ending(OPENAI_SURFACE, presented)
         audit(
-            OPENAI_SURFACE, route=route, status=401, refused=ended.reason if ended else "bad bearer"
+            OPENAI_SURFACE,
+            route=route,
+            status=401,
+            refused=ended.reason if ended else "bad bearer",
+            unknown_caller=request,
         )
         return (
             openai_error(
