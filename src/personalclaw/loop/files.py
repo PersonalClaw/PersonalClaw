@@ -272,16 +272,53 @@ def write_brief(loop_id: str, text: str) -> None:
         (d / "brief.md").write_text(text)
 
 
+#: The most steers a worker's pending file keeps; the oldest go first. A loop whose stage worker
+#: never runs (a parallel loop's shared file) is steered all the same, and its file stays bounded.
+_PENDING_KEPT = 50
+
+
+def _add_pending(f: Path, text: str) -> None:
+    """Add the owner's steer *text* to the worker's pending steer file *f*, after the steers
+    already waiting there, with the time it was sent: two steers sent before the worker's next
+    cycle both reach it, in the order they were sent (:func:`hand_over_steer`)."""
+    steers = [*_read_pending(f), {"text": text, "sent_at": time.time()}][-_PENDING_KEPT:]
+    atomic_write(f, "".join(json.dumps(s) + "\n" for s in steers))
+
+
+def _read_pending(f: Path) -> list[dict]:
+    """The steers waiting in the pending file *f*, oldest first: one JSON object a line. A file
+    written before steers were kept one a line holds one steer, its words the whole file."""
+    if not f.is_file():
+        return []
+    try:
+        raw = f.read_text()
+        sent = f.stat().st_mtime
+    except OSError:
+        return []
+    steers = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            steer = json.loads(line)
+        except ValueError:
+            steer = None
+        if not isinstance(steer, dict) or not isinstance(steer.get("text"), str):
+            return [{"text": raw.strip(), "sent_at": sent}] if raw.strip() else []
+        steers.append(steer)
+    return steers
+
+
 def write_guidance(loop_id: str, text: str) -> None:
     d = loop_dir(loop_id)
     if d is not None:
-        (d / "guidance.txt").write_text(text)
+        _add_pending(d / "guidance.txt", text)
 
 
 def read_guidance(loop_id: str) -> str:
+    """The words of the steers waiting for the stage worker, oldest first."""
     d = safe_loop_dir(loop_id)
-    f = d / "guidance.txt" if d else None
-    return f.read_text() if f and f.exists() else ""
+    return "\n\n".join(s["text"] for s in _read_pending(d / "guidance.txt")) if d else ""
 
 
 def clear_guidance(loop_id: str) -> bool:
@@ -306,14 +343,36 @@ def write_task_guidance(loop_id: str, task_id: str, text: str) -> None:
     name = _task_guidance_name(task_id)
     d = loop_dir(loop_id)
     if d is not None and name:
-        (d / name).write_text(text)
+        _add_pending(d / name, text)
 
 
 def read_task_guidance(loop_id: str, task_id: str) -> str:
+    """The words of the steers waiting for the worker of *task_id*, oldest first."""
     name = _task_guidance_name(task_id)
     d = safe_loop_dir(loop_id)
-    f = d / name if (d and name) else None
-    return f.read_text() if f and f.exists() else ""
+    return "\n\n".join(s["text"] for s in _read_pending(d / name)) if (d and name) else ""
+
+
+def seed_task_steers(loop_id: str, task_id: str) -> int:
+    """Give the worker of *task_id*, as it starts, every steer the owner sent to the whole loop
+    (the steer history's loop entries), oldest first, that is not already waiting for it. A loop's
+    steer reached only the task workers running when it was sent, so each task that started after
+    it ran without it. How many were added."""
+    name = _task_guidance_name(task_id)
+    d = loop_dir(loop_id)
+    if d is None or name is None:
+        return 0
+    f = d / name
+    waiting = {s["text"] for s in _read_pending(f)}
+    added = [
+        {"text": str(n["text"]), "sent_at": float(n.get("sent_at") or 0.0)}
+        for n in _read_nudges(d / "nudges.json")
+        if isinstance(n, dict) and not n.get("task_id") and n.get("text") not in waiting
+    ]
+    if added:
+        steers = sorted([*_read_pending(f), *added], key=lambda s: float(s.get("sent_at") or 0))
+        atomic_write(f, "".join(json.dumps(s) + "\n" for s in steers[-_PENDING_KEPT:]))
+    return len(added)
 
 
 def clear_task_guidance(loop_id: str, task_id: str) -> None:
@@ -755,18 +814,45 @@ def hand_over_steer(loop_id: str, task_id: str = "") -> str:
         return ""
     delivered = _read_delivered(d)
     pending = d / name
-    text = pending.read_text().strip() if pending.is_file() else ""
-    if text:
-        now = time.time()
-        delivered.setdefault(task_id, []).append(
-            {"text": text, "delivered_at": now, "findings": _findings_of(d, task_id)}
+    steers = [s for s in _read_pending(pending) if str(s.get("text") or "").strip()]
+    if steers:
+        now, findings = time.time(), _findings_of(d, task_id)
+        delivered.setdefault(task_id, []).extend(
+            {
+                "text": str(s["text"]).strip(),
+                "sent_at": float(s.get("sent_at") or now),
+                "delivered_at": now,
+                "findings": findings,
+            }
+            for s in steers
         )
         atomic_write(d / DELIVERED_STEERS_FILE, json.dumps(delivered, indent=2))
         _mark_nudges(d, task_id, delivered_at=now)
     if pending.exists():
         pending.unlink()
-    words = [str(s.get("text") or "") for s in delivered.get(task_id, [])]
-    return "\n\n".join(dict.fromkeys(w for w in words if w))
+    return _said(delivered.get(task_id, []))
+
+
+def _said(steers: list[dict]) -> str:
+    """The steers handed to a worker, as its cycle message says them: one steer as its words; two
+    or more oldest first, each with when it was sent, and that where they disagree the later one
+    is the one to follow."""
+    seen: dict[str, float] = {}
+    for s in steers:
+        text = str(s.get("text") or "")
+        if text:
+            seen.pop(text, None)  # a steer sent again counts from its latest sending
+            seen[text] = float(s.get("sent_at") or s.get("delivered_at") or 0.0)
+    if len(seen) <= 1:
+        return next(iter(seen), "")
+    lines = [
+        f"{n}. (sent {time.strftime('%Y-%m-%d %H:%M', time.localtime(at))}) {text}"
+        for n, (text, at) in enumerate(seen.items(), start=1)
+    ]
+    return (
+        f"{len(seen)} steers, oldest first. Where two of them disagree, follow the later one.\n"
+        + "\n".join(lines)
+    )
 
 
 def credit_delivered_steers(loop_id: str, *, cycle: int) -> None:

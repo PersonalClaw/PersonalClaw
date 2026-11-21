@@ -1099,6 +1099,9 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
     if roots:
         session._extra_tool_roots = roots
     state.push_sessions_update()
+    # The steers the owner sent to the whole loop reach this task too, in its first cycle's
+    # message: one sent before it started reached only the task workers running then.
+    loop_files.seed_task_steers(loop.id, task.id)
     nudge = _task_cycle_nudge(loop, task, worktree_dir, str(d) if d else "")
     msg = posture.frame(posture.of(loop), "\n".join([nudge, *kinds.workspace_rules_lines()]))
     await svc.add(
