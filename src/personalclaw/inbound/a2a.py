@@ -173,9 +173,23 @@ def run_is_final(run_status: str) -> bool:
 
 
 def _refuse(
-    response: web.Response, *, route: str, refused: str, client_id: str = ""
+    response: web.Response,
+    *,
+    route: str,
+    refused: str,
+    client_id: str = "",
+    unknown_caller: web.Request | None = None,
 ) -> web.Response:
-    audit(SURFACE, route=route, status=response.status, refused=refused, client_id=client_id)
+    """Audit *response* as a refusal and return it. ``unknown_caller`` is the request when no
+    credential has admitted its caller yet, so its rows are held to a rate (``audit.audit``)."""
+    audit(
+        SURFACE,
+        route=route,
+        status=response.status,
+        refused=refused,
+        client_id=client_id,
+        unknown_caller=unknown_caller,
+    )
     return response
 
 
@@ -207,7 +221,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
             else json_error("not_found", status=status, headers=_NO_STORE)
         )
         return (
-            _refuse(refusal, route=route, refused=problem),
+            _refuse(refusal, route=route, refused=problem, unknown_caller=request),
             "",
             caps_mod.DEFAULT_CAPS,
         )
@@ -219,6 +233,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
                 json_error("forbidden", status=403, headers=_NO_STORE),
                 route=route,
                 refused=peer_reason,
+                unknown_caller=request,
             ),
             "",
             caps_mod.DEFAULT_CAPS,
@@ -243,6 +258,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
                 refused=(ended.reason if ended else "")
                 or client_reason
                 or "bad or missing bearer token",
+                unknown_caller=request,
             ),
             "",
             caps_mod.DEFAULT_CAPS,

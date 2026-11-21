@@ -756,6 +756,7 @@ def origin_refusal(request: web.Request) -> web.Response:
             route=f"{request.method} {request.path}",
             status=403,
             refused="a request from another address that carries no browser origin",
+            unknown_caller=request,
         )
     say_refused(request, "auth_origin_not_allowed")
     return json_error("auth_origin_not_allowed", message=sentence or None, status=403)

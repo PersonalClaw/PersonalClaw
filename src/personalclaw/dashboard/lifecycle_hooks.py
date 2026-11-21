@@ -497,7 +497,7 @@ def register_lifecycle_hooks(app: web.Application) -> None:
 
     async def _auth_tally_shutdown(app_: web.Application) -> None:
         """On gateway stop, write every still-open authentication window's summary row and the
-        gateway log's count of the last minute's refusals, so neither is lost with the process."""
+        last minute's refusal counts (the gateway log's, the inbound audit's), so none is lost."""
         try:
             from personalclaw.dashboard.token_auth import flush_auth_logs
 
