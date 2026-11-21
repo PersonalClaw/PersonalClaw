@@ -167,8 +167,12 @@ def confirmation_content(schema: Any) -> dict[str, Any] | None:
     return out
 
 
-def elicitation_callback_for(server: str) -> "ElicitationFnT | None":
+def elicitation_callback_for(server: str, *, session: str = "") -> "ElicitationFnT | None":
     """The SDK ``elicitation_callback`` for ``server``, or ``None`` when not granted.
+
+    *session* is the chat the connection is that chat's own for (``McpServerConn.scope``), so its
+    question is that chat's, as the call's own approval is. ``""``, a connection several chats
+    share, makes the question's Inbox row yours alone.
 
     ``None`` is the load-bearing return: passing it to ``ClientSession`` leaves the SDK's
     own default in place, which is what keeps ``elicitation`` off the advertised
@@ -178,12 +182,12 @@ def elicitation_callback_for(server: str) -> "ElicitationFnT | None":
         return None
 
     async def _elicit(context: Any, params: Any) -> Any:
-        return await _handle_elicitation(server, params)
+        return await _handle_elicitation(server, params, session=session)
 
     return _elicit
 
 
-async def _handle_elicitation(server: str, params: Any) -> Any:
+async def _handle_elicitation(server: str, params: Any, *, session: str = "") -> Any:
     """Route one granted ``elicitation/create`` to the user and map their answer back.
 
     Returns an SDK ``ElicitResult`` or ``ErrorData``; the caller (the SDK) serialises
@@ -238,6 +242,9 @@ async def _handle_elicitation(server: str, params: Any) -> Any:
                     f"{APPROVAL_TOOL_PREFIX}{server}",
                     tool_input=_schema_summary(schema),
                     tool_purpose=message,
+                    # The chat whose call this interrupts reads it; with none to name, you alone.
+                    session=session,
+                    yours_alone=not session,
                 ),
                 timeout=approval_window_secs(),
             )

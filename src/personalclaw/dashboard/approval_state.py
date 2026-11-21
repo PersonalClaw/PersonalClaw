@@ -343,8 +343,13 @@ class DashboardApprovalState:
         own: bool = False,
         tells_owner: bool = False,
         confirms: Sequence[str] | None = None,
+        yours_alone: bool = False,
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
+
+        ``yours_alone``, for an approval with no *session* that may still be some chat's (a question
+        from an MCP server several chats share): its Inbox row is yours to read, and no chat's agent
+        reads it (``inbox_reach.YOURS_ALONE``).
 
         ``cwd`` is the folder the call's command runs in, which its ``reach`` line is read against
         (a delete of the owner's home folder, the filesystem root or that folder asks past every
@@ -472,6 +477,8 @@ class DashboardApprovalState:
             ),
             cwd=folder,
         )
+        if yours_alone and not session:
+            entry["yours_alone"] = True
         if answered_alone:
             self.__dict__.setdefault("_answered_alone", set()).add(approval_id)
         if asked_on_channel:
@@ -773,6 +780,10 @@ class DashboardApprovalState:
             refs = {"approval": str(entry["id"]), "source_label": str(entry["source_label"])}
             if entry.get("session"):
                 refs["session"] = str(entry["session"])
+            elif entry.get("yours_alone"):
+                from personalclaw.inbox_reach import YOURS_ALONE
+
+                refs[YOURS_ALONE] = "1"
             refs.update(place_refs(str(entry.get("session") or "")))
             emit_attention_item(
                 self,
