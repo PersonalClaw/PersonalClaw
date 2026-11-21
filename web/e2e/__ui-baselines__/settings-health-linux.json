@@ -30,7 +30,8 @@
         "summary \"Recent crash artifactsno crash artifacts\"",
         "summary \"SPA symlink + lock/PID leftoversserving/fs healthy\"",
         "summary \"Status snapshot readablestatus snapshot ok\"",
-        "summary \"Sync is sending and receivingsync is off\""
+        "summary \"Sync is sending and receivingsync is off\"",
+        "summary \"The automations fileThe automations file can be read.\""
       ],
       "390": [
         "a \"Diagnostics\"",
@@ -72,7 +73,7 @@
         "summary \"SPA symlink + lock/PID leftoversserving/fs healthy\"",
         "summary \"Status snapshot readablestatus snapshot ok\"",
         "summary \"Sync is sending and receivingsync is off\"",
-        "summary \"The automations file can be readThe automations file can be \""
+        "summary \"The automations fileThe automations file can be read.\""
       ],
       "412": [
         "a \"Diagnostics\"",
@@ -103,8 +104,8 @@
         "summary \"App backends + interrupted updates# app backends ok\"",
         "summary \"Baseline command denylist integritybaseline v# verified — #\"",
         "summary \"Channel transports reachable# transport ok\"",
-        "summary \"Every fire parked for the next tick could be readEvery fire \"",
         "summary \"Every state path is claimed by the manifestall # state path\"",
+        "summary \"Fires parked for the next tickEvery fire parked for the next\"",
         "summary \"Gateway port listeningport # listening\"",
         "summary \"Items search cannot fully reachevery ingested item is fully \"",
         "summary \"Local model providers + bindings# local provider ok\"",
@@ -118,7 +119,7 @@
         "summary \"Sign-ins last no longer than the #-day limita sign-in lasts\"",
         "summary \"Status snapshot readablestatus snapshot ok\"",
         "summary \"Sync is sending and receivingsync is off\"",
-        "summary \"The automations file can be readThe automations file can be \""
+        "summary \"The automations fileThe automations file can be read.\""
       ],
       "768": [
         "a \"Diagnostics\"",
@@ -150,8 +151,8 @@
         "summary \"App backends + interrupted updates# app backends ok\"",
         "summary \"Baseline command denylist integritybaseline v# verified — #\"",
         "summary \"Channel transports reachable# transport ok\"",
-        "summary \"Every fire parked for the next tick could be readEvery fire \"",
         "summary \"Every state path is claimed by the manifestall # state path\"",
+        "summary \"Fires parked for the next tickEvery fire parked for the next\"",
         "summary \"Gateway port listeningport # listening\"",
         "summary \"Items search cannot fully reachevery ingested item is fully \"",
         "summary \"Knowledge chunk ANN index (sqlite-vec)chunk ANN index active\"",
@@ -168,7 +169,7 @@
         "summary \"Sign-ins last no longer than the #-day limita sign-in lasts\"",
         "summary \"Status snapshot readablestatus snapshot ok\"",
         "summary \"Sync is sending and receivingsync is off\"",
-        "summary \"The automations file can be readThe automations file can be \"",
+        "summary \"The automations fileThe automations file can be read.\"",
         "summary \"Wall-clock timezone for timed triggerstimed triggers resolve\""
       ]
     },
@@ -209,7 +210,8 @@
         "summary \"Recent crash artifactsno crash artifacts\"",
         "summary \"SPA symlink + lock/PID leftoversserving/fs healthy\"",
         "summary \"Status snapshot readablestatus snapshot ok\"",
-        "summary \"Sync is sending and receivingsync is off\""
+        "summary \"Sync is sending and receivingsync is off\"",
+        "summary \"The automations fileThe automations file can be read.\""
       ],
       "390": [
         "a \"Diagnostics\"",
@@ -251,7 +253,7 @@
         "summary \"SPA symlink + lock/PID leftoversserving/fs healthy\"",
         "summary \"Status snapshot readablestatus snapshot ok\"",
         "summary \"Sync is sending and receivingsync is off\"",
-        "summary \"The automations file can be readThe automations file can be \""
+        "summary \"The automations fileThe automations file can be read.\""
       ],
       "412": [
         "a \"Diagnostics\"",
@@ -282,8 +284,8 @@
         "summary \"App backends + interrupted updates# app backends ok\"",
         "summary \"Baseline command denylist integritybaseline v# verified — #\"",
         "summary \"Channel transports reachable# transport ok\"",
-        "summary \"Every fire parked for the next tick could be readEvery fire \"",
         "summary \"Every state path is claimed by the manifestall # state path\"",
+        "summary \"Fires parked for the next tickEvery fire parked for the next\"",
         "summary \"Gateway port listeningport # listening\"",
         "summary \"Items search cannot fully reachevery ingested item is fully \"",
         "summary \"Local model providers + bindings# local provider ok\"",
@@ -297,7 +299,7 @@
         "summary \"Sign-ins last no longer than the #-day limita sign-in lasts\"",
         "summary \"Status snapshot readablestatus snapshot ok\"",
         "summary \"Sync is sending and receivingsync is off\"",
-        "summary \"The automations file can be readThe automations file can be \""
+        "summary \"The automations fileThe automations file can be read.\""
       ],
       "768": [
         "a \"Diagnostics\"",
@@ -329,8 +331,8 @@
         "summary \"App backends + interrupted updates# app backends ok\"",
         "summary \"Baseline command denylist integritybaseline v# verified — #\"",
         "summary \"Channel transports reachable# transport ok\"",
-        "summary \"Every fire parked for the next tick could be readEvery fire \"",
         "summary \"Every state path is claimed by the manifestall # state path\"",
+        "summary \"Fires parked for the next tickEvery fire parked for the next\"",
         "summary \"Gateway port listeningport # listening\"",
         "summary \"Items search cannot fully reachevery ingested item is fully \"",
         "summary \"Knowledge chunk ANN index (sqlite-vec)chunk ANN index active\"",
@@ -347,7 +349,7 @@
         "summary \"Sign-ins last no longer than the #-day limita sign-in lasts\"",
         "summary \"Status snapshot readablestatus snapshot ok\"",
         "summary \"Sync is sending and receivingsync is off\"",
-        "summary \"The automations file can be readThe automations file can be \"",
+        "summary \"The automations fileThe automations file can be read.\"",
         "summary \"Wall-clock timezone for timed triggerstimed triggers resolve\""
       ]
     },

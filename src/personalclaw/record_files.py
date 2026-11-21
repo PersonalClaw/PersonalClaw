@@ -120,16 +120,20 @@ def kept_copies(path: Path) -> list[Path]:
         return []
 
 
-def _keep_copy(path: Path, raw: bytes) -> Path | None:
+def _keep_copy(path: Path, raw: bytes, *, most: int = 0) -> Path | None:
     """*raw* — what *path* held when it could not be read — kept beside it as
     ``<name>.broken-<UTC instant>``, 0600, and that copy's path: the copy already kept of the
     same bytes when there is one, so a file read again and again is kept once. A name already
     taken gets a counter rather than being written over. None, logged, when no copy could be made.
+    With *most*, None, writing nothing and letting none go, once *most* copies are kept already.
     """
     try:
-        for copy in kept_copies(path):
+        copies = kept_copies(path)
+        for copy in copies:
             if copy.stat().st_size == len(raw) and copy.read_bytes() == raw:
                 return copy
+        if most and len(copies) >= most:
+            return None
         instant = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         target, counter = path.with_name(f"{path.name}{SET_ASIDE_MARK}{instant}"), 2
         while True:
@@ -149,13 +153,17 @@ def _keep_copy(path: Path, raw: bytes) -> Path | None:
         return None
 
 
-def keep_copy(path: Path, raw: bytes) -> Path | None:
+def keep_copy(path: Path, raw: bytes, *, most: int = 0) -> Path | None:
     """*raw*, what a reader of *path* could not read, kept beside it as ``<name>.broken-<UTC
     instant>`` (:data:`SET_ASIDE_MARK`, listed by :func:`kept_copies`), and that copy's path; None,
     logged, when none could be made. For a file kept a line at a time, the trigger spool, whose
     damaged lines are taken out of it when its fires are taken (`triggers.dispatch.clear_spool`)
-    rather than left in it to be skipped on every read."""
-    return _keep_copy(path, raw)
+    rather than left in it to be skipped on every read.
+
+    With *most*, at most that many copies are kept: past it, None, and no copy is written, so a
+    file damaged again and again does not fill the disk with them. None is let go to make room,
+    since a copy is the owner's to remove (:data:`SET_ASIDE_MARK`); one they remove makes room."""
+    return _keep_copy(path, raw, most=most)
 
 
 def _found(path: Path, why: str, raw: bytes | None, at: tuple[int, int, int] | None) -> Unreadable:
