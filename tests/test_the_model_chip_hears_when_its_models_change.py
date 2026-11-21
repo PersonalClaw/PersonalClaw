@@ -98,3 +98,49 @@ async def test_the_gateway_tells_the_open_pages_until_it_stops():
     app["state"].push_refresh.reset_mock()
     use_cases.save_active_models({"chat": []})
     app["state"].push_refresh.assert_not_called()
+
+
+def test_a_provider_added_edited_and_removed_in_settings_is_announced(told, monkeypatch):
+    """🔴 Red before (driven, dogfood): Settings › Models adds, edits and removes a provider through
+    these routes, which wrote config.json and told nobody, so the other open pages waited for their
+    poll. Each is announced once its write has landed, with no binding to change."""
+    import asyncio
+    import uuid
+
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import providers as H
+    from personalclaw.llm.branded_specs import BrandedProviderSpec
+    from personalclaw.llm.registry import get_default_registry
+    from personalclaw.sdk.provider_helpers import register_branded_app
+
+    monkeypatch.setattr(H, "_refresh_media_registries", lambda: None)
+    kind = "fixture-chip-openai"
+    register_branded_app(
+        BrandedProviderSpec(
+            type=kind, protocol="openai", default_base_url="https://fixture-chip.invalid/v1"
+        )
+    )
+    name = f"fx-{uuid.uuid4().hex[:8]}"
+
+    async def _body(v):
+        return v
+
+    def call(handler, method: str, path: str, body: dict | None = None) -> None:
+        req = make_mocked_request(
+            method, path, match_info={} if method == "POST" else {"name": name}
+        )
+        req.json = lambda: _body(body or {})
+        before = len(told)
+        resp = asyncio.run(handler(req))
+        assert resp.status == 200, resp.body
+        assert len(told) > before, f"{method} {path} told nobody"
+
+    try:
+        created = {"name": name, "type": kind, "model": "", "options": {}}
+        call(H.api_provider_create, "POST", "/api/model-providers", created)
+        edited = {"options": {"endpoint": "https://fixture-chip.invalid/v2"}}
+        call(H.api_provider_update, "PUT", f"/api/model-providers/{name}", edited)
+        call(H.api_provider_delete, "DELETE", f"/api/model-providers/{name}")
+    finally:
+        get_default_registry().unregister_entry(name)
