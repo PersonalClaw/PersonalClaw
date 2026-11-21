@@ -1183,7 +1183,7 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             "pending_questions": state.owner_questions.pending_for(session.key),
             # persisted side-chat transcript (reloads attached to the session).
             "side": (
-                session._side.to_dict()
+                session._side.as_read()
                 if session._side is not None and session._side.messages
                 else None
             ),
