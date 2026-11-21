@@ -51,6 +51,18 @@ EDITOR_SETTINGS = Row(
     ),
 )
 
+#: Not a kind of file: a folder copied, moved or linked into place that holds more entries than
+#: are read for where they land (``run_bounds._landed``), so whether it plants a file your tools run
+#: later cannot be told. It asks, the closed side; no path is matched to it.
+TOO_MANY_TO_READ = Row(
+    name="a folder too large to read through",
+    paths=(),
+    what=(
+        "gets a folder of more entries than are read, so whether it plants a file your tools "
+        "run later cannot be told"
+    ),
+)
+
 #: Every kind of file your tools run later. Closed: a new kind is a new row here.
 ROWS: tuple[Row, ...] = (EDITOR_SETTINGS,)
 

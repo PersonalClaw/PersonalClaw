@@ -114,6 +114,31 @@ def test_a_folder_that_lands_as_the_settings_folder_asks(project, command, there
     assert run_bounds.put_to_a_person(_shell(command), session_key="s", cwd=str(project))
 
 
+@pytest.mark.parametrize("move", ["mv evil .vscode", "cp -R evil .vscode"])
+def test_a_settings_folder_the_same_command_takes_away_first_lands_both_ways(project, move):
+    """🔴 Red before: the folder was on disk when the command was read, so the source landed one
+    level down in it, though the command removes it first and puts the source there instead."""
+    (project / ".vscode").mkdir()
+    command = f"rmdir .vscode && mkdir -p evil && echo '{{}}' > evil/settings.json && {move}"
+    assert run_bounds.put_to_a_person(_shell(command), session_key="s", cwd=str(project))
+
+
+def test_a_folder_too_large_to_read_through_asks_and_says_so(project, monkeypatch):
+    """🔴 Red before: past the entries read, the rest of the folder was never looked at, so a
+    file deep in it that your tools run later landed unasked."""
+    monkeypatch.setattr(run_bounds, "_LANDED_ENTRIES", 3)
+    for name in ("a", "b", "c", "d"):
+        (project / "big" / name).mkdir(parents=True)
+    copy = _shell("cp -R big backup")
+    assert run_bounds.put_to_a_person(copy, session_key="s", cwd=str(project))
+    from personalclaw.persistence_paths import TOO_MANY_TO_READ
+
+    note = run_bounds.event_note(copy, "s", cwd=str(project))
+    assert note == f"This writes backup, which {TOO_MANY_TO_READ.what}; it asks every time."
+    monkeypatch.setattr(run_bounds, "_LANDED_ENTRIES", 4)
+    assert not run_bounds.put_to_a_person(copy, session_key="s", cwd=str(project)), "read whole"
+
+
 def test_a_copy_after_a_cd_lands_in_the_folder_it_moved_to(project):
     """🔴 Red before: a ``cd`` moved where the copy's targets were read, and not where it landed."""
     from personalclaw.command_effects import command_effects

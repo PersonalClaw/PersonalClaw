@@ -61,7 +61,7 @@ from personalclaw import protected_folders
 from personalclaw.command_effects import DEVICES, CommandEffects, command_effects, url_host
 from personalclaw.file_scope import PATH_TOOLS
 from personalclaw.periodic_sweep import PeriodicSweep
-from personalclaw.persistence_paths import Planted, planted
+from personalclaw.persistence_paths import TOO_MANY_TO_READ, Planted, planted
 from personalclaw.protected_folders import NOTHING, ProtectedDelete
 from personalclaw.shell_syntax import LEADING_VARIABLES
 
@@ -687,12 +687,10 @@ def call_reach(
             within=within,
             scratch=scratch,
         )
-        written = (
-            [*effects.targets, *_landed(effects.into, cwd, effects.targets)]
-            if effects.writes
-            else []
-        )
+        landed, unread = _landed(effects.into, cwd, effects.targets) if effects.writes else ([], [])
+        written = [*effects.targets, *landed] if effects.writes else []
         plants = planted(written, cwd=cwd)
+        plants += tuple(Planted(path, TOO_MANY_TO_READ) for path in dict.fromkeys(unread))
         return replace(reach, deletes=deletes, identity=identity, plants=plants)
     hosts, unnamed = argument_network(title, tool_kind, tool_input, session_key=session_key)
     plants = planted(_written(title, tool_kind, tool_input, declared, named), cwd=cwd)
@@ -708,35 +706,42 @@ def call_reach(
 
 
 #: The most of a copied folder's entries read for where they land.
-_LANDED_ENTRIES = 2048
+_LANDED_ENTRIES = 10_000
 
 
-def _landed(into: Iterable[tuple[str, str]], cwd: str, written: Iterable[str] = ()) -> list[str]:
-    """Where each copy, move or link lands (``CommandEffects.into``), read from *cwd*.
+def _landed(
+    into: Iterable[tuple[str, str]], cwd: str, written: Iterable[str] = ()
+) -> tuple[list[str], list[str]]:
+    """Where each copy, move or link lands (``CommandEffects.into``), read from *cwd*; and each
+    destination whose source holds more than :data:`_LANDED_ENTRIES` entries, too many to read.
 
     Into a folder (a destination spelled as one, or one that is a folder on disk), the folder's
     entry of the source's name. A source that is a folder lands its entries too, below where it
     lands: those on disk, and those the same command writes inside it (*written*, the command's
-    own write targets). It lands at the destination itself when the destination is no folder (a
-    new name: ``mv evil .vscode``), and when what is copied is the folder's contents: ``src/.``
-    (whose entry in the folder is the folder), and ``src/``, which a BSD ``cp -R`` reads so."""
+    own write targets). It lands at the destination itself when the destination is not spelled
+    as a folder: a new name (``mv evil .vscode``), and a folder on disk that the same command may
+    take away or replace first (``rmdir .vscode && mv evil .vscode``), so such a folder is landed
+    both ways, the safe side. It lands there too when what is copied is the folder's contents:
+    ``src/.`` (whose entry in the folder is the folder), and ``src/``, which a BSD ``cp -R`` reads
+    so."""
     targets = [_absolute(path, cwd) for path in written]
     landed: list[str] = []
+    unread: list[str] = []
     for destination, source in into:
         spelled = os.path.expanduser(destination)
-        into_folder = destination.endswith("/") or os.path.isdir(os.path.join(cwd or ".", spelled))
-        roots = []
-        if not into_folder:
-            roots.append(destination)
-        else:
+        named_a_folder = destination.endswith("/")
+        roots = [] if named_a_folder else [destination]
+        if named_a_folder or os.path.isdir(os.path.join(cwd or ".", spelled)):
             # The folder's entry of the source's name: the folder itself for ``src/.``.
             roots.append(os.path.join(destination, os.path.basename(source.rstrip("/"))))
             landed.append(roots[-1])
             if source.endswith("/"):
                 roots.append(destination)
-        entries = _entries(source, cwd, targets)
-        landed += [os.path.join(root, entry) for root in roots for entry in entries]
-    return landed
+        entries, whole = _entries(source, cwd, targets)
+        if not whole:
+            unread.append(destination)
+        landed += [os.path.join(root, entry) for root in dict.fromkeys(roots) for entry in entries]
+    return landed, unread
 
 
 def _absolute(path: str, cwd: str) -> str:
@@ -744,21 +749,23 @@ def _absolute(path: str, cwd: str) -> str:
     return os.path.normpath(os.path.join(cwd or os.getcwd(), expanded))
 
 
-def _entries(source: str, cwd: str, targets: Sequence[str]) -> list[str]:
+def _entries(source: str, cwd: str, targets: Sequence[str]) -> tuple[list[str], bool]:
     """What a folder *source* holds, each relative to it: its entries on disk, at most
-    :data:`_LANDED_ENTRIES`, and each of *targets* (absolute) the same command writes inside it.
-    Nothing for a source that is no folder."""
+    :data:`_LANDED_ENTRIES`, and each of *targets* (absolute) the same command writes inside it;
+    and whether that is all of them. Nothing for a source that is no folder."""
     folder = _absolute(source, cwd)
     inside = folder.rstrip(os.sep) + os.sep
     found = [os.path.relpath(target, folder) for target in targets if target.startswith(inside)]
     if not os.path.isdir(folder):
-        return found
+        return found, True
+    read = 0
     for at, folders, files in os.walk(folder):
         for entry in (*folders, *files):
+            if read >= _LANDED_ENTRIES:
+                return found, False
             found.append(os.path.relpath(os.path.join(at, entry), folder))
-            if len(found) >= _LANDED_ENTRIES:
-                return found
-    return found
+            read += 1
+    return found, True
 
 
 #: The kinds of an agent CLI's call that write the files they name (``acp.translate``).
