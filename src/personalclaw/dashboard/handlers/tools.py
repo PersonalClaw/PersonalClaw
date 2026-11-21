@@ -814,7 +814,7 @@ async def _made_and_answered(
             provider,
             tool_name,
             arguments,
-            outcome="not_run",
+            outcome="reused",
             error="the same call from this chat was made earlier; answered with its result",
             metadata={"risk": risk, made_once.REPEAT_KEY: True},
         )
@@ -851,10 +851,12 @@ async def _made_and_answered(
             error="" if result.success else err[:200],
             metadata={"risk": risk, **control},
         )
-        answer = {"ok": bool(result.success), "output": out, "error": err, **_code_of(result)}
-        return web.json_response(answer)
+        code = _code_of(result)
+        if result.success:  # what a repeat of this create is answered with (``made_once``)
+            answer = {"ok": True, "output": out, "error": err, **code}
+        return web.json_response({"ok": bool(result.success), "output": out, "error": err, **code})
     finally:
-        made_once.made(once, answer if answer and answer["ok"] else None)
+        made_once.made(once, answer)
 
 
 async def api_tools_toggle(request: web.Request) -> web.Response:
