@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import tempfile
 import time
@@ -2445,6 +2446,27 @@ def _slugify_intent(intent_id: str, goal: str) -> str:
     return base or "intent-skill"
 
 
+def _auto_skill_path(skills_dir: Path, slug: str) -> Path:
+    """The folder a skill generated as *slug* lives in, held to *skills_dir*'s ``auto/`` before
+    anything is read or written for it. :func:`_slugify_intent` keeps only letters, digits and
+    hyphens, so its slug is always a plain name there; this is the bound the path itself keeps,
+    whatever the slug's character set. ``ValueError`` when it would land anywhere else, ``auto/``
+    itself included, or when a link there leads out of it.
+
+    Shaped as ``chat_record.held_child``: a normalised join, then ``startswith`` the folder, which
+    is the containment code scanning reads as one (``resolve`` with ``is_relative_to`` isn't)."""
+    from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE
+
+    folder = os.path.normpath(os.path.abspath(skills_dir / AUTO_SKILL_NAMESPACE))
+    held = os.path.normpath(os.path.join(folder, slug))
+    if not held.startswith(folder + os.sep) or os.path.dirname(held) != folder:
+        raise ValueError(f"a generated skill's folder would land outside {AUTO_SKILL_NAMESPACE}/")
+    target = Path(held).resolve()
+    if target.parent != Path(folder).resolve():
+        raise ValueError(f"a generated skill's folder would land outside {AUTO_SKILL_NAMESPACE}/")
+    return target
+
+
 def _parse_skill_sections(resp: str) -> dict:
     """Parse the DESCRIPTION/TRIGGERS/PROCEDURE delimited skill-synthesis response.
 
@@ -2499,7 +2521,11 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
     _loader = SkillsLoader()
     _slug = _slugify_intent(intent_id, intent.goal)
     _existing = f"{AUTO_SKILL_NAMESPACE}/{_slug}"
-    if (_loader._dir / _existing).exists():
+    try:
+        _target = _auto_skill_path(_loader._dir, _slug)
+    except ValueError:
+        return web.json_response({"error": "This intent's id can't name a skill."}, status=400)
+    if _target.exists():
         return web.json_response(
             {
                 "error": f'A skill for this intent already exists — find "{_existing}" under Skills.',  # noqa: E501
