@@ -199,12 +199,12 @@ def test_the_models_url_is_derived_not_guessed() -> None:
     assert (
         openai_compatible_models_url("https://h/v1beta/openai") == "https://h/v1beta/openai/models"
     )
-    # No version segment anywhere → /v1 is supplied (the property being preserved).
+    # A bare host → /v1 is supplied (the property being preserved).
     assert openai_compatible_models_url("https://h") == "https://h/v1/models"
-    assert openai_compatible_models_url("https://h/openai") == "https://h/openai/v1/models"
-    # A segment that merely STARTS with "v" is not a version — a self-hosted vLLM mount
-    # point still gets its /v1, which is the failure mode of a looser regex.
-    assert openai_compatible_models_url("https://h/vllm") == "https://h/vllm/v1/models"
+    # A path with no version is the provider's own, read where its chats go: as typed. A
+    # self-hosted vLLM mount point is one (a segment that merely starts with "v").
+    assert openai_compatible_models_url("https://h/openai") == "https://h/openai/models"
+    assert openai_compatible_models_url("https://h/vllm") == "https://h/vllm/models"
     # An empty endpoint falls back to the caller's default base, unchanged.
     assert openai_compatible_models_url("", default_base="https://d/v1") == "https://d/v1/models"
 

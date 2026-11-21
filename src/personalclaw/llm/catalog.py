@@ -629,16 +629,17 @@ _VERSION_SEGMENT = re.compile(r"^v\d+[a-z0-9]*$", re.IGNORECASE)
 def openai_compatible_base(
     endpoint: str | None, *, default_base: str = "https://api.openai.com/v1"
 ) -> str:
-    """The base an OpenAI-compatible ``endpoint``'s chats, streams and embeddings go to
-    (`llm.openai.OpenAIProvider`): a bare host gets ``/v1``, the base its model list reads
-    (:func:`openai_compatible_models_url`), and a Base URL with any path is kept exactly as typed,
-    a trailing slash included.
+    """The one address every reader of an OpenAI-compatible ``endpoint`` sends to: a bare host
+    gets ``/v1``, and a Base URL with any path is kept exactly as typed, a trailing slash included.
 
-    The client sent to the Base URL as typed, so a vLLM server saved at its bare address listed
-    its models under ``/v1`` and then had every chat sent where it serves nothing. A Base URL with
-    a path is the provider's own (``…/api/coding/paas/v4``, ``…/v1beta/openai/``), and chats as
-    typed, as before. One with a path and no version (``…/api``) still lists its models under
-    ``/v1`` while it chats as typed: normalizing the Base URL when it is saved is what settles it.
+    Its readers are chat, its stream and embeddings (`llm.openai.OpenAIProvider`), the model list
+    and so Test connection (:func:`openai_compatible_models_url`), image generation, speech to
+    text, text to speech (`image_gen`, `stt`, `tts`'s OpenAI providers) and the capture proxy's
+    OpenAI upstream (`inbound.capture_proxy`). Each used to read the Base URL its own way: a vLLM
+    server saved at its bare address listed its models under ``/v1`` and had every chat sent where
+    it serves nothing, and a Base URL with a path and no version (``…/api``) read "Connected" from
+    ``/api/v1/models`` while every chat posted to ``/api/chat/completions``. A Base URL with a path
+    is the provider's own (``…/api/coding/paas/v4``, ``…/v1beta/openai/``, ``…/api``).
     """
     base = endpoint or default_base
     scheme, sep, rest = base.partition("://")
@@ -650,26 +651,45 @@ def openai_compatible_base(
 def openai_compatible_models_url(
     endpoint: str | None, *, default_base: str = "https://api.openai.com/v1"
 ) -> str:
-    """The ``/models`` URL to GET for an OpenAI-compatible ``endpoint``.
+    """The ``/models`` URL to GET for an OpenAI-compatible ``endpoint``: under
+    :func:`openai_compatible_base`, the address its chats go to, so "Connected" means a chat on
+    the same Base URL reaches a server that answers.
 
-    ``/v1`` is appended only when the base carries NO version segment at all, which is
-    the property the old ``if not base.endswith("/v1")`` was protecting: a user who
-    types the bare host (``https://api.openai.com``) still reaches ``/v1/models``.
-
-    What ``endswith`` got wrong (#955) is every OpenAI-compatible base whose version is
-    spelled anything other than a trailing ``/v1``. A base of the form
-    ``https://api.vendor.example/api/coding/paas/v4`` became ``…/paas/v4/v1/models`` → 404 →
-    zero models discovered, silently, for an endpoint serving a textbook OpenAI model list.
-    Gemini's OpenAI shim (``…/v1beta/openai``) has the same shape with the version not even
-    last, so the test is "does any segment name a version", not "does the last one".
+    A bare host (``https://api.openai.com``) still reaches ``/v1/models``, and a Base URL whose
+    version is spelled anything other than a trailing ``/v1`` is read as typed (#955:
+    ``…/api/coding/paas/v4`` was fetched as ``…/paas/v4/v1/models``, and Gemini's
+    ``…/v1beta/openai`` has its version not even last). A Base URL with a path and no version
+    (``…/api``) used to list under ``/v1`` while it chatted as typed; a server under ``/v1`` there
+    now fails Test, and :func:`_missing_version_hint` names the address with the version added.
     (Reserved ``.example`` host by rule — ``tests/rails/test_network_egress_hosts_tree.py`` reads a
     routable hostname in shipped source as a DESTINATION, even in a docstring.)
     """
-    base = (endpoint or default_base).rstrip("/")
-    segments = base.split("://", 1)[-1].split("/")[1:]
-    if not any(_VERSION_SEGMENT.match(s) for s in segments):
-        base += "/v1"
-    return f"{base}/models"
+    return openai_compatible_base(endpoint, default_base=default_base).rstrip("/") + "/models"
+
+
+#: The last path segment of an OpenAI resource rather than a base (``…/chat/completions``,
+#: ``…/models``): a Base URL that ends in one is a pasted request path, which the 404's own
+#: sentence already says to trim, so no version is suggested under it.
+_RESOURCE_SEGMENTS = frozenset(
+    {"completions", "models", "embeddings", "responses", "generations", "speech", "transcriptions"}
+)
+
+
+def _missing_version_hint(endpoint: str | None) -> str:
+    """For a Base URL with a path that names no API version (``https://router/api``), the
+    sentence naming the address with ``/v1`` added, which is where most OpenAI-compatible
+    servers serve. Empty for a bare host (it already has ``/v1``), for one that names its
+    version (that one is the provider's own), and for one that ends in a resource path."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit((endpoint or "").strip())
+    segments = [s for s in parts.path.split("/") if s]
+    if not segments or any(_VERSION_SEGMENT.match(s) for s in segments):
+        return ""
+    if segments[-1].lower() in _RESOURCE_SEGMENTS:
+        return ""
+    with_version = urlunsplit(parts._replace(path="/" + "/".join(segments) + "/v1"))
+    return f" If this server's API is under a version, add it to the Base URL: {with_version}."
 
 
 def _capabilities_by_id(record: dict[str, Any]) -> list[str]:
@@ -805,7 +825,8 @@ async def openai_compatible_discover_models(
     if r.status == 404:
         raise ModelDiscoveryError(
             f"No model list at {url} (HTTP 404) — set this provider's endpoint to the same "
-            f"base your chat completions use (the base, not the /chat/completions path).",
+            f"base your chat completions use (the base, not the /chat/completions path)."
+            + _missing_version_hint(endpoint),
             url=url,
             status=r.status,
         )

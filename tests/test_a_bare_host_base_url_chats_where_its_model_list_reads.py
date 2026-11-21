@@ -8,8 +8,8 @@ model(s) available", and its first chat went to a path the server does not serve
 
 A bare host now chats under `/v1`, where its model list reads (`catalog.openai_compatible_base`).
 A Base URL with any path is the provider's own and chats exactly as typed, as before, a trailing
-slash included. What stays open: a Base URL with a path and no version (`…/api`) still lists its
-models under `/v1` while it chats as typed, until the Base URL is normalized when it is saved.
+slash included, and its model list reads there too
+(`test_every_reader_of_a_base_url_reaches_one_address.py`).
 """
 
 from __future__ import annotations
@@ -69,14 +69,14 @@ def test_a_versioned_base_url_keeps_its_trailing_slash(typed):
     assert openai_compatible_base(typed) == typed
 
 
-def test_a_base_url_with_a_path_and_no_version_chats_as_typed():
-    """The provider's own path, as on main. Its model list still reads `/v1/models` under it:
-    the half this item leaves open."""
+def test_a_base_url_with_a_path_and_no_version_chats_and_lists_as_typed():
+    """The provider's own path. Its model list used to read `/v1/models` under it while every
+    chat posted as typed."""
     typed = "https://router.vendor.example/api"
 
     assert openai_compatible_base(typed) == typed
     assert _chat_base(typed) == typed
-    assert openai_compatible_models_url(typed) == typed + "/v1/models"
+    assert openai_compatible_models_url(typed) == typed + "/models"
 
 
 def test_no_base_url_is_the_sdk_default(monkeypatch):

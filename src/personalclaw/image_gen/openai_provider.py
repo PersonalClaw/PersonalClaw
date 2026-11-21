@@ -220,12 +220,16 @@ class OpenAIImageProvider(ImageGenProvider):
             raise ImageGenError(
                 f"No API key configured for image provider {self._provider_name!r}."
             )
+        from personalclaw.llm.catalog import openai_compatible_base
+
+        # The address chat on the same Base URL sends to: a bare host is under /v1.
+        base_url = openai_compatible_base(self._endpoint) if self._endpoint else None
         # Each request asks the egress guard first, under the owner's Network egress settings.
         return openai.AsyncOpenAI(
             api_key=api_key,
-            base_url=self._endpoint or None,
+            base_url=base_url,
             http_client=http_client(
-                endpoint=self._endpoint,
+                endpoint=base_url or "",
                 model_provider=True,
                 refused_as=openai.OpenAIError,
                 follow_redirects=True,

@@ -334,9 +334,15 @@ def _resolve_upstream(
         return None, f"upstream provider {name!r} did not resolve: {exc}"
     if not secret:
         return None, f"upstream provider {name!r} has no usable credential configured"
+    base = base or _DIALECT_DEFAULT_BASE[dialect]
+    if dialect == DIALECT_OPENAI:
+        from personalclaw.llm.catalog import openai_compatible_base
+
+        # A saved provider's Base URL, read as its chat reads it: a bare host is under /v1.
+        base = openai_compatible_base(base)
     return (
         _Upstream(
-            url=_join(base or _DIALECT_DEFAULT_BASE[dialect], _dialect_suffix(dialect)),
+            url=_join(base, _dialect_suffix(dialect)),
             headers=_auth_headers(dialect, secret, request),
             mode="provider",
             provider=name,
