@@ -881,8 +881,11 @@ class NativeAgentRuntime(
         already, so its calls run even when it was the turn's last.
         """
         st = LoopState()
-        # A turn carried on begins inside its step, at its dispatch.
+        # A turn carried on begins inside its step, at its dispatch. The answer given ahead for
+        # the call it waited on holds for that step alone, asked or not (a grant, the mode, a
+        # guard or a hook may decide the call first): a later call under its id is asked.
         inside_step = carried is not None
+        waited_on = str(carried["point"].get("call") or "") if carried is not None else ""
         if carried is None:
             await self._open_turn(st, message)
         else:
@@ -916,6 +919,7 @@ class NativeAgentRuntime(
                         return
                     if st.next is Next.BREAK:
                         break
+                self._approval.forget_ahead(waited_on)
                 inside_step = False
             # max_turns exhausted
             yield st.ending(
@@ -940,6 +944,7 @@ class NativeAgentRuntime(
                 self._turn_message = None
                 self._owed.pending = False
                 self._carried = {}
+                self._approval.forget_ahead(waited_on)
                 self._cancel.end_turn()
 
     async def resume(

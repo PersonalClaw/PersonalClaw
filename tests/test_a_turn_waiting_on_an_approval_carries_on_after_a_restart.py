@@ -258,6 +258,32 @@ async def test_a_turn_carried_on_from_its_last_step_still_runs_the_call():
     assert seen[-1].kind == EVENT_COMPLETE
 
 
+async def test_an_answer_given_ahead_holds_for_its_call_alone():
+    """The Allow carried on is the call's own: when a grant decides the call before it asks, its
+    answer does not linger for a later call the model sends under the same id, which asks."""
+    point, _ = await _parked("c1")
+    tool = _Tool(requires_approval=True)
+    model = _ScriptedModel([_says("Done."), _calls("c1"), _says("ok")])
+    rt = await _runtime(model, tool)
+    rt.set_approval_policy("auto")  # a grant answers the carried-on call before any ask
+
+    [ev async for ev in rt.resume(point, allowed=True)]
+    assert tool.invoked == [{"x": "c1"}]
+
+    rt.set_approval_policy("")  # the grant is taken back
+    asked: list[str] = []
+
+    async def pump() -> None:
+        async for ev in rt.stream("Once more."):
+            if ev.kind == EVENT_PERMISSION_REQUEST:
+                asked.append(str(ev.request_id))
+                await rt.reject_tool(ev.request_id)
+
+    await asyncio.wait_for(pump(), timeout=10)
+    assert asked == ["c1"], "a later call under the same id ran on the carried-on answer"
+    assert tool.invoked == [{"x": "c1"}]
+
+
 # ── the chat, through a restart ──────────────────────────────────────────────────────────────
 
 

@@ -99,6 +99,12 @@ class ApprovalGate:
         not asked again."""
         self._ahead[request_id] = decision
 
+    def forget_ahead(self, request_id: str) -> None:
+        """Drop the answer given ahead for *request_id*, whether or not it was asked: an answer
+        holds for the call it was given for, never for a later call under the same id (a
+        provider that numbers each answer's calls from ``call_0``)."""
+        self._ahead.pop(request_id, None)
+
     def register(self, request_id: str) -> asyncio.Future[str]:
         """Create + register the pending Future for a request.
 

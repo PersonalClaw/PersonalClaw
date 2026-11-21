@@ -471,7 +471,9 @@ chat, channel thread, loop worker, webhook, subagent).
   its model read it, with tool outputs and finished calls masked as the
   transcript masks them and the call it waits on as sent. It also holds the
   approval's card and row, and a digest over them and the call, so a record
-  whose card and call disagree is dropped. A record past `RECORD_CAP` is not
+  whose card and call disagree is dropped. The digest is unkeyed: it binds the
+  record against corruption and drift, not against someone who can write the
+  home, who could change its config as well. A record past `RECORD_CAP` is not
   written. Any ending of the wait but the gateway's stop drops it. The next start
   asks the approval again for the window it had left, as the chat's running
   turn, so a message sent meanwhile waits behind it and Stop ends it
