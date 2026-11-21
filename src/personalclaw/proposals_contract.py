@@ -237,9 +237,12 @@ async def _apply_workflow(args: dict[str, Any], ctx: "ApplyContext") -> dict[str
         name=ref,
         inputs=dict(args.get("inputs") or {}),
         idempotency_key=f"proposal:{ctx.item_id}",
+        supervisor=ctx.supervisor,
     )
     if not res.get("ok"):
-        raise ProposalError(str(res.get("error") or res.get("code") or "workflow start failed"))
+        # The service's refusal is a flat envelope whose sentence is its `message`.
+        said = res.get("message") or res.get("error") or res.get("code")
+        raise ProposalError(str(said or "workflow start failed"))
     return {"workflow": ref, "run_id": str(res.get("run_id") or "")}
 
 
@@ -310,6 +313,9 @@ class ApplyContext:
     item_id: str = ""
     actor: str = "user"
     installer: Callable[[Any], None] | None = None
+    #: The gateway's workflow supervisor, which a workflow case starts its run on (a run started
+    #: on none is made and never launched).
+    supervisor: Any = None
 
 
 _DISPATCH: dict[ApplyCase, Callable[[dict[str, Any], ApplyContext], Awaitable[dict[str, Any]]]] = {
@@ -334,14 +340,16 @@ async def apply_proposal(
     item_id: str = "",
     actor: str = "user",
     installer: Callable[[Any], None] | None = None,
+    supervisor: Any = None,
 ) -> ApplyOutcome:
-    """Run one proposal's apply case. Never raises — returns a typed outcome."""
+    """Run one proposal's apply case, a workflow on *supervisor*. Never raises — returns a typed
+    outcome."""
     try:
         case = proposal.apply_case()
     except ProposalError as exc:
         return ApplyOutcome(ok=False, error=str(exc))
     handler = _DISPATCH[case]  # total by the import-time guard above
-    ctx = ApplyContext(item_id=item_id, actor=actor, installer=installer)
+    ctx = ApplyContext(item_id=item_id, actor=actor, installer=installer, supervisor=supervisor)
     try:
         result = await handler(proposal.payload(), ctx)
     except ProposalError as exc:
@@ -382,7 +390,8 @@ async def apply_item(
     exactly as it was (PENDING for an unhandled row) and ``refs["proposal_error"]`` records
     what happened, so the user still sees the proposal and can retry it. The row is
     persisted on BOTH paths: an error nobody wrote down is an error nobody can act on.
-    ``state`` is the dashboard the row's move is announced to (see ``_record``).
+    ``state`` is the dashboard the row's move is announced to (see ``_record``), whose workflow
+    supervisor a workflow case starts its run on.
 
     ``edited`` is the edit-then-approve payload: for an ``editable`` proposal it REPLACES
     the stored payload (and is persisted, so the row shows what was actually applied). An
@@ -407,7 +416,11 @@ async def apply_item(
         return outcome
 
     outcome = await apply_proposal(
-        proposal, item_id=str(getattr(item, "id", "")), actor=actor, installer=installer
+        proposal,
+        item_id=str(getattr(item, "id", "")),
+        actor=actor,
+        installer=installer,
+        supervisor=getattr(state, "workflows", None),
     )
     if outcome.ok:
         item.refs[RESULT_KEY] = outcome.to_dict()
