@@ -382,6 +382,14 @@ WF_ERROR_CODES: dict[str, str] = {
         "on a draft launch it cannot start at all."
     ),
     "WF_RUN_LAUNCH_FAILED": "Starting the run raised; the message carries the cause.",
+    "WF_IDEMPOTENCY_KEY_REUSED": (
+        "A start under a caller key that already started a run for a different request "
+        "(another workflow or other inputs); refused rather than answered with that run."
+    ),
+    "WF_RUN_START_RACED": (
+        "Two starts under one caller key raced: the other stored its run first and had ended by "
+        "the time this one looked it up, so there is no run to answer with; retrying is safe."
+    ),
     "WF_LOOP_DOCUMENT_INVALID": (
         "The document a loop was started with is not one plain file name ending in .md, "
         ".markdown or .txt."
