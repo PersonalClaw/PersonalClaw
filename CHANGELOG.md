@@ -79,6 +79,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Switching an answer that used a tool to another version shows that version whole, its tool calls included, and a reload shows the same. It used to keep the other version's tool calls and text around the one you picked.**
 - **A file automation whose folder is not on this machine says so on the Triggers page, where it read active and never fired, as one restored from another machine does with that machine's paths. Its row's warning names the folder, its badge reads "folder missing" rather than "check schedule", and Resume all says it as it switches one back on. A folder that is there with no file in it yet is not flagged.**
 - **An automation's fire held because its action asks first (such as A2A Agent Call's) is now a question in the Inbox with Approve and Deny, where it said "waiting for you" with nothing to answer. Approve runs that fire once, as your run, with what fired it (the event, or the webhook's request), Deny records that you declined, and a question nobody answers in time lapses and says so in the automation's history. Later fires before an answer ask nothing new, and Approve runs the newest.**
+- **The header's model chip changes as soon as the models it describes do: "Set up a model" goes the moment one is set up, from Settings, a provider connected or a local model downloaded, instead of up to 20 seconds later (longer on a page left idle).**
 
 ### Security
 
