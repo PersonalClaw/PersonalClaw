@@ -687,7 +687,11 @@ def call_reach(
             within=within,
             scratch=scratch,
         )
-        written = [*effects.targets, *_landed(effects.into, cwd)] if effects.writes else []
+        written = (
+            [*effects.targets, *_landed(effects.into, cwd, effects.targets)]
+            if effects.writes
+            else []
+        )
         plants = planted(written, cwd=cwd)
         return replace(reach, deletes=deletes, identity=identity, plants=plants)
     hosts, unnamed = argument_network(title, tool_kind, tool_input, session_key=session_key)
@@ -703,16 +707,58 @@ def call_reach(
     return Reach(paths=outside([raw], cwd=cwd, within=within, scratch=scratch), plants=plants)
 
 
-def _landed(into: Iterable[tuple[str, str]], cwd: str) -> list[str]:
-    """Where each copy, move or link into a folder lands (``CommandEffects.into``): the folder's
-    entry of the source's name, for a destination spelled as a folder or one that is a folder on
-    disk, read from *cwd*."""
-    landed = []
+#: The most of a copied folder's entries read for where they land.
+_LANDED_ENTRIES = 2048
+
+
+def _landed(into: Iterable[tuple[str, str]], cwd: str, written: Iterable[str] = ()) -> list[str]:
+    """Where each copy, move or link lands (``CommandEffects.into``), read from *cwd*.
+
+    Into a folder (a destination spelled as one, or one that is a folder on disk), the folder's
+    entry of the source's name. A source that is a folder lands its entries too, below where it
+    lands: those on disk, and those the same command writes inside it (*written*, the command's
+    own write targets). It lands at the destination itself when the destination is no folder (a
+    new name: ``mv evil .vscode``), and when what is copied is the folder's contents: ``src/.``
+    (whose entry in the folder is the folder), and ``src/``, which a BSD ``cp -R`` reads so."""
+    targets = [_absolute(path, cwd) for path in written]
+    landed: list[str] = []
     for destination, source in into:
         spelled = os.path.expanduser(destination)
-        if destination.endswith("/") or os.path.isdir(os.path.join(cwd or ".", spelled)):
-            landed.append(os.path.join(destination, os.path.basename(source.rstrip("/"))))
+        into_folder = destination.endswith("/") or os.path.isdir(os.path.join(cwd or ".", spelled))
+        roots = []
+        if not into_folder:
+            roots.append(destination)
+        else:
+            # The folder's entry of the source's name: the folder itself for ``src/.``.
+            roots.append(os.path.join(destination, os.path.basename(source.rstrip("/"))))
+            landed.append(roots[-1])
+            if source.endswith("/"):
+                roots.append(destination)
+        entries = _entries(source, cwd, targets)
+        landed += [os.path.join(root, entry) for root in roots for entry in entries]
     return landed
+
+
+def _absolute(path: str, cwd: str) -> str:
+    expanded = os.path.expanduser(path)
+    return os.path.normpath(os.path.join(cwd or os.getcwd(), expanded))
+
+
+def _entries(source: str, cwd: str, targets: Sequence[str]) -> list[str]:
+    """What a folder *source* holds, each relative to it: its entries on disk, at most
+    :data:`_LANDED_ENTRIES`, and each of *targets* (absolute) the same command writes inside it.
+    Nothing for a source that is no folder."""
+    folder = _absolute(source, cwd)
+    inside = folder.rstrip(os.sep) + os.sep
+    found = [os.path.relpath(target, folder) for target in targets if target.startswith(inside)]
+    if not os.path.isdir(folder):
+        return found
+    for at, folders, files in os.walk(folder):
+        for entry in (*folders, *files):
+            found.append(os.path.relpath(os.path.join(at, entry), folder))
+            if len(found) >= _LANDED_ENTRIES:
+                return found
+    return found
 
 
 #: The kinds of an agent CLI's call that write the files they name (``acp.translate``).

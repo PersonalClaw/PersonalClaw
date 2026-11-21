@@ -84,6 +84,59 @@ def test_a_copy_into_the_folder_named_bare_asks_when_it_is_one(project):
     assert run_bounds.put_to_a_person(copy, session_key="s", cwd=str(project))
 
 
+def _a_folder_of_settings(project, name: str = "evil"):
+    (project / name).mkdir(parents=True, exist_ok=True)
+    (project / name / "settings.json").write_text("{}")
+
+
+@pytest.mark.parametrize(
+    "command, there, on_disk",
+    [
+        ("mkdir evil && echo {} > evil/settings.json && cp -R evil/ .vscode", True, False),
+        ("mkdir evil && echo {} > evil/settings.json && cp -R evil/ .vscode", False, False),
+        ("cp -r evil/. .vscode/", True, True),
+        ("cp -R evil/ .vscode", True, True),
+        ("mv evil .vscode", False, True),
+        ("cp -R evil .vscode", False, True),
+        ("ln -s evil .vscode", False, True),
+        ("cp -r stuff/.vscode .", False, True),
+    ],
+)
+def test_a_folder_that_lands_as_the_settings_folder_asks(project, command, there, on_disk):
+    """🔴 Red before: what landed was each entry of the folder copied, moved or linked (its
+    contents with ``src/.`` or a BSD ``cp -R src/``, or the folder itself under a new name), and
+    the reader looked only at the source's own name in the destination."""
+    if there:
+        (project / ".vscode").mkdir()
+    if on_disk:
+        _a_folder_of_settings(project)
+        _a_folder_of_settings(project, "stuff/.vscode")
+    assert run_bounds.put_to_a_person(_shell(command), session_key="s", cwd=str(project))
+
+
+def test_a_copy_after_a_cd_lands_in_the_folder_it_moved_to(project):
+    """🔴 Red before: a ``cd`` moved where the copy's targets were read, and not where it landed."""
+    from personalclaw.command_effects import command_effects
+
+    assert command_effects("cd app && cp a .vscode/").into == {("app/.vscode/", "app/a")}
+    (project / "app" / ".git").mkdir(parents=True)
+    _a_folder_of_settings(project, "app/evil")
+    copy = _shell("cd app && cp -r evil/. .vscode/")
+    assert run_bounds.put_to_a_person(copy, session_key="s", cwd=str(project))
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cp -R evil/ notes", "cp -r evil/. backup/", "mv evil archive", "cp -R docs .vscode"],
+)
+def test_a_folder_that_lands_elsewhere_or_holds_no_settings_is_copied_as_before(project, command):
+    """A folder of settings that lands outside the settings folder, and one with none in it."""
+    _a_folder_of_settings(project)
+    (project / "docs").mkdir()
+    (project / "docs" / "notes.md").write_text("x")
+    assert not run_bounds.put_to_a_person(_shell(command), session_key="s", cwd=str(project))
+
+
 def test_a_copy_reads_where_it_lands_and_compares_as_before():
     from dataclasses import replace
 

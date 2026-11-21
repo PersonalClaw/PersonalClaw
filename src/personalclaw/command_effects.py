@@ -337,11 +337,12 @@ def _relayed(effects: CommandEffects) -> CommandEffects:
 def _under(
     effects: CommandEffects, base: str, *, lost: bool = False, base_glob: int = -1
 ) -> CommandEffects:
-    """*effects* with each relative target and removal read from folder *base* (``""``: where it
-    starts). *base_glob* is where the first glob character of *base* is, or -1.
+    """*effects* with each relative target, removal and copy (``into``) read from folder *base*
+    (``""``: where it starts). *base_glob* is where the first glob character of *base* is, or -1.
 
-    With *lost*, the folder is not known, so a relative target names no place."""
-    if not (effects.targets or effects.removes) or (not base and not lost):
+    With *lost*, the folder is not known, so a relative target names no place, and a copy with a
+    relative path is not placed."""
+    if not (effects.targets or effects.removes or effects.into) or (not base and not lost):
         return effects
     targets: set[str] = set()
     unread = effects.target_unread
@@ -364,13 +365,25 @@ def _under(
             shifted = removal.glob_at + len(joined) - len(removal.path)
             at = base_glob if base_glob >= 0 else (shifted if removal.glob_at >= 0 else -1)
             removes.add(Removal(joined, at))
+    placed = lambda path: path.startswith(("/", "~", "$"))  # noqa: E731
+    into = frozenset(
+        (_joined(base, destination), _joined(base, source))
+        for destination, source in effects.into
+        if not lost or (placed(destination) and placed(source))
+    )
     return replace(
         effects,
         targets=frozenset(targets),
         target_unread=unread,
         removes=frozenset(removes),
         removes_unread=removes_unread,
+        into=into,
     )
+
+
+def _joined(base: str, path: str) -> str:
+    """*path* read from folder *base*, a trailing ``/`` kept (a folder spelled as one)."""
+    return path if path.startswith(("/", "~", "$")) else posixpath.join(base, path)
 
 
 #: The files a write to which is no write: where output goes to be thrown away or shown.

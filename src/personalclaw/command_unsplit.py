@@ -82,6 +82,7 @@ def unsplit_effects(
             writes=written.writes,
             targets=written.targets,
             target_unread=written.target_unread,
+            into=written.into,
         )
     return found
 
