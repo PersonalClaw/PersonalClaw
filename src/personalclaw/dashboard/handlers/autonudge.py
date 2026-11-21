@@ -143,7 +143,10 @@ async def api_autonudge_start(request: web.Request) -> web.Response:
 
 
 async def api_autonudge_update(request: web.Request) -> web.Response:
-    """PATCH /api/autonudge/{loop_id} — update message / idle_secs / active."""
+    """PATCH /api/autonudge/{loop_id} — update message / idle_secs / active.
+
+    ``max_cycles`` too. A loop that switched itself off at its ``max_cycles`` and is given cycles
+    to spare starts again unless the body says ``active`` (``AutoNudgeService.update``)."""
     svc = _autonudge_get()
     if svc is None:
         return web.json_response({"error": "auto-nudge disabled"}, status=503)

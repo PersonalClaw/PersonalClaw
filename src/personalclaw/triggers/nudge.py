@@ -428,6 +428,17 @@ class AutoNudgeService:
         )
         return loop
 
+    def _carries_on(self, trigger: Trigger) -> bool:
+        """Whether a nudge that switched itself off at its Max cycles goes on after an update: it
+        has cycles to spare now (a higher limit than it has fired, or none), and it is the owner's,
+        not an imported one still waiting for them to switch it on. Pressing Update after raising
+        the limit then starts it again, from the cycles it has fired."""
+        from personalclaw.triggers.legacy_import import IMPORTED_BY
+
+        if getattr(trigger, "created_by", "") == IMPORTED_BY:
+            return False
+        return why_it_ended(self._to_loop(trigger)) != "budget"
+
     async def update(
         self,
         loop_id: str,
@@ -441,6 +452,7 @@ class AutoNudgeService:
             trigger = self._get_row(loop_id)
             if trigger is None:
                 return None
+            ran_out = not trigger.enabled and why_it_ended(self._to_loop(trigger)) == "budget"
             spec = dict(trigger.spec or {})
             if message is not None:
                 spec["message"] = message
@@ -449,6 +461,8 @@ class AutoNudgeService:
             if max_cycles is not None:
                 spec["max_cycles"] = max(0, int(max_cycles))
             trigger.spec = spec
+            if active is None and ran_out and self._carries_on(trigger):
+                active = True
             if active is not None:
                 trigger.enabled = bool(active)
                 if trigger.enabled:
