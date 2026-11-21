@@ -5632,9 +5632,13 @@ export interface TriageAutoDone {
 
 /** One proposal still waiting on the user. `tier` drives the badge; `pattern_key` is what an
  *  "always" answer teaches — blank means the run recorded no pattern, and the card must not
- *  offer "always" for it rather than inventing one. */
+ *  offer "always" for it rather than inventing one. `always_runs` says whether a rule taught for
+ *  it could ever answer one on its own (the server's answer, under the set its digest may run
+ *  unattended: by default filing a task always asks), and the card offers Always and Never only
+ *  where it is true. */
 export interface TriagePending {
   ordinal: string; action_type: string; tier: string; pattern_key: string; clamped: boolean
+  always_runs?: boolean
   /** What the proposal bound when its run recorded it, and what its Yes carries out: a task's
    *  `title` for "File a task", nothing for the other kinds (a reply is drafted when they say yes). */
   action_config: { title?: string }

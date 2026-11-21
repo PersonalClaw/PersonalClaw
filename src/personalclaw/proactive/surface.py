@@ -40,7 +40,12 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from personalclaw.proactive.autoexec import not_done_note, stopped_note
+from personalclaw.proactive.autoexec import (
+    always_runs,
+    capability_set,
+    not_done_note,
+    stopped_note,
+)
 from personalclaw.proactive.carry import CARRY_RULE, DROPPED_EXPIRED, carried_note, dropped_note
 from personalclaw.proactive.proposals import bind_arguments
 
@@ -158,6 +163,20 @@ def _answer(reply: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _rule_of(action_type: str, pattern: Any, output: Mapping[str, Any]) -> dict[str, Any]:
+    """What an "always" answer on a pending row of *action_type* would teach: the *pattern* its
+    run recorded (``pattern_key``, "" for none), and whether a rule taught for it could ever answer
+    one on its own (``always_runs``, :func:`autoexec.always_runs`) under the set the digest's run
+    recorded it may run unattended (its node's, ``auto_capabilities``; the default set when a run
+    recorded none). The card offers Always and Never only where both hold: by default filing a
+    task always asks, so a rule for one would never apply."""
+    capabilities = capability_set(output.get("auto_capabilities"))
+    return {
+        "pattern_key": str(pattern or ""),
+        "always_runs": always_runs(action_type, capabilities),
+    }
+
+
 def build_digest_view(
     *,
     enabled: bool,
@@ -251,7 +270,7 @@ def build_digest_view(
                 "ordinal": ordinal,
                 "action_type": action_type,
                 "tier": str(row.get("tier", "") or joined.get("tier", "") or ""),
-                "pattern_key": str(joined.get("pattern_key", "") or ""),
+                **_rule_of(action_type, joined.get("pattern_key"), output),
                 "clamped": bool(joined.get("clamped")),
                 # What the proposal bound when its run recorded it (a task's title): what its Yes
                 # carries out, and what the card shows before she answers. Re-bound here, so a
@@ -289,7 +308,7 @@ def build_digest_view(
                 "ordinal": ordinal,
                 "action_type": action_type,
                 "tier": str(row.get("tier", "") or ""),
-                "pattern_key": str(row.get("pattern_key", "") or ""),
+                **_rule_of(action_type, row.get("pattern_key"), output),
                 "clamped": bool(row.get("clamped")),
                 "action_config": bind_arguments(action_type, row.get("action_config"))[0],
                 "reason": "",

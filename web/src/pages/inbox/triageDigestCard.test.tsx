@@ -298,6 +298,29 @@ describe('one-tap yes / no / always emits the reply grammar', () => {
     expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy()
   })
 
+  it('🔴 offers no Always or Never on a kind no rule can answer, and says it asks each time', async () => {
+    // Filing a task always asks (the server's `always_runs`): an Always taught for one was stored
+    // and never applied, while its button said "Always allow".
+    const task = { ...PENDING, action_type: 'create_task', pattern_key: 'create_task:inbox', always_runs: false }
+    proactiveDigest.mockResolvedValue(view({ pending: [task] }))
+    render(<TriageDigestCard />)
+    await waitFor(() => expect(screen.getByText(/asks you each time/)).toBeTruthy())
+    expect(screen.queryByRole('button', { name: 'Always' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Never' })).toBeNull()
+    // Vacuity: its Yes and No ARE offered, so the absence above is about the rule alone.
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'No' })).toBeTruthy()
+  })
+
+  it('still offers Always and Never on a kind a rule answers on its own', async () => {
+    const archive = { ...PENDING, action_type: 'archive', pattern_key: 'archive:inbox', always_runs: true }
+    proactiveDigest.mockResolvedValue(view({ pending: [archive] }))
+    render(<TriageDigestCard />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Always' })).toBeTruthy())
+    expect(screen.getByRole('button', { name: 'Never' })).toBeTruthy()
+    expect(screen.queryByText(/asks you each time/)).toBeNull()
+  })
+
   it('keeps an answered proposal visible and does not re-offer it', async () => {
     proactiveDigest.mockResolvedValue(view({ pending: [{ ...PENDING, answered: true, answer: 'always no' }] }))
     render(<TriageDigestCard />)
