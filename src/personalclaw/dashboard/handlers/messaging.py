@@ -9,7 +9,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import bounded_log, notification_kinds
+from personalclaw import approval_answer, bounded_log, notification_kinds
 from personalclaw.dashboard import chat_intake
 from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
 from personalclaw.dashboard.chat_utils import room_for_a_notice
@@ -134,22 +134,39 @@ def _no_such_agent() -> web.Response:
     return web.json_response({"error": "not found"}, status=404)
 
 
-def _not_theirs(work: str, agent_id: str) -> web.Response:
-    """A status read the work *work* made of another chat's subagent: one audit row, and the
-    answer an id that never existed gets (:func:`_no_such_agent`), whether or not the row could be
-    written, since any other answer would say the subagent exists."""
+def _not_theirs(work: str, agent_id: str, *, operation: str = "spawn.status") -> web.Response:
+    """A read or a stop (*operation*) the work *work* made of another chat's subagent: one audit
+    row, and the answer an id that never existed gets (:func:`_no_such_agent`), whether or not the
+    row could be written, since any other answer would say the subagent exists."""
+    _audit_refused(work, operation, f"subagent:{agent_id}")
+    return _no_such_agent()
+
+
+def _audit_refused(work: str, operation: str, resources: str) -> None:
+    """One audit row for *operation* the work *work* made of another chat's *resources*."""
     try:
         _sel().log_api_access(
             caller=work or "unknown",
-            operation="spawn.status",
+            operation=operation,
             outcome="denied",
             source="dashboard",
-            resources=f"subagent:{agent_id}",
+            resources=resources,
             error="the subagent is another chat's",
         )
     except Exception:  # noqa: BLE001 - the answer stands whether or not it is written down
-        logger.warning("could not audit a refused read of subagent %s", agent_id, exc_info=True)
-    return _no_such_agent()
+        logger.warning("could not audit a refused %s of %s", operation, resources, exc_info=True)
+
+
+def _stop_by(request: web.Request, reader: Any) -> tuple[str, bool]:
+    """How a stop *request* makes is recorded: the reason its helper ends with, and whether it is
+    yours (``SubagentInfo.stopped_by_you``: its report starts no turn). You, who read every helper
+    (`subagent_reach`), stop as yourself; an app's stop is the app's and says so."""
+    if reader.everyone:
+        return "Cancelled by user", True
+    by = approval_answer.of_request(request)
+    if by.kind == approval_answer.APP:
+        return f"Cancelled by the app {by.name}", False
+    return "Cancelled", False
 
 
 async def api_spawn_status(request: web.Request) -> web.Response:
@@ -308,12 +325,20 @@ async def api_spawn_list(request: web.Request) -> web.Response:
 async def api_spawn_delete(request: web.Request) -> web.Response:
     """DELETE /api/spawn/{agent_id} — cancel a running subagent or remove a finished one.
 
-    The owner's own stop of it (``SubagentInfo.stopped_by_you``): its report starts no turn."""
+    Of the subagents its caller reads (`subagent_reach`): every one for you, an app's own work's
+    for an app. Another chat's answers as an id that never existed does, and is left as it was.
+    Your stop is your own (``SubagentInfo.stopped_by_you``): its report starts no turn. An app's
+    is the app's (:func:`_stop_by`)."""
     state: DashboardState = request.app["state"]
     agent_id = request.match_info["agent_id"]
-    if not state.subagents or agent_id not in state.subagents._agents:
-        return web.json_response({"error": "not found"}, status=404)
-    cancelled = await state.subagents.cancel(agent_id, by_you=True)
+    info = state.subagents._agents.get(agent_id) if state.subagents else None
+    if info is None:
+        return _no_such_agent()
+    reader = reader_of(request, state)
+    if not await asyncio.to_thread(reader.reads, info.parent_session_key):
+        return _not_theirs(reader.work, agent_id, operation="spawn.stop")
+    reason, yours = _stop_by(request, reader)
+    cancelled = await state.subagents.cancel(agent_id, reason=reason, by_you=yours)
     if not cancelled:
         # Already done — just remove from list
         state.subagents._agents.pop(agent_id, None)
@@ -322,11 +347,16 @@ async def api_spawn_delete(request: web.Request) -> web.Response:
 
 
 async def api_spawn_clear(request: web.Request) -> web.Response:
-    """DELETE /api/spawn — clear all completed subagents."""
+    """DELETE /api/spawn — clear all completed subagents.
+
+    Those its caller reads (`subagent_reach`): every chat's for you, an app's own work's for an
+    app."""
     state: DashboardState = request.app["state"]
     if not state.subagents:
         return web.json_response({"ok": True})
-    done_ids = [a.id for a in state.subagents.all_agents if a.done]
+    reader = reader_of(request, state)
+    done = [a for a in state.subagents.all_agents if a.done]
+    done_ids = [a.id for a in await asyncio.to_thread(reader.of, done)]
     for aid in done_ids:
         state.subagents._agents.pop(aid, None)
         state.subagents._tasks.pop(aid, None)
@@ -338,6 +368,11 @@ async def api_spawn_cancel_fanout(request: web.Request) -> web.Response:
     click. Body: ``{parent_session?: str, parent_run?: str}`` — one
     of them keys the fan-out. Unlike DELETE /api/spawn (clears COMPLETED entries
     without killing running ones), this stops the whole in-flight fan-out.
+
+    Every one for you. An app stops a fan-out only when it reads every helper still going in it
+    (`subagent_reach`): one of another chat's is answered as a fan-out with nothing to stop is,
+    and is left as it was, its fan-out not marked stopped. An app's stop is the app's
+    (:func:`_stop_by`).
     """
     state: DashboardState = request.app["state"]
     if not state.subagents:
@@ -361,9 +396,16 @@ async def api_spawn_cancel_fanout(request: web.Request) -> web.Response:
             )
     if not fanout_key:
         return web.json_response({"error": "parent_session or parent_run is required"}, status=400)
-    cancelled = await state.subagents.cancel_fanout(
-        fanout_key, reason="Cancelled by user", by_you=True
-    )
+    reader = reader_of(request, state)
+    if not reader.everyone:
+        going = state.subagents._fanout_of(fanout_key)
+        read = await asyncio.to_thread(reader.of, going)
+        if len(read) != len(going):
+            _audit_refused(reader.work, "spawn.cancel_fanout", f"fanout:{fanout_key}")
+        if not going or len(read) != len(going):
+            return web.json_response({"ok": True, "cancelled": 0})
+    reason, yours = _stop_by(request, reader)
+    cancelled = await state.subagents.cancel_fanout(fanout_key, reason=reason, by_you=yours)
     return web.json_response({"ok": True, "cancelled": cancelled})
 
 
