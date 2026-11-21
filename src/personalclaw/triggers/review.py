@@ -5,7 +5,9 @@ missed (`missed.review_at_boot`), `service.tick` the slots a gateway that was al
 missed (the same `service.recover`, on a wake), and `reaper.terminalize_orphans` closes the runs a
 crash or a restart left with no ending. A stop closes the runs it cuts off itself, as it cuts them
 (`reaper.record_stopped_run`, and `reaper.record_stopped_work` for the agent a run started), and
-the next start announces them in its one notice. None is re-run on its own, deliberately: running
+the next start announces them in its one notice. And `service.tick` keeps a one-shot its own
+admission held at its time because something it needs was busy (`service._review_held`), which no
+door runs again. None is re-run on its own, deliberately: running
 the 3am backup at 9am is sometimes right and sometimes exactly wrong, and a run a restart
 interrupted may already have done part of its work, so running it again is the user's decision
 ("review, don't auto-run"). A card says which it was (`ReviewCard.cause`), because "while
@@ -50,12 +52,15 @@ KINDS = (MISSED, INTERRUPTED)
 #: PAUSED: it was running and could not tick — the computer slept, or the process was stopped — so
 #: a wake found them. A card that holds slots of both says so (STOPPED_OR_PAUSED). UNSEEN: the
 #: automation reached PersonalClaw only after its time — an app's row, added or first readable too
-#: late — so the clock had nothing to run then (`arm.first_fire`).
+#: late — so the clock had nothing to run then (`arm.first_fire`). HELD: a one-shot whose fire its
+#: own admission held at its time because something it needs was busy (`firepath.BUSY_GATES`: a
+#: resource slot, its target, or you, when it yields to you); the card's reason says which.
 STOPPED = "stopped"
 PAUSED = "paused"
 STOPPED_OR_PAUSED = "stopped_or_paused"
 UNSEEN = "unseen"
-CAUSES = (STOPPED, PAUSED, STOPPED_OR_PAUSED, UNSEEN)
+HELD = "held"
+CAUSES = (STOPPED, PAUSED, STOPPED_OR_PAUSED, UNSEEN, HELD)
 
 
 @dataclass

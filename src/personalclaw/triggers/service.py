@@ -91,6 +91,14 @@ MAX_SLEEP_SECS = 30.0
 #: sleeping, and a busy-wait would be a battery bug rather than a scheduler.
 MIN_SLEEP_SECS = 0.5
 
+#: The outcomes a suppressed fire's row is written for (`persist_suppression`): the six inert ones,
+#: and the two a gate refuses with, `refused` (the incident switch, the capability fence) and
+#: `blocked_injection` (the screen). Every outcome a gate can give (`firepath.GATE_OUTCOMES`) is
+#: here, so no fire an admission refused leaves no trace in its automation's history.
+RECORDED_SUPPRESSIONS: frozenset[str] = INERT_OUTCOMES | frozenset(
+    {Outcome.REFUSED.value, Outcome.BLOCKED_INJECTION.value}
+)
+
 
 @dataclass
 class DueFire:
@@ -631,9 +639,12 @@ async def tick(
         )
         decision, row = admission.decision, admission.row
         if spent and persist and not decision.allowed:
-            # Refused: nothing will run, and its typed row is already its record. No grant wrote the
-            # taken slot, so it is written here — and the row stays, switched off, to be run again.
+            # Refused: nothing will run, and its typed row is its record. No grant wrote the taken
+            # slot, so it is written here — and the row stays, switched off, to be run again. One
+            # held because something it needs was busy is a run you still wanted, so it waits on the
+            # review as a missed slot does (`_review_held`), never off with a row alone.
             _write_back(store, trigger, bases)
+            _review_held(trigger, decision, slot=scheduled_for, base_dir=base_dir)
         row["scheduled_for"] = scheduled_for
         # 🔴 `ran_late`, which only the MANUAL missed-fire card ever wrote. The outcome and
         # `scheduled_for` were added together — a run that started 40 minutes after its
@@ -666,6 +677,33 @@ async def tick(
 
     result.next_sleep = sleep_for(list(by_id.values()), now=now)
     return result
+
+
+def _review_held(trigger: Trigger, decision: Any, *, slot: float, base_dir: Any) -> None:
+    """Put a one-shot whose fire *decision* held at its time on the review, as a missed slot.
+
+    Only for the gates that hold a fire because something it needs is busy (`firepath.BUSY_GATES`):
+    a resource slot, its target, or you, when it yields to you. A reminder that yields to you, due
+    while you were active, was switched off at its time with no run and nothing to say so; it now
+    waits beside the slots a stop or a sleep missed, with its own cause (`review.HELD`) and the
+    gate's reason, to be run now or dismissed. A one-shot a rule of its own skipped (quiet hours,
+    its budget) is not: you said it must not fire then, and its row says so.
+    """
+    from personalclaw.triggers import firepath, review
+
+    if decision.gate not in firepath.BUSY_GATES:
+        return
+    card = review.ReviewCard(
+        trigger_id=trigger.id,
+        kind=review.MISSED,
+        count=1,
+        latest=slot,
+        oldest=slot,
+        # The gate's own words for what was busy, which the card says after "because".
+        reason=str(decision.reason or "").removeprefix(firepath.SKIPPED_THIS_TIME),
+        cause=review.HELD,
+    )
+    review.record([card], base_dir=base_dir)
 
 
 def _arm_unarmed(
@@ -995,6 +1033,12 @@ async def persist_suppression(
     once the run settles; writing one here too would double-count every success in
     `count_since` — the rate meter, which reads this very store.
 
+    Every outcome a gate gives (`RECORDED_SUPPRESSIONS`), not only the inert ones. It once kept the
+    six `skipped_*` outcomes alone, so a fire the incident switch or the capability fence refused
+    (`refused`) wrote nothing, and nor did a fire a busy slot, a busy target or your activity held,
+    then called `deferred`. A `refused` row is not a fire to the rate meter either
+    (`count_since` passes over it), and neither counts toward autopause.
+
     Never raises. The fire's decision has already been made and acted on, so losing its
     bookkeeping is strictly better than turning a correct suppression into a crashed tick.
 
@@ -1006,7 +1050,7 @@ async def persist_suppression(
 
         outcome = str(row.get("outcome") or "")
         trigger_id = str(row.get("trigger_id") or "")
-        if not trigger_id or outcome not in INERT_OUTCOMES:
+        if not trigger_id or outcome not in RECORDED_SUPPRESSIONS:
             return
         await _run_store(base_dir).append(
             ScheduleRun(

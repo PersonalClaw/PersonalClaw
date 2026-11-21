@@ -72,7 +72,7 @@ def _tick(store, tmp_path, at=NOW):
 # ── the defect ──
 
 
-def test_a_CONTENDED_slot_DEFERS_the_second_fire(store, tmp_path):
+def test_a_CONTENDED_slot_HOLDS_the_second_fire(store, tmp_path):
     """🔴 THE DEFECT, pinned. Both fired before this."""
     _add(store, "clock:index", ["local-llm"])
     _add(store, "clock:digest", ["local-llm"])
@@ -114,16 +114,18 @@ def test_NOBODY_holding_means_everyone_fires(store, tmp_path):
 # ── the refusal is typed and legible ──
 
 
-def test_the_outcome_is_DEFERRED_not_a_skip(store, tmp_path):
-    """The requirement above asks for "a `deferred` ledger row". The slot frees on its own, so
-    this fire is postponed by contention — not dropped by policy, which is what a `skipped_*`
-    would claim."""
+def test_the_outcome_says_this_fire_was_skipped(store, tmp_path):
+    """The requirement above asked for "a `deferred` ledger row", but deferred here means work that
+    still starts, and nothing starts a held fire later: the tick has already moved its next time on.
+    So the row says what happened, this fire was skipped while the slot was busy, and it is kept in
+    the automation's history (`test_a_held_fire_leaves_a_history_row`)."""
     _add(store, "clock:index", ["local-llm"])
     _add(store, "clock:digest", ["local-llm"])
     _hold("clock:index", tmp_path)
     rows = _tick(store, tmp_path, NOW + 1).ledger_rows
     row = next(r for r in rows if r["trigger_id"] == "clock:digest")
-    assert row["outcome"] == Outcome.DEFERRED.value
+    assert row["outcome"] == Outcome.SKIPPED_GATE.value
+    assert row["reason"].startswith("skipped this time: resource slot 'local-llm' is busy")
 
 
 def test_the_reason_NAMES_THE_HOLDER(store, tmp_path):

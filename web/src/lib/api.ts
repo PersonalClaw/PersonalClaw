@@ -3848,8 +3848,10 @@ export interface TriggerReviewCard {
   count_is_floor: boolean
   /** Why its slots did not run: PersonalClaw was `stopped` (a restart found them), `paused` (it was
    *  running and the computer slept, or the process was stopped), or both; or `unseen`, the
-   *  automation reached PersonalClaw only after its time (an app's, added or readable too late). */
-  cause: 'stopped' | 'paused' | 'stopped_or_paused' | 'unseen'
+   *  automation reached PersonalClaw only after its time (an app's, added or readable too late); or
+   *  `held`, a one-shot its own rules held at its time because something it needs was busy, or you
+   *  were active, when it yields to you. A `held` card's `reason` says which. */
+  cause: 'stopped' | 'paused' | 'stopped_or_paused' | 'unseen' | 'held'
   name: string
   /** The id the list opens the automation's panel with (`?open=`). */
   open_id: string

@@ -208,7 +208,7 @@ def test_the_first_firing_signal_names_itself(tmp_path) -> None:
     assert "notes.md" in reason  # paths is checked first
 
 
-# ── end-to-end through the real service tick (the DEFERRED ledger row) ──
+# ── end-to-end through the real service tick (the held fire's row) ──
 
 
 def _add(store, tid, *, skip_if_active=None):
@@ -232,10 +232,10 @@ def _add(store, tid, *, skip_if_active=None):
     return store.get(tid).trigger
 
 
-def test_a_guarded_trigger_over_a_busy_target_DEFERS_via_the_tick(tmp_path) -> None:
+def test_a_guarded_trigger_over_a_busy_target_is_skipped_via_the_tick(tmp_path) -> None:
     """The whole point, end to end: a `skip_if_active` guard whose target is busy produces a
-    DEFERRED ledger row through `service.tick` and does NOT dispatch — no new recording code, the
-    existing outcome path writes the typed row because the gate returns `Outcome.DEFERRED`."""
+    `skipped_gate` ledger row through `service.tick` and does NOT dispatch: this fire is skipped,
+    and nothing runs it later."""
     import asyncio
 
     from personalclaw.triggers import service as svc
@@ -249,7 +249,7 @@ def test_a_guarded_trigger_over_a_busy_target_DEFERS_via_the_tick(tmp_path) -> N
     result = asyncio.run(svc.tick(store, now=NOW + 1, base_dir=tmp_path, persist=False))
     assert "clock:mutate" not in [f.trigger.id for f in result.fires]
     row = next(r for r in result.ledger_rows if r["trigger_id"] == "clock:mutate")
-    assert row["outcome"] == Outcome.DEFERRED.value
+    assert row["outcome"] == Outcome.SKIPPED_GATE.value
     assert row["gate"] == "active"
     assert "lock file" in row["reason"]
 

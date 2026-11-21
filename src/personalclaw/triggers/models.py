@@ -127,7 +127,9 @@ class Outcome(str, Enum):
     SKIPPED_OVERLAP = "skipped_overlap"
     #: A cost/action cap was breached BEFORE the claim, so nothing was spent.
     SKIPPED_BUDGET = "skipped_budget"
-    #: quiet-hours / debounce / cooldown / condition-false.
+    #: quiet-hours / debounce / cooldown / condition-false, or held this time because something it
+    #: needs was busy: a resource slot, its target, or you, when it yields to you
+    #: (`firepath.BUSY_GATES`).
     SKIPPED_GATE = "skipped_gate"
     #: It ran and mutated nothing durable — collapses to a ledger row and auto-archives.
     SKIPPED_NOOP = "skipped_noop"
@@ -136,8 +138,10 @@ class Outcome(str, Enum):
     SKIPPED_TRIAGE = "skipped_triage"
     #: The user dismissed a missed-fire card.
     SKIPPED_MISSED = "skipped_missed"
-    #: Parked / yielded / resource-busy. ONE row per episode, not per attempt — escalating backoff
-    #: would otherwise write a row a second.
+    #: Work that still starts: a run launched in the background, one queued behind another, or
+    #: one parked waiting on you. ONE row per episode, not per attempt — escalating backoff would
+    #: otherwise write a row a second. Not a fire a gate held: nothing brings that one back, so it
+    #: is `SKIPPED_GATE`.
     DEFERRED = "deferred"
     #: A policy refusal, or a run refused before its action ran because something it needs is gone
     #: (its app, a secret, an action: `triggers.cannot_run`). Distinct from failed and from skipped,

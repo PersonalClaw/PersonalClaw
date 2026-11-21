@@ -1,9 +1,9 @@
 """Fire-time liveness heuristics for `skip_if_active`.
 
 An OPTIONAL guard on a mutating trigger, using cheap liveness heuristics (dirty
-worktree, lockfiles, recent mtime) at fire time: a busy target defers rather than fires. This is
+worktree, lockfiles, recent mtime) at fire time: a busy target skips this fire. This is
 the distinct sibling of the named resource-slot gate (`claims.busy_slot`): a slot serializes two
-trigger-fired runs against a NAMED resource one of them declared, while this defers a fire when the
+trigger-fired runs against a NAMED resource one of them declared, while this holds a fire when the
 working STATE it would act on looks like something else is touching it right now — a file that was
 just written, a lock file, a dirty git worktree. The resource isn't a named slot; it's the state.
 
@@ -21,7 +21,7 @@ mix a pure-state reader with bounded external I/O. A small dedicated module keep
 * **Never raises.** Every branch is wrapped; an exception becomes "not active". The caller walks a
   fire path that must not crash on a hand-edited `skip_if_active` block.
 * **Fail-OPEN.** When a check cannot complete — git missing, a path unreadable, a timeout — the
-  answer is NOT active (the fire proceeds). A stuck-closed liveness gate would defer an automation
+  answer is NOT active (the fire proceeds). A stuck-closed liveness gate would hold an automation
   forever the moment its git binary went missing; the cost of the open direction is at most one run
   against a target that turned out to be busy, which the claim and resource-slot gates still bound.
   This matches the `slot` gate's own unreadable-store reasoning (`models.FAIL_OPEN_GATES`).
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 #: Default freshness window for `paths`, in seconds. A path modified within this many seconds of
 #: `now` reads as "just touched". 300s (5 min) is long enough to catch an edit-in-progress and short
-#: enough that a fire is not deferred by yesterday's change. Overridable per trigger via
+#: enough that a fire is not held by yesterday's change. Overridable per trigger via
 #: `recent_secs`, because "recently" means different things for a notes folder and a build tree.
 DEFAULT_RECENT_SECS = 300.0
 
@@ -114,7 +114,7 @@ def _paths_active(spec: dict[str, Any], *, now: float, base_dir: Path | None) ->
             continue
         for match in _expand(text, base_dir):
             if _recently_modified(match, now=now, window=window):
-                return f"{match} was modified within {int(window)}s; deferred until it settles"
+                return f"{match} was modified within {int(window)}s"
     return ""
 
 
@@ -157,9 +157,9 @@ def _lockfiles_active(spec: dict[str, Any], *, base_dir: Path | None) -> str:
             continue
         try:
             if path.exists():
-                return f"lock file {path} is present; deferred until it clears"
+                return f"lock file {path} is present"
         except OSError:
-            continue  # fail-open: an unreadable lock path is not a reason to defer
+            continue  # fail-open: an unreadable lock path is not a reason to hold a fire
     return ""
 
 
@@ -168,7 +168,7 @@ def _dirty_git_active(spec: dict[str, Any], *, base_dir: Path | None) -> str:
 
     ONE bounded `git status --porcelain`. A non-empty output means the worktree is dirty. Any
     failure — git missing, not a repo, a timeout — reads as NOT dirty (fail-open): a broken check
-    must not defer a fire forever, and "cannot tell" is not "busy".
+    must not hold a fire forever, and "cannot tell" is not "busy".
     """
     target = spec.get("dirty_git")
     path = _resolve(target, base_dir)
@@ -192,7 +192,7 @@ def _dirty_git_active(spec: dict[str, Any], *, base_dir: Path | None) -> str:
         # allows the fire rather than blocking it.
         return ""
     if proc.stdout.strip():
-        return f"git worktree {path} has uncommitted changes; deferred until it is clean"
+        return f"git worktree {path} has uncommitted changes"
     return ""
 
 
@@ -204,7 +204,7 @@ def is_target_active(
     Returns `(active, reason)`. `active` False (with reason "") when the guard is empty or off, when
     no heuristic fires, or when a check could not complete — the fail-OPEN direction. NEVER raises.
 
-    The first firing heuristic wins and names itself, because the deferred ledger row needs one
+    The first firing heuristic wins and names itself, because the held fire's row needs one
     actionable reason, not a list: "git worktree … is dirty" tells the user what to do, while three
     stacked signals would leave them guessing which cleared it.
     """
