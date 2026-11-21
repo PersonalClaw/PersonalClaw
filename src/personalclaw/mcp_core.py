@@ -931,7 +931,7 @@ def _resolve_session_key() -> str:
 _ERROR_TEXT_CAP = 500
 
 
-def _refused(exc: urllib.error.HTTPError) -> dict:
+def _refused(exc: urllib.error.HTTPError, *, made: bool = False) -> dict:
     """What a call the gateway answered with an error status returns: the gateway's own answer.
 
     ``urlopen`` raises on a 4xx or 5xx, and ``str()`` of that is only the status line ("HTTP
@@ -939,7 +939,9 @@ def _refused(exc: urllib.error.HTTPError) -> dict:
     reached the tool that asked. A JSON object body is kept as the route sent it, and ``error`` is
     its one sentence, the text every tool shows and tests for. A structured refusal (``{"error":
     {"code", "message", …}}``) also keeps its whole object as ``error_detail``, for the tool that
-    renders it. Any other body is kept as text, capped.
+    renders it. Any other body is kept as text, capped; for a call that may have *made* something
+    (a POST), a server error in no route's words also carries ``answer_lost``: the server failed
+    after the call reached it, and what the route did before is not known.
     """
     try:
         raw = exc.read()
@@ -951,7 +953,10 @@ def _refused(exc: urllib.error.HTTPError) -> dict:
     except ValueError:
         body = None
     if not isinstance(body, dict):
-        return {"error": f"HTTP {exc.code}: {text or exc.reason}"}
+        failed: dict[str, Any] = {"error": f"HTTP {exc.code}: {text or exc.reason}"}
+        if made and exc.code >= 500:
+            failed["answer_lost"] = True
+        return failed
     error = body.get("error")
     if isinstance(error, dict):
         sentence = str(error.get("message") or error.get("code") or f"HTTP {exc.code}")
@@ -1010,6 +1015,13 @@ def _unanswered(method: str, path: str, budget: float) -> dict:
 # outside the try it would instead escape ``run_mcp_stdio_loop`` and take the whole MCP server
 # down mid-turn, which is the "hang" shape the refusal exists to replace.
 def _post(path: str, body: dict | None = None, *, timeout: float | None = None) -> dict:
+    """POST *body* to the gateway's *path* and return its answer, or what stopped it.
+
+    A request that never reached the gateway (no gateway to name, no credential, a refused
+    connection) says why. One that reached it and whose answer was lost (the connection dropped
+    before the answer came, an answer that could not be read) also carries ``answer_lost``, as an
+    error status in no route's words does (:func:`_refused`): what the route did is not known.
+    """
     data = json.dumps(body or {}).encode()
     budget = timeout or GATEWAY_WRITE_TIMEOUT_SECS
     try:
@@ -1019,14 +1031,26 @@ def _post(path: str, body: dict | None = None, *, timeout: float | None = None) 
             headers=_internal_headers({"Content-Type": "application/json"}),
             method="POST",
         )
+    except Exception as e:  # no gateway to name or no credential: nothing was sent
+        return {"error": str(e)}
+    try:
         with home_gateway.open_loopback(req, timeout=budget) as resp:
-            return json.loads(resp.read())
+            raw = resp.read()
     except urllib.error.HTTPError as exc:
-        return _refused(exc)
+        return _refused(exc, made=True)
     except Exception as e:
         if _timed_out(e):
             return _unanswered("POST", path, budget)
-        return {"error": str(e)}
+        # ``urlopen`` raises a URLError for a request it could not send, and the loopback
+        # transport a ValueError for an address that is not this machine's; anything else was
+        # raised once the request was sent, waiting for its answer.
+        if isinstance(e, (urllib.error.URLError, ValueError)):
+            return {"error": str(e)}
+        return {"error": str(e) or type(e).__name__, "answer_lost": True}
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {"error": "the gateway's answer could not be read", "answer_lost": True}
 
 
 def _get(path: str, *, timeout: float | None = None) -> dict:
@@ -1107,11 +1131,21 @@ def made_by_the_gateway(
         body["confirm_risk"] = RiskLevel.DESTRUCTIVE.value
     reply = _post("/api/tools/invoke", body, timeout=timeout)
     if reply.get("ok") is True:
-        return GatewayMade(str(reply.get("output") or ""), audited=True)
+        output = str(reply.get("output") or "")
+        if reply.get("made_earlier"):
+            output += (
+                "\n\n(This chat made this same call a few minutes ago, so PersonalClaw answered "
+                "with that call's result and made nothing again. To make another on purpose, ask "
+                "for something different, such as another name or time.)"
+            )
+        return GatewayMade(output, audited=True)
     error = str(reply.get("error") or "")
-    if reply.get("timed_out"):
+    if reply.get("timed_out") or reply.get("answer_lost"):
+        # The call reached the gateway and no answer came back: it may have been made, and an
+        # agent told it was not would make it again.
+        what = error if reply.get("timed_out") else f"its answer was lost ({error})"
         said = (
-            f"Asked PersonalClaw's gateway to make this call, and {error}: it may have made it, "
+            f"Asked PersonalClaw's gateway to make this call, and {what}: it may have made it, "
             "so look before you call it again."
         )
         return GatewayMade(tool_failure(said), audited=False)
@@ -1501,6 +1535,14 @@ _GATEWAY_MAKES: dict[str, float | None] = dict.fromkeys(
         "project_context_review",
         "propose_template_diff",
     )
+)
+
+#: The calls the gateway makes for the tool server an agent CLI runs that each add a record: a
+#: webhook, a tile, a proposal, an automation. The gateway makes each once for a chat however
+#: often the chat asks within minutes (``dashboard.handlers.made_once``), so a call repeated after
+#: its answer was lost is not made twice.
+MADE_ONCE = frozenset(
+    {*_GATEWAY_MAKES, "automation_create", "set_onetime_task", "set_recurring_task"}
 )
 
 

@@ -11,6 +11,7 @@ from aiohttp import web
 
 from personalclaw import session_keys
 from personalclaw.approval_answer import work_of_request
+from personalclaw.dashboard.handlers import made_once
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import bool_field, require_bool, require_string
@@ -448,6 +449,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     about a call this route recorded in the security log says so: one that reached the tool
     carries ``output``, and a refusal before the tool ran carries ``not_run``, naming what refused
     it. A body it cannot read and a tool it does not serve carry neither, and are not recorded.
+    A create the same chat made within minutes is answered with that call's answer and
+    ``made_earlier``, and is not made again (``made_once``).
 
     "The same surface the agent has" is literal: the tool is resolved by name
     (``tool_providers.registry.resolve``) over ``tool_providers.registry.tool_surface``, the list
@@ -764,10 +767,16 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             error_extra={"risk": _risk, "confirm_field": "confirm_risk"},
             not_run="risk_confirmation_required",
         )
+    return await _made_and_answered(request, provider, tool_name, arguments, caller, _risk)
+
+
+async def _audited(
+    caller: str, provider: Any, tool_name: str, arguments: dict, *, outcome: str, **row: Any
+) -> None:
+    """The call's one security-log row. A row the log cannot take is said in the gateway's log and
+    the call is answered all the same: it ran, and an answer of a plain 500 told the tool server it
+    had not, so an agent called it again (``made_once``)."""
     try:
-        with _as_its_work(request):
-            result = await provider.invoke(tool_name, arguments)
-    except Exception as exc:
         await sel_log_async(
             _sel().log_tool_invocation,
             session_key=caller,
@@ -776,34 +785,76 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             tool_name=tool_name,
             tool_kind=provider.name,
             tool_input=arguments,
-            outcome="error",
-            error=str(exc)[:200],
-            metadata={"risk": _risk},
+            outcome=outcome,
+            **row,
         )
-        # Raw text stays in the SEL record above; the wire speaks guidance (failure_copy).
-        return web.json_response(
-            {"ok": False, "output": "", "error": relayed_failure_copy(exc)}, status=500
+    except Exception:  # noqa: BLE001 - the answer is what the call did, whatever the log took
+        logger.warning(
+            "tools/invoke: the security log could not take the %s row of %s for %s",
+            outcome,
+            tool_name,
+            caller,
+            exc_info=True,
         )
 
-    out, err = _shown(result.output), _shown(result.error)
-    # A control of the tool can still refuse as the call starts (a pattern added since the check):
-    # the same one row, `refused`, never an `error` with no reason.
-    control = refusal_audit(result.metadata or {})
-    await sel_log_async(
-        _sel().log_tool_invocation,
-        session_key=caller,
-        agent="",
-        source="tool_invoke",
-        tool_name=tool_name,
-        tool_kind=provider.name,
-        tool_input=arguments,
-        outcome="refused" if control else ("completed" if result.success else "error"),
-        error="" if result.success else err[:200],
-        metadata={"risk": _risk, **control},
-    )
-    return web.json_response(
-        {"ok": bool(result.success), "output": out, "error": err, **_code_of(result)}
-    )
+
+async def _made_and_answered(
+    request: web.Request, provider: Any, tool_name: str, arguments: dict, caller: str, risk: str
+) -> web.Response:
+    """Run the call :func:`api_tool_invoke` let through and answer it, its row written.
+
+    A create a chat already made within minutes is answered with that call's answer and made
+    again by nobody, one still being made waited for (``made_once``), and its row says so."""
+    from personalclaw.llm.events import refusal_audit
+
+    once = made_once.key_of(caller, tool_name, arguments)
+    if once is not None and (earlier := await made_once.claim(once)) is not None:
+        await _audited(
+            caller,
+            provider,
+            tool_name,
+            arguments,
+            outcome="not_run",
+            error="the same call from this chat was made earlier; answered with its result",
+            metadata={"risk": risk, made_once.REPEAT_KEY: True},
+        )
+        return web.json_response({**earlier, made_once.REPEAT_KEY: True})
+    answer: dict[str, Any] | None = None
+    try:
+        try:
+            with _as_its_work(request):
+                result = await provider.invoke(tool_name, arguments)
+        except Exception as exc:
+            await _audited(
+                caller,
+                provider,
+                tool_name,
+                arguments,
+                outcome="error",
+                error=str(exc)[:200],
+                metadata={"risk": risk},
+            )
+            # Raw text stays in the SEL record above; the wire speaks guidance (failure_copy).
+            return web.json_response(
+                {"ok": False, "output": "", "error": relayed_failure_copy(exc)}, status=500
+            )
+        out, err = _shown(result.output), _shown(result.error)
+        # A control of the tool can still refuse as the call starts (a pattern added since the
+        # check): the same one row, `refused`, never an `error` with no reason.
+        control = refusal_audit(result.metadata or {})
+        await _audited(
+            caller,
+            provider,
+            tool_name,
+            arguments,
+            outcome="refused" if control else ("completed" if result.success else "error"),
+            error="" if result.success else err[:200],
+            metadata={"risk": risk, **control},
+        )
+        answer = {"ok": bool(result.success), "output": out, "error": err, **_code_of(result)}
+        return web.json_response(answer)
+    finally:
+        made_once.made(once, answer if answer and answer["ok"] else None)
 
 
 async def api_tools_toggle(request: web.Request) -> web.Response:
