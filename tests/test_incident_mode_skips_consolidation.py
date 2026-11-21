@@ -35,6 +35,8 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _consolidator(msg_count: int = _CONSOLIDATION_THRESHOLD) -> HistoryConsolidator:
     log = MagicMock()
     log._read_messages = MagicMock(return_value=[{}] * msg_count)
+    # The after-turn check counts without reading (`ConversationLog._message_count`).
+    log._message_count = MagicMock(return_value=msg_count)
     log.unconsolidated_count = MagicMock(return_value=msg_count)
     log.recorded_memory_mode = MagicMock(return_value=None)  # a transcript that records no mode
     return HistoryConsolidator(log=log, memory=MagicMock(), history_idle_secs=0)
