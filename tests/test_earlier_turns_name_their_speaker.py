@@ -214,8 +214,9 @@ async def test_a_compressed_history_names_the_colleagues_line_as_theirs(tmp_path
     assert f"User: {HERS}" in whole
     _theirs_in(whole)
 
-    # Long enough to be compressed: the compressor reads the line as theirs, and so do the
-    # recent exchanges the result keeps verbatim.
+    # Long enough to be compressed: the compressor never reads the colleague's line, and the
+    # recent exchanges the result keeps verbatim show it as theirs
+    # (tests/test_a_condensed_history_keeps_each_speakers_words.py).
     filler = [{"role": "assistant", "content": "x" * 30_000} for _ in range(2)]
     prompts: list[str] = []
 
@@ -226,7 +227,7 @@ async def test_a_compressed_history_names_the_colleagues_line_as_theirs(tmp_path
     with patch("personalclaw.chores.run_chore", side_effect=_compressor):
         compressed = await compress_thread_history(filler + turns, f"dashboard:{name}", "next")
     assert compressed is not None and prompts
-    _theirs_in(prompts[0])
+    assert ABOUT_HER not in prompts[0]
     _theirs_in(compressed.split("## Recent exchanges (verbatim)", 1)[1])
 
 
@@ -250,7 +251,9 @@ async def test_the_background_summary_is_written_from_lines_that_name_their_spea
     assert "An offsite was planned." in summary
     (body,) = bodies
     assert f"User: {HERS}" in body
-    _theirs_in(body)
+    # The colleague's line is never summarized: the summary keeps it word for word, as theirs.
+    assert ABOUT_HER not in body
+    _theirs_in(summary)
 
 
 @pytest.mark.asyncio

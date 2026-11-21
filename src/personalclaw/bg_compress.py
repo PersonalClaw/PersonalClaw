@@ -38,7 +38,9 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Mapping
 from datetime import datetime
+from typing import Any
 
 from personalclaw.constants import dashboard_key_from_file_form
 from personalclaw.context_segmentation import segment_messages
@@ -49,7 +51,12 @@ from personalclaw.history import (
     summary_holds,
     summary_record,
 )
-from personalclaw.turn_source import turn_line
+from personalclaw.turn_source import (
+    THEIRS_KEPT_HEADING,
+    kept_word_for_word,
+    someone_elses,
+    turn_line,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,10 +135,17 @@ async def _summarize_oldest(rows: list[dict], *, key: str) -> str:
     recorded as ``dashboard:<id>``.
     """
     turns = [m for m in rows if m.get("role") in TURN_ROLES]
-    # Each turn names its speaker: a line someone other than the owner sent reads as theirs, so
-    # the summary that stands in for them is not written as though she said it (`turn_line`).
-    body = "\n".join(turn_line(m, str(m.get("content", "")).strip()) for m in turns)
-    if not body:
+
+    def text(m: Mapping[str, Any]) -> str:
+        return str(m.get("content", "")).strip()
+
+    # A line someone other than the owner sent is never condensed: the summary is prose that names
+    # no speaker, and the model reads it as the conversation's own history, so a colleague's
+    # request could come back worded as hers. It is kept word for word after the summary, as its
+    # sender's (`turn_source.kept_word_for_word`); when those do not fit, nothing is summarized.
+    theirs = kept_word_for_word(turns, text)
+    body = "\n".join(turn_line(m, text(m)) for m in turns if not someone_elses(m))
+    if theirs is None or not body:
         return ""
     from personalclaw.tool_providers.prose_compress import compress_prose
     from personalclaw.usage_ledger import Attribution
@@ -144,7 +158,9 @@ async def _summarize_oldest(rows: list[dict], *, key: str) -> str:
         refs_line = "\nRecoverable raw outputs: " + ", ".join(
             f'tool_result_get(result_id="{r}")' for r in raw_refs[:20]
         )
-    return f"The first {len(turns)} messages of this conversation, condensed:\n{summary}{refs_line}"
+    kept = f"\n{THEIRS_KEPT_HEADING}:\n{theirs}" if theirs else ""
+    head = f"The first {len(turns)} messages of this conversation, condensed:"
+    return f"{head}\n{summary}{kept}{refs_line}"
 
 
 def _stamp_of(record: dict | None) -> tuple[int, ...]:

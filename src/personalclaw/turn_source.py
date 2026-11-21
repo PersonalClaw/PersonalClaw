@@ -36,7 +36,7 @@ the owner asked for (``own_words.her_turns``), takes nothing of such a turn at a
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from types import MappingProxyType
 from typing import Any, TypeVar
 
@@ -349,6 +349,39 @@ def theirs(row: object, text: str | None = None) -> str:
         # Named by the ids the source records: a display name is the sender's own text.
         return f"{label}: {withheld(f'A message from {sender}', admitted.refused)}"
     return f"{label}: {admitted.text}"
+
+
+def someone_elses(row: Mapping[str, Any]) -> bool:
+    """Whether *row* is a line someone other than the owner sent (:func:`asked_by` names its
+    sender). A condensed history never folds such a line into its prose, which names no speaker
+    and which the next turn reads as the conversation's own: the line is kept word for word, as
+    its sender's (:func:`kept_word_for_word`)."""
+    return row.get("role") == "user" and bool(asked_by(row))
+
+
+#: How much of other people's lines a condensed history keeps word for word. Past it nothing is
+#: condensed, since a summary that dropped any of them could word a request as the owner's: the
+#: turns are read as they are, each under its speaker.
+THEIRS_KEPT_CAP = 20_000
+
+#: The heading the lines other people sent in a condensed span are kept under.
+THEIRS_KEPT_HEADING = "Other people's messages in these turns, word for word"
+
+
+def kept_word_for_word(
+    rows: Iterable[Mapping[str, Any]], text: Callable[[Mapping[str, Any]], str]
+) -> str | None:
+    """The lines of *rows* someone other than the owner sent (:func:`someone_elses`), one to a line,
+    each as a history reads it (:func:`turn_line` of its *text*, as the caller reads every line:
+    labelled as not the user's words, and fenced), for the caller to keep under
+    :data:`THEIRS_KEPT_HEADING`; ``""`` when there are none, and ``None`` when they come to more
+    than :data:`THEIRS_KEPT_CAP`, so the span is not condensed at all."""
+    lines = [turn_line(row, text(row)) for row in rows if someone_elses(row)]
+    if not lines:
+        return ""
+    if sum(len(line) for line in lines) > THEIRS_KEPT_CAP:
+        return None
+    return "\n".join(lines)
 
 
 def turn_line(row: Mapping[str, Any], text: str | None = None) -> str:

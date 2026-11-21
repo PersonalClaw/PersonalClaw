@@ -52,7 +52,7 @@ from personalclaw.security import (
 from personalclaw.sel import sel
 from personalclaw.skills import AutoSkillProvenance
 from personalclaw.transcript_rewrites import messages_unchanged
-from personalclaw.turn_source import arrived_on, model_text, provenance
+from personalclaw.turn_source import arrived_on, model_text, provenance, someone_elses
 
 
 def config_dir() -> Path:
@@ -83,6 +83,11 @@ ARCHIVE_DIR_NAME = "archive"
 CREATED_BY_APP_META_KEY = "created_by_app"
 #: The background-compression record beside a transcript: ``{safe_key}.summary.json``.
 SUMMARY_SUFFIX = ".summary.json"
+
+#: A summary record's mark that its summary keeps the lines other people sent in the turns it
+#: stands for word for word, after its own prose (``bg_compress._summarize_oldest``). A record
+#: without it whose turns hold such a line is not read (:func:`summary_holds`).
+KEEPS_THEIRS = "keeps_theirs"
 _CONSOLIDATION_THRESHOLD = 30  # preferences/projects update threshold (messages)
 SEARCH_MIN_CHARS = 2  # shortest query string that triggers backend search
 _TITLE_BOOST = 10  # field-boost multiplier for title matches in search_sessions
@@ -185,6 +190,7 @@ def summary_record(
         "reduced_cap": reduced_cap,
         "digest": span_digest(_turns(messages)[:reduced]),
         "created_at": utc_now_iso(),
+        KEEPS_THEIRS: True,
     }
 
 
@@ -205,6 +211,10 @@ def summary_holds(record: dict, messages: list[dict]) -> bool:
         return False
     turns = _turns(messages)
     if not (0 < summarized <= reduced <= len(turns)) or cap <= 0:
+        return False
+    if not record.get(KEEPS_THEIRS) and any(map(someone_elses, turns[:summarized])):
+        # Written before a summary kept other people's lines word for word: it may word a
+        # colleague's request as the owner's, so the model reads the turns themselves.
         return False
     return record.get("digest") == span_digest(turns[:reduced])
 
