@@ -506,7 +506,8 @@ async def test_regenerate_in_a_schedule_chat_keeps_the_turns_own_answer_never_it
     """🔴 Red before: Regenerate kept the run's result as the turn's earlier answer, with no record
     that it came from outside the chat, so switching back to it drew it as the agent's reply."""
     gateway = _Gateway(tmp_path)
-    # Two answers of its own, then the result: the turn's LAST answer of its own is the one kept.
+    # Two answers of its own, then the result: the turn's answer of its own is kept whole, its
+    # messages joined, and the result is not part of it.
     history = [_ITS_TURN[0], {"role": "assistant", "content": "Looking."}, _ITS_TURN[1]]
     inject_schedule_result_to_session(
         gateway.state, _NIGHTLY, "```sh\necho theirs\n```", history=history
@@ -523,7 +524,7 @@ async def test_regenerate_in_a_schedule_chat_keeps_the_turns_own_answer_never_it
             assert resp.status == 200, await resp.text()
             await asyncio.sleep(0)
 
-    assert [v["content"] for v in stashed] == ["Nothing new tonight."]
+    assert [v["content"] for v in stashed] == ["Looking.\n\nNothing new tonight."]
 
 
 @pytest.mark.asyncio

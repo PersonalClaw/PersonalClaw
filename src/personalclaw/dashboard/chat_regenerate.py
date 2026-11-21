@@ -133,23 +133,16 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
             # Only a REAL answer of this chat's is variant-worthy. An error bubble is no
             # alternative response, so a retry stashes nothing, and a row taken in from outside
             # (turn_source.FROM_OUTSIDE, a run's result) answers nothing here: a variant keeps no
-            # meta, so one kept as a variant came back as the agent's reply. What is kept is the
-            # turn's last answer of its own; a turn with none keeps nothing.
-            ai_msg = next(
-                (
-                    m
-                    for m in reversed(msgs[u_idx + 1 : anchor_idx + 1])
-                    if m.get("role") == "assistant"
-                    and (provenance(m).get("meta") or {}).get(FROM_OUTSIDE) is None
-                ),
-                None,
-            )
-            if ai_msg is not None:
-                _rv = ai_msg.get("variants")
-                variants = list(_rv) if isinstance(_rv, list) else []  # type: ignore[arg-type]
-                current_entry = {"content": ai_msg.get("content", ""), "ts": ai_msg.get("ts", "")}
-                if not any(v.get("content") == current_entry["content"] for v in variants):
-                    variants.append(current_entry)
+            # meta, so one kept as a variant came back as the agent's reply. A turn with no answer
+            # of its own keeps nothing.
+            own = [
+                m
+                for m in msgs[u_idx + 1 : anchor_idx + 1]
+                if m.get("role") == "assistant"
+                and (provenance(m).get("meta") or {}).get(FROM_OUTSIDE) is None
+            ]
+            if own:
+                variants = _versions_with(own)
                 if len(variants) > _MAX_VARIANTS:
                     variants = variants[-_MAX_VARIANTS:]
 
@@ -202,6 +195,28 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
         task.add_done_callback(lambda _t: retakes.close_retakes(retake_key))
     state.push_sessions_update()
     return web.json_response({"ok": True})
+
+
+def _versions_with(own: list[dict]) -> list[dict]:
+    """The versions a fresh answer takes, the answer it replaces among them (uncapped; the caller
+    keeps the last ``_MAX_VARIANTS``): *own* is that answer's messages, a tool-using answer's
+    segments around its calls included.
+
+    The versions are kept on the first message that holds them, the one a fresh answer's first
+    settled segment took them on (``chat_runner._flush_segment``), and the answer replaced is kept
+    whole, its segments' text joined. When it is the version written last, it takes that place,
+    which held only its first segment; when an earlier version is on screen (switched to), every
+    version is already kept as it was written."""
+    holder = next((m for m in own if isinstance(m.get("variants"), list)), own[0])
+    versions = list(holder.get("variants") or [])
+    whole = "\n\n".join(text for text in (str(m.get("content") or "") for m in own) if text)
+    answer = {"content": whole, "ts": own[0].get("ts", "")}
+    at = holder.get("variant_idx")
+    if not versions:
+        versions = [answer]
+    elif not isinstance(at, int) or at == len(versions) - 1 or not 0 <= at < len(versions):
+        versions[-1] = answer
+    return versions
 
 
 async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
