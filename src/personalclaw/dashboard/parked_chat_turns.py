@@ -40,9 +40,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The chats whose turn the gateway's stop kept while it waited (:func:`settle`), until the turn's
-#: ending says so (:func:`was_kept`).
-_KEPT: set[str] = set()
+#: How the gateway's stop ended a turn's wait on her answer (:func:`settle`): the turn was kept for
+#: the next start, or it could not be (its runtime cannot say where it stands, its chat keeps no
+#: words, or its record was too large), until the turn's ending says so
+#: (:func:`how_the_wait_ended`).
+KEPT, CUT = "kept", "cut"
+_WAITED: dict[str, str] = {}
 
 
 def keeps(state: DashboardState, session: _ChatSession) -> bool:
@@ -104,10 +107,13 @@ async def settle(
     from personalclaw.dashboard.approval_state import chat_approval_id
 
     parked = await written(keeping)
-    if parked and kept_through_stop(state, session, answered=answered or timed_out):
+    stopped = kept_through_stop(state, session, answered=answered or timed_out)
+    if parked and stopped:
         state.end_approval(chat_approval_id(session.key, request_id), outcome="cancelled")
-        _KEPT.add(session.key)
+        _WAITED[session.key] = KEPT
         return True
+    if stopped:
+        _WAITED[session.key] = CUT
     if parked:
         await forget(session, request_id)
     state.end_session_approval(
@@ -176,13 +182,11 @@ def kept_through_stop(state: DashboardState, session: _ChatSession, *, answered:
     return not answered and bool(state.stopping_for) and not session._stop_asked
 
 
-def was_kept(session: _ChatSession) -> bool:
-    """Whether *session*'s turn, ending now, was kept for the next start (:func:`settle`); asked
-    once, by the turn's ending."""
-    if session.key in _KEPT:
-        _KEPT.discard(session.key)
-        return True
-    return False
+def how_the_wait_ended(session: _ChatSession) -> str:
+    """How the gateway's stop ended *session*'s wait on her answer, for the turn ending now:
+    :data:`KEPT`, :data:`CUT`, or ``""`` when it ended no such wait (:func:`settle`); asked once,
+    by the turn's ending."""
+    return _WAITED.pop(session.key, "")
 
 
 def cannot_carry_on(resume: Mapping[str, Any] | None, client: object) -> bool:

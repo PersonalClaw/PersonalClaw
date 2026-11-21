@@ -319,6 +319,19 @@ TURN_KEPT_WAITING_NOTICES = {
         "is back and the reply carries on."
     ),
 }
+#: Said instead when that turn was waiting on your answer to a call and could not be kept: its
+#: runtime cannot go on from the middle of a call (an agent CLI's), its chat keeps no words, or it
+#: was too large to keep (`parked_chat_turns`). The chat offers Retry on it, as on any notice.
+TURN_CUT_WHILE_WAITING_NOTICES = {
+    RESTARTING: (
+        "The gateway restarted while this reply waited on your answer, and it can't be carried "
+        "on from there. Send your message again to retry."
+    ),
+    SHUTTING_DOWN: (
+        "The gateway shut down while this reply waited on your answer, and it can't be carried "
+        "on from there. Send your message again to retry."
+    ),
+}
 #: Said where a conversation is when a turn kept through a restart cannot be carried on: the runtime
 #: that serves the chat now cannot go on from the middle of a call.
 TURN_NOT_CARRIED_ON_NOTICE = (
@@ -370,7 +383,7 @@ def say_how_an_unanswered_turn_ended(
     outcome: str,
     *,
     after_deny: str = "",
-    kept: bool = False,
+    waited: str = "",
 ) -> None:
     """Say why a turn ended without its answer, where the conversation is.
 
@@ -385,7 +398,8 @@ def say_how_an_unanswered_turn_ended(
 
     A turn the gateway ended to restart or shut down says so in the chat too, in those words, so a
     question it cut off is never left there unanswered with nothing saying why. One it ended while
-    it waited on her answer, and kept for the next start (*kept*), says her answer carries it on.
+    it waited on her answer says how that wait ended (*waited*, ``parked_chat_turns``): kept for
+    the next start, her answer carries it on; not kept, it cannot be carried on from there.
     One its agent stopped after her Deny says that instead of the cut-short notice (*after_deny*).
     """
     if outcome == TURN_ERROR:
@@ -395,7 +409,10 @@ def say_how_an_unanswered_turn_ended(
             TURN_CUT_SHORT_NOTICE,
         )
     elif outcome == TURN_INTERRUPTED:
-        notices = TURN_KEPT_WAITING_NOTICES if kept else TURN_INTERRUPTED_NOTICES
+        notices = {
+            parked_chat_turns.KEPT: TURN_KEPT_WAITING_NOTICES,
+            parked_chat_turns.CUT: TURN_CUT_WHILE_WAITING_NOTICES,
+        }.get(waited, TURN_INTERRUPTED_NOTICES)
         note = notices.get(state.stopping_for, notices[SHUTTING_DOWN])
         session.append("error", note, "msg msg-err")
     elif outcome == TURN_STOPPED and session._stop_asked:
@@ -4929,8 +4946,8 @@ async def run_chat(
                 session_key,
                 _turn_outcome,
                 after_deny=_deny_note,
-                # Kept for the next start, when it was waiting on her answer as the gateway stopped.
-                kept=parked_chat_turns.was_kept(session),
+                # How its wait on her answer ended, when the gateway stopped while it waited.
+                waited=parked_chat_turns.how_the_wait_ended(session),
             )
         if _acquired:
             if is_new and not _sent_a_message:

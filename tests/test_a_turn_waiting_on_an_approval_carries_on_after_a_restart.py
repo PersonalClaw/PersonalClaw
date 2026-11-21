@@ -304,12 +304,12 @@ class _Gateway:
     """A gateway's chat surface over the home, its chats on PersonalClaw's own runtime with one
     tool that asks (``edit_file``), answered by a scripted model."""
 
-    def __init__(self, tmp_path, *answers: list[AgentEvent]) -> None:
+    def __init__(self, tmp_path, *answers: list[AgentEvent], runtime=NativeAgentRuntime) -> None:
         from chat_send_world import World
 
         self.tool = _Tool(name="edit_file", requires_approval=True)
         self.model = _ScriptedModel(list(answers))
-        self.world = World(tmp_path, tools=[self.tool], model=self.model)
+        self.world = World(tmp_path, tools=[self.tool], model=self.model, runtime=runtime)
         self.state = self.world.state
 
     async def waiting(self, key: str, *, kept: bool = True) -> None:
@@ -561,3 +561,28 @@ def test_a_record_masks_what_ran_and_keeps_the_waiting_call_as_sent():
     assert key not in messages[1]["tool_calls"][0]["function"]["arguments"]
     assert key not in messages[2]["content"]
     assert key in messages[3]["tool_calls"][0]["function"]["arguments"]
+
+
+class _CannotSay(NativeAgentRuntime):
+    """A runtime that cannot say where a waiting turn stands, as an agent CLI's cannot."""
+
+    park_point = None  # type: ignore[assignment]
+
+
+async def test_a_turn_that_cannot_be_kept_says_so_where_the_restart_ended_it(tmp_path, monkeypatch):
+    """A turn waiting on its approval whose runtime cannot go on from the middle of a call (an
+    agent CLI's) is not kept, and the chat says the reply can't be carried on from there, not that
+    it was cut off like any other."""
+    from personalclaw import parked_turns
+    from personalclaw.dashboard.chat_runner import TURN_CUT_WHILE_WAITING_NOTICES
+    from personalclaw.restart_request import RESTARTING
+
+    gw = _Gateway(tmp_path, _edit(), _says("never"), runtime=_CannotSay)
+    async with gw.world.client() as client:
+        key = (await gw.world.send(client, ASKED))["session"]
+        await gw.waiting(key, kept=False)
+        await gw.restart(monkeypatch)
+
+    assert not parked_turns.path_of(key).exists()
+    rows = gw.world.file_rows(key)
+    assert rows[-1]["content"] == TURN_CUT_WHILE_WAITING_NOTICES[RESTARTING]
