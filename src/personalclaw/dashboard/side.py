@@ -208,7 +208,9 @@ async def _run_side_turn(
         # Record the answer on the side buffer (never the parent transcript) and
         # signal completion — only if this run is still the active one.
         if session._side is side and side.last_run_id == run_id:
-            side.append("assistant", accumulated)
+            # Masked as its live deltas were: this is what the chat's read serves and a reload
+            # restores.
+            side.append("assistant", _redact(accumulated))
             side.is_complete = True
             side.partial = ""
             # Persist the side buffer attached to the session so it reloads with
