@@ -78,6 +78,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A file you attach in a chat reaches a tool that takes a file path. The agent is told where the file is saved, so a tool such as Design Critique can open your screenshot. The chat still shows the file by the name you attached it with.**
 - **A chat read again while its answer streams (a reload, a reconnect, a rewind) keeps that answer's paragraph whole: a tool call, approval, question, segment break or thinking the chat already shows no longer splits it in two.**
 - **A chat opened, or read again after its link came back, keeps what changed about it during the read: a queued message that started is gone from the queue, a new title stays, and a side-chat answer still being written shows what it has said so far and carries on.**
+- **A library with nothing in it yet no longer reads "0 items" above "Your library is empty". The count line comes back with the first item, and stays while a search or a filter narrows the list to nothing.**
 
 ### Security
 
