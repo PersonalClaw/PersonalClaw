@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, within, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import { createRef } from 'react'
+import { createRef, useRef, useState } from 'react'
 import { FindBar } from './FindBar'
+import { MessageUser } from './chat/MessageUser'
 
 // ── A step to a match lands on the match ────────────────────────────────────────────────────────
 //
@@ -76,5 +77,51 @@ describe('a step to a match', () => {
 
     await waitFor(() => expect(nodes[1].scrollIntoView).toHaveBeenCalled())
     expect(root.scrollTo).not.toHaveBeenCalled()
+  })
+})
+
+// ── …measured once the message it opens has opened ───────────────────────────────────────────────
+//
+// Driven (dogfood, 11-21): on ⌘F and Enter the bubble opened, but the view was scrolled from where
+// the word sat in the folded layout, 249px above the viewport. The message opened one render after
+// the step that revealed it, and the bar measured the occurrence in between.
+
+function FoldedHost({ text }: { text: string }) {
+  const [landed, setLanded] = useState(false)
+  const root = useRef<HTMLDivElement | null>(null)
+  const node = useRef<HTMLDivElement | null>(null)
+  return (
+    <div ref={(el) => {
+      root.current = el
+      if (!el) return
+      Object.defineProperty(el, 'clientHeight', { configurable: true, value: 400 })
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 4000 })
+      el.getBoundingClientRect = () => ({ top: 0, bottom: 400, left: 0, right: 600, height: 400, width: 600, x: 0, y: 0, toJSON: () => ({}) })
+      el.scrollTo = (() => {}) as typeof el.scrollTo
+    }}>
+      <FindBar items={[text]} segmentsOf={(s) => [s]} nodeOf={() => node.current} revealOf={() => setLanded(true)}
+        scrollRef={root} label="Find in page" onClose={() => {}} />
+      <div ref={node}><MessageUser reveal={landed}>{text}</MessageUser></div>
+    </div>
+  )
+}
+
+describe('a step to a match inside a folded message', () => {
+  it('🔴 measures the match after the message has opened', async () => {
+    const measured: boolean[] = []
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => {
+        measured.push(!!document.querySelector('[data-user-message-folded]'))
+        return { top: 700, bottom: 720, left: 0, right: 60, height: 20, width: 60, x: 0, y: 700, toJSON: () => ({}) }
+      },
+    })
+    const LONG = [...Array.from({ length: 39 }, (_, i) => `step ${i + 1}`), 'and the quokka at the end'].join('\n')
+    const { container } = render(<FoldedHost text={LONG} />)
+
+    await search(container, 'quokka')
+
+    await waitFor(() => expect(measured.length).toBeGreaterThan(0))
+    expect(measured[0], 'the match was measured while its message was still folded').toBe(false)
   })
 })

@@ -256,6 +256,10 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     }
   }, [])
   useLayoutEffect(() => { if (turns.length) land() }, [turns, land])
+  // A Find step moves the view to its match, as her own scroll would: the landing at the end and
+  // the following of a turn end with it, so the column the step grows (a long message it opens)
+  // does not take the view back to the end.
+  const holdTheView = useCallback(() => { followTurnRef.current = false; landRef.current = false }, [])
   // Late layout grows the conversation without a render of ours: the scroller and what it holds
   // are watched for size, and each change lands the view again while it is still the chat's.
   useEffect(() => {
@@ -573,7 +577,7 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
 
   return {
     // Where the view is.
-    scrollRef, endRef, scrolledUp, followTurnRef, followNewTurn, followEnd, turnNodes,
+    scrollRef, endRef, scrolledUp, followTurnRef, followNewTurn, followEnd, holdTheView, turnNodes,
     // The find bar.
     findOpen, setFindOpen, findSeed,
     // The Session Map: its form, its open state, its entries and its jumps.

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { fvs, withWeight } from '../../design/fontWeight'
 import { Sparkles, ChevronRight, ChevronDown, FileText, CornerDownLeft } from 'lucide-react'
 import { MessageBody, type TurnPaste } from '../../pages/chat/PasteChip'
@@ -42,7 +42,13 @@ export function MessageUser({ children, onFileClick, pastes, optimized, ranPromp
 }) {
   const long = isLongUserMessage(children)
   const [expanded, setExpanded] = useState(false)
-  useEffect(() => { if (reveal) setExpanded(true) }, [reveal])
+  // Opened in the render that reveals it, not an effect after: Find measures where the match sits
+  // as soon as that render is on screen, and the message must already be open by then.
+  const [revealed, setRevealed] = useState(false)
+  if (reveal !== revealed) {
+    setRevealed(reveal)
+    if (reveal) setExpanded(true)
+  }
   const bodyId = useId()
   const folded = long && !expanded
   const lines = children.split('\n').length

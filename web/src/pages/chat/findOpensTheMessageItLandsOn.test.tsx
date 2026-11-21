@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { runState } from '../../test/runState'
 
 // ── Find in conversation opens the long message it lands on ──────────────────────────────────────
@@ -108,5 +108,45 @@ describe('a search result opened at a word below a long message’s fold', () =>
     const other = bubbleOf('nothing else is on the last line')
     expect(other.toggle.getAttribute('aria-expanded')).toBe('false')
     expect(other.bubble.querySelector('[data-user-message-folded]')).not.toBeNull()
+  })
+})
+
+describe('⌘F and Enter in a chat opened at its latest message', () => {
+  it('🔴 opens the message, and the growing column does not pull the view back to the end', async () => {
+    // A chat opened at its end keeps the end in view as late layout grows it, until the owner moves
+    // the view. Driven (dogfood, 11-21): the opened bubble grew the column and the view went back
+    // to the end, so the match was off screen. A Find step moves the view as her scroll does.
+    // Every observer the page makes, with what it watches: only the one watching the transcript's
+    // scroller is fired below (the others read the entries a real resize hands them).
+    const observers: { cb: () => void; watching: Element[] }[] = []
+    vi.stubGlobal('ResizeObserver', class {
+      private seen: { cb: () => void; watching: Element[] }
+      constructor(cb: () => void) { this.seen = { cb, watching: [] }; observers.push(this.seen) }
+      observe(el: Element): void { this.seen.watching.push(el) }
+      unobserve(): void {}
+      disconnect(): void {}
+    })
+    open('')
+    const scroller = await waitFor(() => {
+      const el = document.querySelector('[data-transcript-scroll]') as HTMLElement | null
+      expect(el).toBeTruthy()
+      return el!
+    })
+    let top = 0
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 4000 })
+    Object.defineProperty(scroller, 'scrollTop', { configurable: true, get: () => top, set: (v: number) => { top = v } })
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /Show full message/ })).toHaveLength(2))
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true })
+    const input = await screen.findByLabelText('Find in conversation')
+    fireEvent.change(input, { target: { value: 'quokka' } })
+    await waitFor(() => expect(screen.getByText('1/1')).toBeTruthy())
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(bubbleOf('the quokka is on the last line').toggle.getAttribute('aria-expanded')).toBe('true'))
+
+    top = 1200  // where the step put the match
+    act(() => { observers.filter((o) => o.watching.includes(scroller)).forEach((o) => o.cb()) })
+    expect(top, 'the chat put the view back at its end').toBe(1200)
   })
 })
