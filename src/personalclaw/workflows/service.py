@@ -23,10 +23,13 @@ run. A read that lazily started something would make polling a side-effecting ac
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 import shutil
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from personalclaw.approval_answer import Principal
@@ -662,11 +665,13 @@ async def start_run(
     budget: RunBudget | None = None,
     held_to_its_work: bool = True,
     definition: dict[str, Any] | None = None,
+    durable_key: bool = False,
 ) -> dict[str, Any]:
     """Instantiate a def and start driving it.
 
     A caller idempotency key returns the EXISTING run rather than minting a second one — a
-    retried tool call is a retry, not a new request.
+    retried tool call is a retry, not a new request (:class:`_CallerKey`, and *durable_key* for
+    a caller whose retries cross a restart).
 
     Work done for an owner-allowed automation's run starts only what that run may start
     (`automation_version.held_start`); a batch's start (`batch_start`) is not held to its work.
@@ -695,26 +700,16 @@ async def start_run(
     definition by *name* finds it.
     """
     from personalclaw.workflows.effects import START_DEDUPE
-    from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
 
     overrides = dict(policy_overrides or {})
-    unknown = sorted(set(overrides) - OVERRIDABLE_POLICY_KEYS)
+    unknown = _unknown_overrides(overrides)
     if unknown:
-        # The write seam's strictness (`store.set_policy_overrides`), applied at the only other
-        # door an overlay enters by — a typo'd knob persisted here would resolve to nothing forever
-        # while the user believes it is set. Same code, so both doors refuse alike.
-        return _service_failure(
-            "WF_POLICY_KEY_UNKNOWN",
-            f"unknown policy override key(s) {unknown} — "
-            f"the overridable set is {sorted(OVERRIDABLE_POLICY_KEYS)}",
-            unknown_keys=unknown,
-            overridable=sorted(OVERRIDABLE_POLICY_KEYS),
-        )
+        return unknown
 
-    if idempotency_key:
-        existing = START_DEDUPE.lookup(idempotency_key)
-        if existing:
-            return _ok(run_id=existing, deduped=True, status=_status_of(existing))
+    caller = _CallerKey.of(idempotency_key, durable=durable_key, name=name, inputs=inputs)
+    answered = caller.started()
+    if answered:
+        return answered
 
     if definition is None:
         found = await get_def(name)
@@ -852,7 +847,7 @@ async def start_run(
         caps = run_budget.declared(spec, over=budget)
     except ValueError as exc:
         return _service_failure("WF_RUN_BUDGET_INVALID", f"the run cannot start: {exc}")
-    run = store.create(
+    run, answered = caller.create(
         WorkflowRun(
             id="",
             workflow_name=name,
@@ -871,22 +866,22 @@ async def start_run(
             extra=run_extra,
         )
     )
+    if answered:
+        return answered
     store.write_spec(run.id, spec)
     if idempotency_key:
         START_DEDUPE.remember(idempotency_key, run.id)
 
     if supervisor is None:
-        return _service_failure(
+        return caller.released(
+            run.id,
             "WF_NO_SUPERVISOR",
             "the workflow supervisor is unavailable, so the run was created but not started",
-            run_id=run.id,
         )
     try:
         controller = await supervisor.launch(run, spec)
     except Exception as exc:
-        return _service_failure(
-            "WF_RUN_LAUNCH_FAILED", f"could not start the run: {exc}", run_id=run.id
-        )
+        return caller.released(run.id, "WF_RUN_LAUNCH_FAILED", f"could not start the run: {exc}")
 
     if run.mode == "blocking":
         # `wait_for_terminal`, NOT `run_to_completion`: a blocking caller must also return
@@ -2618,6 +2613,106 @@ def _completion_summary(run: Any, status: RunStatus) -> str:
     except Exception:
         logger.debug("completion summary handoff read failed for %r", name, exc_info=True)
     return line
+
+
+def _unknown_overrides(overrides: dict[str, Any]) -> dict[str, Any] | None:
+    """The refusal of a start whose policy overlay names a knob that is not overridable.
+
+    The write seam's strictness (`store.set_policy_overrides`), applied at the only other door an
+    overlay enters by — a typo'd knob persisted here would resolve to nothing forever while the
+    user believes it is set. Same code, so both doors refuse alike."""
+    from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
+
+    unknown = sorted(set(overrides) - OVERRIDABLE_POLICY_KEYS)
+    if not unknown:
+        return None
+    return _service_failure(
+        "WF_POLICY_KEY_UNKNOWN",
+        f"unknown policy override key(s) {unknown} — "
+        f"the overridable set is {sorted(OVERRIDABLE_POLICY_KEYS)}",
+        unknown_keys=unknown,
+        overridable=sorted(OVERRIDABLE_POLICY_KEYS),
+    )
+
+
+@dataclass(frozen=True)
+class _CallerKey:
+    """A start's caller key, and the run it already started.
+
+    The key is remembered for the minutes a tool's retry comes in (`effects.START_DEDUPE`). A
+    *durable* one is kept with its run instead, beside a digest of what it asked for (the template
+    and the inputs, :func:`_request_digest`), so its retry finds the run for as long as the run is
+    kept, after a restart and past those minutes (`store.run_for_caller_key`): a caller from
+    outside, whose retries cross a network failure or a restart (the A2A door). The same key with
+    another request is refused (``WF_IDEMPOTENCY_KEY_REUSED``) rather than answered with the run
+    it does not ask for, and two starts under one key at once make one run (``store``'s unique
+    key, :meth:`create`)."""
+
+    key: str
+    durable: bool
+    digest: str
+
+    @classmethod
+    def of(
+        cls, key: str, *, durable: bool, name: str, inputs: dict[str, Any] | None
+    ) -> "_CallerKey":
+        kept = bool(key) and durable
+        return cls(key, kept, _request_digest(name, inputs) if kept else "")
+
+    def started(self) -> dict[str, Any] | None:
+        """The answer for the run this key already started, or ``None`` when it started none."""
+        from personalclaw.workflows.effects import START_DEDUPE
+
+        if not self.key:
+            return None
+        if not self.durable:
+            existing = START_DEDUPE.lookup(self.key)
+            return (
+                _ok(run_id=existing, deduped=True, status=_status_of(existing))
+                if existing
+                else None
+            )
+        found = store.run_for_caller_key(self.key)
+        if found is None:
+            return None
+        run_id, digest = found
+        if digest != self.digest:
+            return _service_failure(
+                "WF_IDEMPOTENCY_KEY_REUSED",
+                "this key already started a run for another request; send a new request under a "
+                "key of its own",
+            )
+        START_DEDUPE.remember(self.key, run_id)
+        return _ok(run_id=run_id, deduped=True, status=_status_of(run_id))
+
+    def released(self, run_id: str, code: str, message: str) -> dict[str, Any]:
+        """The refusal *code* says in *message*, for a start whose run *run_id* was made and never
+        launched: the key no longer names that run, so a retry under it starts one that does."""
+        from personalclaw.workflows.effects import START_DEDUPE
+
+        if self.key:
+            START_DEDUPE.forget(self.key)
+            if self.durable:
+                store.release_caller_key(run_id)
+        return _service_failure(code, message, run_id=run_id)
+
+    def create(self, run: WorkflowRun) -> tuple[WorkflowRun, dict[str, Any] | None]:
+        """*run*, stored with this key when it is a durable one; with the answer for the run the
+        key started meanwhile, when another start under it stored one first."""
+        if not self.durable:
+            return store.create(run), None
+        try:
+            return store.create(run, caller_key=self.key, caller_digest=self.digest), None
+        except store.CallerKeyTaken:
+            return run, self.started() or _service_failure(
+                "WF_RUN_START_RACED", "another start under this key ended as this one began; retry"
+            )
+
+
+def _request_digest(name: str, inputs: dict[str, Any] | None) -> str:
+    """What a start under a caller key asks for, as a digest: the template and its inputs."""
+    text = json.dumps([name, inputs or {}], sort_keys=True, default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _status_of(run_id: str) -> str:

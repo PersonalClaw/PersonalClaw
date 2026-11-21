@@ -654,6 +654,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # say so instead of borrowing that answer. Without it, an empty card and a broken card
     # are the same bytes — and a client would stop asking.
     "a2a_catalog_unavailable": "The published-workflow catalog could not be read.",
+    # A 409: the A2A task's retry key (its `messageId` or `idempotencyKey`) already started a task
+    # for another request (another skill or other inputs), so neither that task nor a new one
+    # answers it; a new request goes under a key of its own.
+    "idempotency_key_reused": "This key already started a task for another request.",
     # A SECOND code rather than reusing the one above, because the two need different
     # operator actions and a peer branches on the code: `catalog_unavailable` is a read
     # that failed and may succeed on retry, `origin_unresolved` is a missing declaration

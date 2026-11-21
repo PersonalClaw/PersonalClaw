@@ -118,7 +118,9 @@ def _connect() -> sqlite3.Connection:
             origin_harness TEXT NOT NULL DEFAULT '',
             loop_kind TEXT NOT NULL DEFAULT '',
             title TEXT NOT NULL DEFAULT '',
-            extra TEXT NOT NULL DEFAULT '{}'
+            extra TEXT NOT NULL DEFAULT '{}',
+            caller_key TEXT NOT NULL DEFAULT '',
+            caller_digest TEXT NOT NULL DEFAULT ''
         )""")
     # There is no DROP path, and the retirement of `task_list_id` deliberately
     # does not add one (the same posture as the `total_cycles` in `loop/store.py`). A
@@ -156,6 +158,8 @@ def _connect() -> sqlite3.Connection:
             "total_cost_usd": "REAL NOT NULL DEFAULT 0",
             "unpriced_steps": "INTEGER NOT NULL DEFAULT 0",
             "unpriced_allowed": "INTEGER NOT NULL DEFAULT 0",
+            "caller_key": "TEXT NOT NULL DEFAULT ''",
+            "caller_digest": "TEXT NOT NULL DEFAULT ''",
         },
     )
     # The run-tree query. Without it, listing a tree scans the table.
@@ -168,6 +172,12 @@ def _connect() -> sqlite3.Connection:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_loop_kind ON runs(loop_kind, created_at)")
     # The runs a run's steps started (`started_runs`), read on every step of a capped run.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)")
+    # The run a caller's retry key started (`run_for_caller_key`), read on every keyed start; one
+    # run a key, so two starts under it at once make one (`CallerKeyTaken`).
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_caller_key_once ON runs(caller_key) "
+        "WHERE caller_key != ''"
+    )
     conn.commit()
     return conn
 
@@ -273,9 +283,19 @@ def _run_to_params(run: WorkflowRun) -> dict[str, Any]:
 # ── run CRUD ─────────────────────────────────────────────────────────────────
 
 
-def create(run: WorkflowRun) -> WorkflowRun:
+class CallerKeyTaken(Exception):
+    """A run is already kept under the caller key :func:`create` was given."""
+
+
+def create(run: WorkflowRun, *, caller_key: str = "", caller_digest: str = "") -> WorkflowRun:
     """Insert a run row and make its directory. Idempotent on the directory so a
-    retried create after a crash does not fail."""
+    retried create after a crash does not fail.
+
+    *caller_key* is the retry key a caller started it under, kept with it beside *caller_digest*
+    (what the caller asked for) so a retry finds it for as long as the run is kept
+    (:func:`run_for_caller_key`). They are columns of their own, outside the run's model: written
+    once here, and no save touches them. One run a key: a create under a key a run already holds
+    raises :class:`CallerKeyTaken`."""
     if not run.id:
         run.id = new_run_id()
     if not run.root_run_id:
@@ -312,14 +332,47 @@ def create(run: WorkflowRun) -> WorkflowRun:
             run.extra = {**(run.extra or {}), lasting_work.ASKED_BY: someone}
     conn = _connect()
     try:
-        cols = ", ".join(_COLUMNS)
-        placeholders = ", ".join(f":{c}" for c in _COLUMNS)
-        conn.execute(f"INSERT INTO runs ({cols}) VALUES ({placeholders})", _run_to_params(run))
+        named = (*_COLUMNS, "caller_key", "caller_digest")
+        cols = ", ".join(named)
+        placeholders = ", ".join(f":{c}" for c in named)
+        params = {**_run_to_params(run), "caller_key": caller_key, "caller_digest": caller_digest}
+        try:
+            conn.execute(f"INSERT INTO runs ({cols}) VALUES ({placeholders})", params)
+        except sqlite3.IntegrityError:
+            if caller_key and run_for_caller_key(caller_key) is not None:
+                raise CallerKeyTaken(caller_key) from None
+            raise
         conn.commit()
     finally:
         conn.close()
     run_dir(run.id).mkdir(parents=True, exist_ok=True)
     return run
+
+
+def release_caller_key(run_id: str) -> None:
+    """Let go of the retry key the run *run_id* was made under (:func:`create`): it was never
+    launched, so the key answers no retry with it."""
+    conn = _connect()
+    try:
+        conn.execute("UPDATE runs SET caller_key = '', caller_digest = '' WHERE id = ?", (run_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def run_for_caller_key(caller_key: str) -> tuple[str, str] | None:
+    """The run kept under the retry key *caller_key* (:func:`create`) and the digest of what its
+    caller asked for; ``None`` when no run kept is."""
+    if not caller_key:
+        return None
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT id, caller_digest FROM runs WHERE caller_key = ?", (caller_key,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return (str(row["id"]), str(row["caller_digest"] or "")) if row is not None else None
 
 
 def get(run_id: str) -> WorkflowRun | None:
