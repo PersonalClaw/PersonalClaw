@@ -254,7 +254,6 @@ describe("downloadAsset: GitHub's release hosts only, and only the bytes the rel
     };
     const file = path.join(dir, "PersonalClaw-0.3.8.AppImage");
     await assert.rejects(() => downloadAsset(asset, file, { request, userAgent: USER_AGENT, onProgress: () => (chunks += 1), cancelled: () => chunks >= 1 }), (err) => err.why === "download");
-    await new Promise((r) => setTimeout(r, 20));
     assert.equal(fs.existsSync(file), false, "the partial file was left");
   });
 
@@ -264,6 +263,45 @@ describe("downloadAsset: GitHub's release hosts only, and only the bytes the rel
       const { request } = fakeRequest(() => ({ status: 200, body: served }));
       await assert.rejects(() => downloadAsset(asset(), file, { request, userAgent: "x" }), (err) => err.why === "mismatch");
       assert.equal(fs.existsSync(file), false);
+    }
+  });
+
+  it("fails only once its partial file is gone, even when the bytes differ before the file is open", async () => {
+    // The file's open is held until the download gives up on it, and a remove asked for in that same
+    // turn goes first: a remove that does not wait for the open leaves the file the open then makes.
+    const file = path.join(tmp(), "f.dmg");
+    const real = { open: fs.open, rm: fs.rm, createWriteStream: fs.createWriteStream };
+    let givenUp;
+    const gaveUp = new Promise((r) => (givenUp = r));
+    let removed = null;
+    let opened;
+    const open = new Promise((r) => (opened = r));
+    fs.createWriteStream = (...args) => {
+      const out = real.createWriteStream(...args);
+      const destroy = out.destroy.bind(out);
+      out.destroy = (...a) => (givenUp(), destroy(...a));
+      return out;
+    };
+    fs.open = (p, ...rest) => {
+      if (p !== file) return real.open(p, ...rest);
+      const done = rest.pop();
+      gaveUp
+        .then(() => new Promise(setImmediate))
+        .then(() => removed)
+        .then(() => real.open(p, ...rest, (...a) => (opened(), done(...a))));
+    };
+    fs.rm = (p, ...rest) => {
+      if (p !== file) return real.rm(p, ...rest);
+      const done = rest.pop();
+      removed = new Promise((r) => real.rm(p, ...rest, (...a) => (r(), done(...a))));
+    };
+    try {
+      const { request } = fakeRequest(() => ({ status: 200, body: Buffer.from("the 0.3.8 copy and then some") }));
+      await assert.rejects(() => downloadAsset(asset(), file, { request, userAgent: "x" }), (err) => err.why === "mismatch");
+      await open;
+      assert.equal(fs.existsSync(file), false, "the partial file was made again after it was removed");
+    } finally {
+      Object.assign(fs, real);
     }
   });
 });
@@ -1077,8 +1115,7 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     a.u.download("0.3.8");
     await settle(a.u);
     assert.deepEqual(a.u.finish("0.3.8"), { ok: true });
-    a.u.stop();
-    await new Promise((r) => setTimeout(r, 50));
+    await a.u.stop();
     assert.deepEqual(a.quits, [], "the quit the app is in was asked for again");
     assert.equal(a.u.swapIfStaged(), false, "a copy was staged during the quit");
     assert.deepEqual(fs.readdirSync(a.root).sort(), ["PersonalClaw-0.3.7.AppImage", "work"], "the copy was left beside the AppImage");
@@ -1118,9 +1155,10 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     await u.check({ asked: true });
     u.download("0.3.8");
     await until(() => u.status().phase === "verifying");
-    u.stop();
+    const stopped = u.stop();
     open();
-    await until(() => privateFolders(u).length === 0);
+    await stopped;
+    assert.deepEqual(privateFolders(u), [], "the download's folder outlived the stop");
     assert.notEqual(u.status().phase, "ready");
     assert.equal(u.finish("0.3.8").ok, false);
     assert.ok(u.mac.calls.some((c) => c[0] === "hdiutil" && c[1] === "detach"), "the image stayed attached");
@@ -1129,10 +1167,10 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     const v = updater();
     await v.check({ asked: true });
     v.download("0.3.8");
-    v.stop();
+    const quit = v.stop();
     assert.deepEqual(v.download("0.3.8"), { ok: false, sentence: "The app is quitting." });
-    await until(() => privateFolders(v).length === 0);
-    await new Promise((r) => setTimeout(r, 20));
+    await quit;
+    assert.deepEqual(privateFolders(v), [], "the download's folder outlived the stop");
     assert.deepEqual(v.mac.calls.filter((c) => c[0] === "hdiutil"), []);
     assert.notEqual(v.status().phase, "ready");
   });
@@ -1141,15 +1179,18 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     // Each chunk asks whether the app is quitting before it is written, so a quit that begins on the last
     // one finds the download finished: only the check after the download keeps the image unattached.
     let u = null;
+    let stopped;
+    const stopping = new Promise((r) => (stopped = r));
     u = updater({
       onState: (s) => {
-        if (u && s.progress && s.progress.total > 0 && s.progress.received === s.progress.total) u.stop();
+        if (u && s.progress && s.progress.total > 0 && s.progress.received === s.progress.total) stopped(u.stop());
       },
     });
     await u.check({ asked: true });
     u.download("0.3.8");
-    await until(() => privateFolders(u).length === 0);
-    await new Promise((r) => setTimeout(r, 20));
+    // Settles once the quit has begun and the download it overtook has removed its folder.
+    await stopping;
+    assert.deepEqual(privateFolders(u), [], "the download's folder outlived the stop");
     assert.deepEqual(u.mac.calls.filter((c) => c[0] === "hdiutil"), [], "an image was attached after the quit began");
     assert.notEqual(u.status().phase, "ready");
   });
@@ -1332,10 +1373,29 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     assert.equal(ATTEMPT_KEY in u.store.data, false);
     assert.equal(u.swapIfStaged(), false);
     assert.equal(fs.readFileSync(u.at.execPath, "utf8"), "binary 0.3.7");
-    await new Promise((r) => setTimeout(r, 20));
-    assert.deepEqual(privateFolders(u), [], "a failed download left its folder");
     assert.equal(u.finish("0.3.8").ok, false, "a failed download is ready to finish");
     assert.equal(u.download("0.3.9").sentence, "That version is not the one on offer. Check again.", "a failed update holds the updater");
+    await u.stop();
+    assert.deepEqual(privateFolders(u), [], "a failed download left its folder");
+  });
+
+  it("settles a failed Update only once its folder is gone", async () => {
+    // The quit begins in the turn after the Update failed, as its folder is being removed: it found no quit
+    // under way, so the removal is the Update's own, and stop() resolves once that removal is done.
+    let u = null;
+    let stopped;
+    const stopping = new Promise((r) => (stopped = r));
+    u = updater({
+      list: [release("v0.3.8", { body: Buffer.from("the v0.3.8 copy, and other bytes") })],
+      onState: (s) => {
+        if (u && s.phase === "failed") queueMicrotask(() => stopped(u.stop()));
+      },
+    });
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await stopping;
+    assert.equal(u.status().phase, "failed");
+    assert.deepEqual(privateFolders(u), [], "the failed Update's folder outlived its settle");
   });
 
   it("offers the releases page, not a press, where this copy cannot be replaced", async () => {
