@@ -65,6 +65,10 @@ SLOW_SECS = 3.0
 #: that had run nothing (`[] == ['draft_report']`). Those tests hold the draft until the run has
 #: returned (`_Tools.held`), so however long the timeout is, it passes while the draft runs.
 TIMEOUT_SECS = 5
+#: How long past its timeout a run whose turn is stopped may take to return: the stop's own wait
+#: and a loaded runner. Well under the 30 s the held call runs for if nothing stops it, so only a
+#: stop that reached the call passes.
+STOPPED_WITHIN = TIMEOUT_SECS + 12
 
 
 class _Tools(ToolProvider):
@@ -313,14 +317,17 @@ def _the_runs_trust_ended(session_key: str) -> list[dict]:
 # ── Its timeout ──────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.timeout(70)
 def test_a_run_whose_timeout_passes_stops_its_turn_in_the_gateway(tmp_path, capsys, signed_in):
     """The timeout passes while the draft runs. The run stops the turn in the gateway and ends the
     Trust it gave its chat before it exits: the send the model asks for next never runs, and the
     report names the timeout. The draft is held until the run returns, then let go: a turn the run
-    did not stop would go on to the send."""
+    did not stop would go on to the send.
+
+    🔴 Red before: the stop never reached the draft, so the run returned only when the draft's
+    30 s hold ran out."""
     with _Gateway(tmp_path, _drafts_then_sends()) as gw:
         gw.tools.hold()
+        started = time.monotonic()
         code = _type(
             "-p",
             "draft and send the report",
@@ -332,12 +339,14 @@ def test_a_run_whose_timeout_passes_stops_its_turn_in_the_gateway(tmp_path, caps
             "--port",
             str(gw.port),
         )
+        took = time.monotonic() - started
         gw.tools.released.set()
         chat = gw.turn_has_ended()
         trust_after = (chat._trust, gw.state.standing_grant(chat))
 
     out, err = capsys.readouterr()
     assert code == 1, err
+    assert took < STOPPED_WITHIN, f"the run returned {took:.1f}s after it started"
     assert gw.tools.ran == [DRAFT], f"a call ran after the run had stopped: {gw.tools.ran}"
     assert trust_after == (False, ""), "the run's Trust outlived the run"
     doc = json.loads(out)
@@ -348,7 +357,6 @@ def test_a_run_whose_timeout_passes_stops_its_turn_in_the_gateway(tmp_path, caps
     assert _the_runs_trust_ended(chat.key), "the end of the run's Trust left no audit row"
 
 
-@pytest.mark.timeout(70)
 def test_a_read_only_run_whose_timeout_passes_stops_its_turn_and_names_no_grant(
     tmp_path, capsys, signed_in
 ):
@@ -356,14 +364,17 @@ def test_a_read_only_run_whose_timeout_passes_stops_its_turn_and_names_no_grant(
     in the gateway too. It has no write grant to end, and does not claim one."""
     with _Gateway(tmp_path, _ScriptedModel([_calls(READ, "call-1"), _says("Read it.")])) as gw:
         gw.tools.hold()
+        started = time.monotonic()
         code = _type(
             "-p", "what is in my inbox?", "--timeout", str(TIMEOUT_SECS), "--port", str(gw.port)
         )
+        took = time.monotonic() - started
         gw.tools.released.set()
         ended = chat_phase.served(gw.turn_has_ended())["last_outcome"]
 
     out, err = capsys.readouterr()
     assert code == 1, err
+    assert took < STOPPED_WITHIN, f"the run returned {took:.1f}s after it started"
     assert gw.tools.ran == [READ]
     assert ended == TURN_STOPPED, f"the turn went on to its end in the gateway: {ended}"
     assert f"the turn did not finish within {TIMEOUT_SECS}s" in err, err
