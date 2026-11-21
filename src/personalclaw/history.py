@@ -1291,6 +1291,18 @@ class ConversationLog:
         self._msg_cache[key] = (mtime, messages)
         return messages
 
+    def _message_count(self, key: str) -> int:
+        """How many messages *key*'s transcript holds, as the chat list reads it (:meth:`_head`):
+        the count its writer recorded while the file holds the bytes it was counted with
+        (:func:`_recorded_count`), so after a save it is a ``stat`` whatever the transcript's
+        size; else its lines counted, once per change. What a threshold reads after every turn."""
+        path = self._path(key)
+        try:
+            head = self._head(str(path), path.stat(), listing=True)
+        except OSError:
+            return 0
+        return head.messages if head is not None and head.messages is not None else 0
+
     def _invalidate_cache(self, key: str) -> None:
         """Invalidate caches for a key after a write operation — and, for the home's own
         transcripts, tell the search index to read it again."""
@@ -1582,7 +1594,8 @@ class HistoryConsolidator:
         self._last_activity[key] = _time.time()
         if key in self._running or incident_active():
             return
-        total = len(self._log._read_messages(key))
+        # Read as the chat list reads it, never parsed after a save (`_message_count`).
+        total = self._log._message_count(key)
         prefs_off = self._prefs_offset.get(key, 0)
         if total - prefs_off < _CONSOLIDATION_THRESHOLD:
             return

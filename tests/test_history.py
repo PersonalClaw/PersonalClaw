@@ -750,6 +750,8 @@ class TestConsolidationOffset:
     def _make_consolidator(self, msg_count=_CONSOLIDATION_THRESHOLD):
         log = MagicMock()
         log._read_messages = MagicMock(return_value=[{}] * msg_count)
+        # The count the check reads, as the chat list reads it (`ConversationLog._message_count`).
+        log._message_count = MagicMock(return_value=msg_count)
         return HistoryConsolidator(log=log, memory=MagicMock())
 
     def test_offset_advances_on_success(self):
