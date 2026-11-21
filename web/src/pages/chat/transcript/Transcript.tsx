@@ -61,7 +61,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
    *  message, while a turn runs. */
   liveLine?: React.ReactNode
 }) {
-  const { scrollRef, endRef, followTurnRef, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode, widgetWordsIn } = transcript
+  const { scrollRef, endRef, followTurnRef, holdTheView, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode, widgetWordsIn } = transcript
   // The turn Find in conversation has landed on (its coordinate): its long message opens, so the
   // match is on screen. Only that one; a long message without a match stays folded.
   const [findLanding, setFindLanding] = useState<number | null>(null)
@@ -128,7 +128,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
               // bar) remounts it so it re-seeds + re-scrolls; an empty seed (⌘F) is a
               // constant key, so the manual bar is never remounted out from under a typist.
               <FindBar key={`find-${findSeed}`} items={turns} segmentsOf={findSegments} nodeOf={(t, i) => turnNodes.current.get(markCoordOf(t, i))}
-                revealOf={(t, i) => setFindLanding(markCoordOf(t, i))}
+                revealOf={(t, i) => { holdTheView(); setFindLanding(markCoordOf(t, i)) }}
                 scrollRef={scrollRef} label="Find in conversation" initialQuery={findSeed} onClose={() => setFindOpen(false)} />
             )}
           </AnimatePresence>
