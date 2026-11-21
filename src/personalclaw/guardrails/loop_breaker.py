@@ -143,6 +143,19 @@ REPEAT_BLOCK_THRESHOLD = STRUCT_REPEAT
 #: exists for reached it after about half of its 65 calls; a working turn asks something new.
 REPEAT_CIRCUIT_THRESHOLD = 8
 
+#: A creating tool (one named ``…_create``) that made this many things in one turn with the same
+#: call apart from the numbers in what it names them (``noop-probe-2``, ``noop-probe-3``, …) is
+#: refused the next time, before it runs. A model at a dead end once filled a turn with 19
+#: throwaway automations this way, each call a new number, so neither the failure path nor the
+#: repeat path saw a loop. A series asked for by its numbers alone (``Day 1`` to ``Day 7``,
+#: ``Q1`` to ``Q4``) has the same shape, so the bound lets a week of them through.
+MADE_REPEAT_BLOCK = 8
+_DIGITS_RE = re.compile(r"\d+")
+
+#: The fields a creating call names what it makes by, where a number only counts it off. A number
+#: anywhere else (a time, a date, a schedule) is what makes the thing distinct, and is kept.
+_NAMING_FIELDS = frozenset({"name", "title", "label", "message"})
+
 #: Tools whose whole job is to let time pass: after one, a read may rightly answer anew.
 WAIT_TOOLS = frozenset({"wait", "wait_for"})
 
@@ -410,6 +423,57 @@ def repeat_blocked_message(tool_name: str, count: int) -> str:
     )
 
 
+def made_shape(key: str) -> str:
+    """The shape of the call *key* (:func:`params_key`) when its tool creates something (it is named
+    ``…_create``): the key with every number in what it names the thing (:data:`_NAMING_FIELDS`)
+    made one, so ``noop-probe-2`` and ``noop-probe-3`` are the same and reminders at noon and at
+    three are not. ``""`` for any other tool, and for arguments that are not a mapping."""
+    tool, _, raw = key.partition(":")
+    if not tool.endswith("_create"):
+        return ""
+    try:
+        args = json.loads(raw)
+    except ValueError:
+        return ""
+    if not isinstance(args, dict):
+        return ""
+    shaped = {
+        field: (
+            _DIGITS_RE.sub("#", value)
+            if field in _NAMING_FIELDS and isinstance(value, str)
+            else value
+        )
+        for field, value in args.items()
+    }
+    return f"{tool}:{json.dumps(shaped, sort_keys=True, default=str)}"
+
+
+def _made_name(key: str) -> str:
+    """What the call *key* named the thing it made (its ``name``, ``title`` or ``label``), or
+    ``""``."""
+    try:
+        args = json.loads(key.split(":", 1)[1])
+    except (IndexError, ValueError):
+        return ""
+    if isinstance(args, dict):
+        for field in ("name", "title", "label"):
+            if isinstance(args.get(field), str) and args[field].strip():
+                return args[field].strip()
+    return ""
+
+
+def made_repeat_message(tool_name: str, count: int) -> str:
+    """The answer a creating call gets instead of running once :data:`MADE_REPEAT_BLOCK` things
+    of its shape were made this turn."""
+    return (
+        f"Error: tool `{tool_name}` was not run — this turn already made {count} of the same "
+        "thing with it, the same call apart from a number in its name. If the user asked for "
+        "them, say how many were made and ask before making more. Creating real things to see "
+        "how a tool behaves leaves them on the user's setup: then stop, say what you are trying "
+        "to do, and ask the user if you need to."
+    )
+
+
 def repeat_circuit_message(total_repeats: int) -> str:
     """The REPEAT circuit: the run is stopped because it keeps getting the answers it already has.
 
@@ -494,6 +558,9 @@ class LoopBreaker:
         #: Repeats this run — reads answered as they were last time, and reads refused for being
         #: one. Survives a compaction, as ``total_failures`` does.
         self.total_repeats = 0
+        # What a creating tool made this turn, by the shape of its call (`made_shape`): each call's
+        # key, oldest first. Survives a compaction too: the things exist whatever the context holds.
+        self._made: dict[str, list[str]] = {}
         # A run that spans turns (an agent CLI chat, see `begin_turn`): whether a call failed
         # in the turn now running, and how many turns in a row the failure total counts.
         self._turn_failed = False
@@ -513,6 +580,7 @@ class LoopBreaker:
         self._struct_reported.clear()
         self._same.clear()
         self.total_repeats = 0
+        self._made.clear()
         self._turn_failed = False
         self.failing_turns = 0
         # Re-arm the config read so a ceiling edited mid-session binds on the next run
@@ -533,6 +601,7 @@ class LoopBreaker:
         self._struct_reported.clear()
         self._same.clear()
         self.total_repeats = 0
+        self._made.clear()
         if not self._turn_failed:
             self._counts.clear()
             self.total_failures = 0
@@ -570,6 +639,8 @@ class LoopBreaker:
                 self.failing_turns += 1
         else:
             self._counts.pop(key, None)  # a success clears this key's streak
+            if shape := made_shape(key):
+                self._made.setdefault(shape, []).append(key)
         return self._counts.get(key, 0)
 
     def repeat_count(self, key: str) -> int:
@@ -594,6 +665,9 @@ class LoopBreaker:
         same = self.repeat_count(key)
         if reads and same >= REPEAT_BLOCK_THRESHOLD:
             return repeat_blocked_message(tool_name, same)
+        made = len(self._made.get(made_shape(key), ())) if made_shape(key) else 0
+        if made >= MADE_REPEAT_BLOCK:
+            return made_repeat_message(tool_name, made)
         return ""
 
     def refuse(self, tool_name: str, key: str, *, reads: bool) -> str:
@@ -609,8 +683,24 @@ class LoopBreaker:
         if self.circuit_tripped():
             return circuit_message(self.total_failures, self.failing_turns)
         if self.total_repeats > REPEAT_CIRCUIT_THRESHOLD:
-            return repeat_circuit_message(self.total_repeats)
+            return repeat_circuit_message(self.total_repeats) + self.made_note()
         return ""
+
+    def made_note(self) -> str:
+        """What this turn made over and over with a creating tool (:data:`MADE_REPEAT_BLOCK` or
+        more of one shape), so the person whose setup holds them can review and remove them:
+        ``""`` when it made nothing like that."""
+        parts = []
+        for keys in self._made.values():
+            if len(keys) < MADE_REPEAT_BLOCK:
+                continue
+            tool = keys[0].split(":", 1)[0]
+            names = [name for name in (_made_name(key) for key in keys) if name]
+            listed = f": {', '.join(names)}" if names else ""
+            parts.append(f" It made {len(keys)} of the same thing with `{tool}`{listed}.")
+        return "".join(parts) + (
+            " Review them and remove the ones you don't want." if parts else ""
+        )
 
     def count(self, key: str) -> int:
         return self._counts.get(key, 0)
