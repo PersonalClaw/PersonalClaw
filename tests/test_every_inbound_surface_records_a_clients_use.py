@@ -113,6 +113,17 @@ def test_an_unreadable_last_seen_is_written_over():
     assert _seen(made.client_id) != "not a time"
 
 
+def test_a_last_seen_ahead_of_now_is_written_over():
+    """🔴 Red before: a time ahead of now read as recent, so no use was written until it passed."""
+    made, _ = clients.create_client("notes app", surfaces=["openai"])
+    ahead = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    held = clients.load_clients()
+    held[made.client_id].last_seen_at = ahead
+    clients.save_clients(held)
+    clients.admitted(clients.load_clients()[made.client_id])
+    assert _seen(made.client_id) != ahead
+
+
 def test_a2a_records_its_clients_use(monkeypatch):
     """🔴 Red before: A2A never recorded a client's use."""
     from personalclaw.inbound import a2a
