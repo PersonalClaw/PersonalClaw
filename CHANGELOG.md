@@ -39,6 +39,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A local agent's open-a-page action (the control bridge's open_cockpit) now opens the page in the dashboard tab you used last on this computer, and says which agent opened it. A page you clicked or typed in a moment ago doesn't move under your hand: it says which page was asked for, with a link. Only the dashboard's own pages can be opened, and an agent asking for anything else, or with no dashboard open, is told it didn't work.**
 - **A reload no longer has the gateway read its whole settings file once for every asset and read it answers. The public address every response's security header names is read again only when the settings file changes, so a page's many requests no longer each hold the gateway for a settings read.**
 - **The triage digest's channel section lists a conversation from a chat channel whose messages wait for an answer, where it never listed one. It names the chat, its channel, how many messages wait and how long, never what they say, and it leaves out Temporary and Incognito chats.**
+- **An app backend that runs in the container sandbox is published on this computer's loopback only, the address the gateway reaches it at, so no other device on the network can call it directly.**
 - **A room's Continue, and a message to a room whose round was cut off, ask first before a cut-off member's turn that changed something runs again, as Retry asks in a chat.**
 - **A reload no longer waits while the gateway reads every installed app's folder. The apps list reads each app's manifest, hero image, disclosure and interface files in a worker thread, so a home with many apps no longer holds the page's other requests while it does.**
 - **A chat's cost chip no longer reads the whole usage ledger after every reply. Each chat's total is kept as the ledger grows, so asking for it reads only the rows written since, and a row whose text holds a line separator is no longer dropped from the totals, the Usage page or a trim of the ledger.**
@@ -66,7 +67,6 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An MCP server's sign-in whose authorization server has forgotten PersonalClaw's registration registers again at the next Sign in instead of failing every time. A client ID you entered that it stops accepting is kept, and the next Sign in asks for a new one. A signed-out card offers Sign out too.**
 - **The browser connector extension can pair from its own origin with a code from Settings › Devices, and attach, in the default sign-in mode. Its session reaches the connector's own routes and nothing else, and signing the device out forgets its origin.**
 - **A file you attach in a chat reaches a tool that takes a file path. The agent is told where the file is saved, so a tool such as Design Critique can open your screenshot. The chat still shows the file by the name you attached it with.**
-- **An app backend that runs in the container sandbox is published on this computer's loopback only, the address the gateway reaches it at, so no other device on the network can call it directly.**
 
 ### Security
 
