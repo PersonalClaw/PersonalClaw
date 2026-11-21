@@ -286,9 +286,19 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
     # must be able to carry what the migration puts in it, or every migrated nudge loop would
     # warn on the very fields that define it. A non-empty `message` is also the ROUTING
     # discriminator: it sends the fire to the nudge deliverer (inject into the bound
-    # conversation) instead of the wake path (`idle_poll._is_nudge`).
+    # conversation) instead of the wake path (`idle_poll._is_nudge`). `no_limit` says a nudge's
+    # `max_cycles` of 0 is the owner's choice (`triggers.nudge`); a 0 without it is the default a
+    # release before v0.3.9 wrote, which the boot pass gives the default limit.
     "idle": frozenset(
-        {"scope", "idle_secs", "first_idle_secs", "message", "max_cycles", "stop_sentinel_path"}
+        {
+            "scope",
+            "idle_secs",
+            "first_idle_secs",
+            "message",
+            "max_cycles",
+            "stop_sentinel_path",
+            "no_limit",
+        }
     ),
     "file": frozenset({"paths", "dedup"}),
     # Nothing: a webhook automation is fired with a sender token made for it, which the client
