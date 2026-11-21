@@ -2125,6 +2125,11 @@ class CodeKind(LoopKindStrategy):
                     return True
             if task is not None and tasks_link._is_done(task.status):
                 await teardown_task_worker(ctx.svc, loop.id, tid)
+                if not await asyncio.to_thread(worktree.branch_exists, ws, tid):
+                    # Its branch is gone (its own merge removed it): settled, nothing to land or
+                    # to ask about. Its chat was still in memory, which is all that brought it here.
+                    store.unqueue_tasks(loop.id, [tid])
+                    continue
                 if await self._land(loop, tid, task, ws, ctx):
                     return True
         now = self._still_ours(loop)

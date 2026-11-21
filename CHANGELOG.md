@@ -43,6 +43,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **One automation's long action no longer holds every other scheduled automation: each fire runs beside the clock, which goes on to the next automation's fire. While a long command ran, no other scheduled automation fired, and their slots came back as missed. An automation that runs one at a time still waits for its own run to end, and one that may run beside itself still keeps to its hourly cap.**
 - **A loop's question stays in Needs you when its worker wrote the time it asked in words of its own. Before, one such question took every loop's questions off the list at once. One loop whose question can't be read no longer hides the others either.**
 - **Every steer you send a loop reaches its worker. Two steers sent before its next cycle both arrive, oldest first, each with when you sent it, and the worker is told to follow the later one where they disagree; before, the second replaced the first. A steer to a whole parallel Code loop also reaches the tasks that start after it, not only the ones running when you sent it.**
+- **An Attended Code loop no longer pauses right after merging a task you approved to ask you to commit that work again under your name. A task whose branch its own merge removed is settled, and a branch that's gone no longer reads as a commit by someone else.**
 
 ### Security
 
