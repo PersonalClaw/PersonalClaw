@@ -194,14 +194,14 @@ def store_file_probes() -> list[Probe]:
             "automations",
             Tier.CAPABILITY,
             probe_trigger_store,
-            "The automations file can be read",
+            "The automations file",
         ),
         Probe(
             "automations.spool",
             "automations",
             Tier.CAPABILITY,
             probe_trigger_spool,
-            "Every fire parked for the next tick could be read",
+            "Fires parked for the next tick",
         ),
         Probe(
             "durability.store_files",
