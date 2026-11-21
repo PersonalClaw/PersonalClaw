@@ -16,7 +16,7 @@ import { startedByName } from './StartedByApp'
 import { branchParentKey } from './branchLineage'
 import { foldSubagentEvent } from './subagentCards'
 import { turnErrorText } from './turnError'
-import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './liveToolFrames'
+import { applyApprovalFrame, applyToolCallFrame, applyToolResultFrame, resolveApprovalIn } from './liveToolFrames'
 import { applyQuestionFrame, applyQuestionResolved, graftPendingQuestions } from './questionFrames'
 import { withRowRuns, withRunEnded } from './turnRuns'
 import type { RoutingSuggestion } from './RoutingChip'
@@ -839,7 +839,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
       case 'approval_resolved':
         // Matched by the chat's own id, like the card was created; the session gate above has
         // already dropped a frame for another chat, which may be waiting on the same bare id.
-        setTurns((prev) => prev.map((t) => ({ ...t, segments: applyApprovalResolved(t.segments, d) })))
+        setTurns((prev) => resolveApprovalIn(prev, d))
         break
       // An agent's question to them (`questionFrames`): its card, and how it ended.
       case 'question_card':
