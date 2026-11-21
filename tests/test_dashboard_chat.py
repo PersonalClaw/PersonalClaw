@@ -1403,7 +1403,10 @@ class TestFlushSegment:
         assert len(assistant_msgs) == 1
         assert assistant_msgs[0]["content"] == "Hello world"
         # chat_segment should be broadcast
-        state.broadcast_ws.assert_called_once_with("chat_segment", {"session": "s1"})
+        # …stamped like a chunk, so a page that reads the chat again knows whether it holds it.
+        state.broadcast_ws.assert_called_once_with(
+            "chat_segment", {"session": "s1", "seq": state.stream_seq}
+        )
 
 
 class TestRunChatSegmentFlush:

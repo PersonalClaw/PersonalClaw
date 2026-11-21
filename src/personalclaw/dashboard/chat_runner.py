@@ -663,6 +663,15 @@ def _record_turn_usage(
     )
 
 
+def _segment_ended(state: DashboardState, session: _ChatSession) -> None:
+    """Tell every tab that *session*'s answer ended a text segment (``chat_segment``).
+
+    Stamped like a chunk (``next_stream_seq``), in the step that settled or dropped the segment,
+    so a snapshot's ``stream_seq`` says whether it reflects this boundary: a page that read the
+    chat again skips one its snapshot already shows, and the answer it resumed stays one run."""
+    state.broadcast_ws("chat_segment", {"session": session.key, "seq": state.next_stream_seq()})
+
+
 def _flush_segment(
     state: DashboardState,
     session: _ChatSession,
@@ -716,7 +725,7 @@ def _flush_segment(
         attached_variants = True
     # Tell the frontend to finalize streaming → assistant.
     if broadcast:
-        state.broadcast_ws("chat_segment", {"session": session.key})
+        _segment_ended(state, session)
     # Notify the frontend about newly-attached regenerate variants so the ‹n/N›
     # switcher appears live. This is a metadata signal INDEPENDENT of the
     # streaming-finalize `chat_segment` above: the end-of-turn flush uses
@@ -3005,7 +3014,7 @@ async def run_chat(
                     else:
                         # No accumulated text, but still tell frontend to
                         # finalize any streaming message before tools.
-                        state.broadcast_ws("chat_segment", {"session": session.key})
+                        _segment_ended(state, session)
                     # Fallback: text after tools means all preceding tools
                     # are complete — mark any that weren't already marked
                     # (e.g. tools with no output).
@@ -3049,9 +3058,11 @@ async def run_chat(
                 safe_text, cred_warnings = redact_credentials(safe_text)
                 for w in cred_warnings:
                     logger.warning("Credential redacted in thinking: %s", w)
+                # Stamped like a chunk, so a page that read the chat again skips thinking from
+                # before its snapshot rather than drawing it below the answer that came after.
                 state.broadcast_ws(
                     "chat_thinking",
-                    {"session": session.key, "content": safe_text},
+                    {"session": session.key, "content": safe_text, "seq": state.next_stream_seq()},
                 )
             elif event.kind == EVENT_TOOL_CALL:
                 # Flush pre-tool text silently (no broadcast) so it persists,
@@ -4438,7 +4449,7 @@ async def run_chat(
             # A segment boundary, not the turn's end: the compaction result below is still this
             # turn, and a `chat_done` here settled the page (and told a screen reader the answer
             # was complete) for up to 120 s of waiting.
-            state.broadcast_ws("chat_segment", {"session": session.key})
+            _segment_ended(state, session)
             # Tell frontend to show compacting state and disable input
             logger.info("Deferred compaction: waiting for compaction result")
             state.broadcast_ws(

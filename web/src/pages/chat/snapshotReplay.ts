@@ -11,10 +11,11 @@
  *  One rule replaces them: the transcript is a snapshot plus the frames that arrived after it,
  *  in order. While a read is in flight its frames are HELD; when it lands, the snapshot is
  *  adopted and the held frames are replayed on top through the same handler that applies live
- *  ones. Replay is idempotent where it has to be — chunks carry the gateway's stamp and a
- *  snapshot reports the newest stamp it holds, so a chunk the snapshot already shows is
- *  dropped; tool, approval and queue frames refine by id — so it does not matter which side of
- *  the snapshot a frame fell on.
+ *  ones. Replay is idempotent where it has to be — chunks, segment boundaries and thinking
+ *  carry the gateway's stamp and a snapshot reports the newest stamp it holds, so one the
+ *  snapshot already reflects is dropped; tool, approval, question and queue frames refine by
+ *  id, and a card the answer already shows ends none of its text (`shownCards.ts`) — so it
+ *  does not matter which side of the snapshot a frame fell on.
  *
  *  Reads can overlap (a rewind during the mount load). A snapshot replaces the transcript only
  *  if it was issued after the one on screen — an older read resolving later is older than what

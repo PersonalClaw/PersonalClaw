@@ -44,16 +44,25 @@ export class CoalescerCore {
   private revealed = 0
   private ema = 0
   private drain = 1
-  // The newest chunk stamp (`chat_chunk.seq`) this transcript already shows. It is NOT per
-  // run — boundaries keep it — because the gateway stamps chunks process-wide, and a resume
-  // re-sets it from the snapshot it resumed from.
+  // The newest stamp (`seq`) this transcript already shows: a chunk's, or a segment or thinking
+  // frame's, which the gateway stamps from the same count. It is NOT per run — boundaries keep
+  // it — because the gateway stamps process-wide, and a resume re-sets it from the snapshot it
+  // resumed from.
   private watermark = 0
 
-  /** Append a chunk to the backlog. A stamped chunk at or below the watermark is already on
-   *  screen — the snapshot the transcript was rebuilt from holds it — and is refused. */
+  /** Whether a stamped frame is newer than every one the transcript shows, taking its stamp
+   *  when it is. One at or below the watermark is already on screen — the snapshot the
+   *  transcript was rebuilt from holds it. An unstamped frame is always new. */
+  takes(seq?: number): boolean {
+    if (seq === undefined) return true
+    if (seq <= this.watermark) return false
+    this.watermark = seq
+    return true
+  }
+
+  /** Append a chunk to the backlog, unless the transcript already shows it (`takes`). */
   push(chunk: string, seq?: number): boolean {
-    if (seq !== undefined && seq <= this.watermark) return false
-    if (seq !== undefined) this.watermark = seq
+    if (!this.takes(seq)) return false
     this.pending += chunk
     return true
   }
@@ -153,6 +162,9 @@ export interface StreamCoalescer {
   /** Continue the live answer from a server snapshot (see `CoalescerCore.resume`). The
    *  partial is not re-emitted — the snapshot's transcript already paints it. */
   resume: (partial: string | null, watermark: number) => void
+  /** Whether a stamped segment or thinking frame is newer than the transcript, as a chunk's
+   *  stamp is (`CoalescerCore.takes`): one the adopted snapshot reflects ends no run. */
+  takes: (seq?: number) => boolean
   /** Reveal everything buffered NOW, keeping the run open. Not a boundary — boundaries are
    *  `seal` and `reset`, which clear. For the frames replayed onto an adopted snapshot: they
    *  paint with it, at once, rather than animating back in text the tab was already showing. */
@@ -233,6 +245,8 @@ export function useStreamCoalescer(
     coreRef.current!.resume(partial, watermark)
   }, [])
 
+  const takes = useCallback((seq?: number) => coreRef.current!.takes(seq), [])
+
   // Only when there IS a backlog: an emit on an empty run would write an empty text segment,
   // the same reason `seal` checks `hasText()`.
   const reveal = useCallback(() => {
@@ -241,5 +255,5 @@ export function useStreamCoalescer(
 
   useEffect(() => () => stop(), [])
 
-  return { push, seal, reset, resume, reveal }
+  return { push, seal, reset, resume, reveal, takes }
 }
