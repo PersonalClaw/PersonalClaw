@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.providers import model_changes
 from personalclaw.safety_flags import strict_bool
 
 logger = logging.getLogger(__name__)
@@ -304,9 +305,11 @@ def load_active_models() -> dict[str, list[str]]:
 
 
 def save_active_models(active: dict[str, list[str]]) -> None:
+    """Save every use case's bindings, then tell the open pages (``model_changes``)."""
     path = active_models_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(active, indent=2) + "\n")
+    model_changes.announce()
 
 
 def chain_owner(use_case: str, active: dict[str, list[str]] | None = None) -> str:

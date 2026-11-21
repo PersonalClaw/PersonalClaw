@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowRight, CloudOff, Sparkles } from 'lucide-react'
 import { api, type ChatProviderConnection, type DegradedSurface } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
+import { refreshKinds, useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useIsMobile } from '../app/useIsMobile'
 import { TextLink } from './TextLink'
 import { Tooltip } from './Tooltip'
@@ -84,7 +85,7 @@ export function DegradedChip({ className }: {
   // detail) while returning ~100px to the page.
   const isMobile = useIsMobile()
 
-  useVisiblePoll(() => {
+  const read = useCallback(() => {
     api.degraded().then((r) => { setSurfaces(r.surfaces); setUnread(false); setChatProvider(r.chat_provider ?? null) })
       // 🔴 `catch(() => {})` left `surfaces` null, and null renders NOTHING — the same absence as
       // "every surface has a model". Measured with only `/api/resilience/degraded` at 500 and the rest
@@ -105,7 +106,12 @@ export function DegradedChip({ className }: {
     // real regression, so a stale "no provider" answer must not outlive its check.
     api.onboarding().then((s) => setHasProvider(s.has_model_provider))
       .catch(() => setHasProvider(null))
-  }, 20000)
+  }, [])
+  // The poll is the fallback: the gateway says when a binding or a provider changed (a `refresh`
+  // frame naming `models`), so the chip changes as soon as what it describes does, and reads again
+  // when the socket comes back, since a frame sent while it was down is lost.
+  useVisiblePoll(read, 20000)
+  useChatSocket((m: WsMessage) => { if (refreshKinds(m).includes('models')) read() }, read)
 
   // An optional surface with no model chosen (Transcription without a speech-to-text app) is off
   // by choice: counting it read "Choose a model" on every page of a finished setup. Once a model is

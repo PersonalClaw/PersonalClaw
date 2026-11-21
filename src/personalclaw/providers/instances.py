@@ -24,6 +24,7 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import secret_refs
+from personalclaw.providers import model_changes
 from personalclaw.safety_flags import strict_bool
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ def _write(inst: "ExtensionInstance", previous_config: dict[str, Any] | None) ->
 def _write_record(inst: "ExtensionInstance") -> None:
     path = _instances_dir(inst.extension_name) / f"{inst.id}.json"
     atomic_write(path, json.dumps(inst.to_dict(), indent=2) + "\n")
+    model_changes.announce()
 
 
 @dataclass
@@ -196,4 +198,5 @@ def delete_instance(extension_name: str, instance_id: str) -> bool:
         return False
     path.unlink()
     secret_refs.purge([secret_refs.instance_owner(extension_name, instance_id).prefix])
+    model_changes.announce()
     return True
