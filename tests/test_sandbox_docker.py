@@ -124,7 +124,7 @@ def test_allowed_write_paths_are_mounted_and_others_are_not():
 def test_expose_ports_and_env_are_threaded():
     spec = SandboxSpec(expose_ports=(8080,), env={"FOO": "bar"})
     argv = _argv(spec)
-    assert "-p" in argv and "8080:8080" in argv
+    assert "-p" in argv and "127.0.0.1:8080:8080" in argv
     assert "--env" in argv and "FOO=bar" in argv
 
 
