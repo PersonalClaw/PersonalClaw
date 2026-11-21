@@ -370,7 +370,13 @@ def test_the_fail_soft_wrapper_returns_empty_and_logs_at_warning(
             assert _run(openai_compatible_list_models(f"{srv.base}/v1", "fake-key-test")) == []
     finally:
         srv.close()
-    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    # The catalog's own records only: a line another test's leftover task logs as it is
+    # collected (asyncio's "Task was destroyed but it is pending!") lands in caplog too.
+    warnings = [
+        r
+        for r in caplog.records
+        if r.name == "personalclaw.llm.catalog" and r.levelno >= logging.WARNING
+    ]
     assert warnings, "a discovery that yielded nothing must be visible at WARNING"
     logged = warnings[0].getMessage()
     # Vacuity floor: a bare "discovery failed" line would satisfy "logged something" while
@@ -389,7 +395,11 @@ def test_the_fail_soft_wrapper_logs_nothing_on_success(caplog: pytest.LogCapture
             ]
     finally:
         srv.close()
-    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
+    assert [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "personalclaw.llm.catalog" and r.levelno >= logging.WARNING
+    ] == []
 
 
 # ── The provider row: BrandedCatalog, the openai-compatible app's catalog ─────
