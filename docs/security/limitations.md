@@ -1470,6 +1470,10 @@ What this does not hold:
   given for that one run (§20).
 - **Where the call is asked.** It is asked where the chat's calls are asked: in a shared thread,
   the thread's own prompt, which your colleague sees and only you can answer.
+- **Work that outlives the turn.** Who asked is known for as long as the turn runs, and for the
+  lasting work that records it (a loop's cycle, a run's step). Work the turn started that runs on
+  after it ends, and records no one, such as a background subagent, reads your memory again once
+  the turn is over, and its changes to your memory are no longer held for you either.
 
 **What this means for you:** a shared thread is a conversation your colleagues have with what the
 agent reads of yours. Connect a shared channel to an agent whose read-only tools you are content to
