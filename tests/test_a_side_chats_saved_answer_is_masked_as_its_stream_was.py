@@ -79,3 +79,32 @@ async def test_a_reload_restores_the_side_answer_masked(tmp_path):
     assert reopened is not None and reopened._side is not None
     assert BODY not in json.dumps(reopened._side.to_dict())
     assert reopened._side.messages[-1].content == streamed
+
+
+async def test_the_chats_read_masks_an_answer_in_flight_whole(tmp_path):
+    """🔴 Red before: the read served the answer so far as its deltas were masked one by one, so a
+    key split across two of them was caught in neither."""
+    state = _make_state(tmp_path)
+    session = state.get_or_create_session("parent")
+    side = session._side = SideState(open=True)
+    side.last_run_id = "run-1"
+    side.is_complete = False
+    side.append("user", "Which key did it use?")
+    state.broadcast_ws = lambda kind, data=None: None
+    state.sessions.get_or_create = AsyncMock(return_value=(MagicMock(), True, False))
+    state.sessions.release = MagicMock()
+    read: dict = {}
+    split = len("Use ") + len("sk-proj-") + 4
+
+    async def answers(provider, message, *, approval_policy, on_chunk=None, **kw):
+        on_chunk(ANSWER[:split])
+        on_chunk(ANSWER[split:])
+        read.update(side.as_read())
+        return ANSWER
+
+    with patch("personalclaw.llm_helpers.stream_and_collect", new=answers):
+        await side_mod._run_side_turn(
+            state, "parent", session, side, "Which key did it use?", "run-1"
+        )
+
+    assert BODY[4:] not in read["partial"], "the key split across two deltas reached the read"

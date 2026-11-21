@@ -154,7 +154,7 @@ async def _run_side_turn(
             return
         said = _redact(delta)
         if not done:
-            side.partial += said
+            side.partial += delta
         # Stamped like a chat's chunk, in the step that grew the partial, so a page that reads the
         # chat mid-answer skips the deltas its snapshot already holds.
         state.broadcast_ws(
