@@ -6,6 +6,7 @@ tests/rails/test_bounded_log_rail_trims_by_time_tree.py
 tests/rails/test_by_name_load_census_tree.py
 tests/rails/test_ci_capabilities_tree.py
 tests/rails/test_ci_no_workflow_runs_on_pull_request_target_but_those_listed_tree.py
+tests/rails/test_ci_pin_refresh_tree.py
 tests/rails/test_ci_plan_tree.py
 tests/rails/test_device_scope_frames_tree.py
 tests/rails/test_device_scope_routes_are_named_once_tree.py

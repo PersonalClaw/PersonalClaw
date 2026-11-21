@@ -3858,6 +3858,28 @@ arrive, and images have no separate security-update path.
   the API could not give fails too; and on every pull request that changes a workflow, a local
   action or the check, where such an answer is a warning, so an API blip cannot turn the pull
   request red. It holds `contents: read`, and uses its token for reads only.
+- **The refresh pull request:** `pin-refresh.yml`, every Tuesday and by hand on `main`, makes
+  the edit the two checks above only report (`python -m tools.ci pin-refresh plan --write`). It
+  moves each workflow image whose tag has moved to its new platform digest and index, and each
+  action to the newest release on its major line that is at least a week old (Dependabot's
+  cooldown), or to its own tag's new commit when that tag has moved. Every copy of an old pin in
+  the tree moves with it. When something moved, it opens one pull request on a branch of its
+  own (`pin-refresh/<run id>`), signed off by the pin-refresh App's bot account, and closes the
+  App's older open refresh as superseded; one already open with the same updates is left alone.
+  The body names each update's old and new identity and its release notes, and lists any pin it
+  could not resolve, which also fails the run and is never written as current. The pull
+  request merges like any other: up to date, the normal verdict green.
+  - The job's own token holds `contents: read`. Its writes go through a token minted from the
+    App (`vars.REFRESH_APP_ID`, `secrets.REFRESH_APP_KEY`), held in the `pin-refresh`
+    environment, which only `main` may use. The token asks for contents and pull-requests
+    write, and for workflows write only when a workflow file changed: GitHub refuses an App's
+    push to `.github/workflows/` without it. It reaches git through the environment for the one
+    push, never a command line or the checkout's config.
+  - It never force-pushes and pushes no other branch. The App is no bypass actor, and nothing
+    here reads or changes a ruleset.
+  - Dependabot's weekly action update can propose the same release. Whichever merges first wins,
+    and the other closes: Dependabot drops its pull request once main holds the release, and the
+    next refresh finds nothing to move.
 
 ### Least privilege
 
