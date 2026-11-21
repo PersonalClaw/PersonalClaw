@@ -16,6 +16,7 @@ call.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import Any
 
@@ -482,7 +483,13 @@ async def test_a_chat_that_keeps_no_words_keeps_no_waiting_turn(tmp_path, monkey
 
 
 async def test_a_record_past_its_cap_is_not_written(tmp_path, monkeypatch):
+    """A turn whose record would be larger than the cap ends at the restart as it did before
+    records were kept: nothing is written, the chat says its reply was not carried on, and the next
+    start asks nothing again."""
     from personalclaw import parked_turns
+    from personalclaw.dashboard.chat_runner import TURN_CUT_WHILE_WAITING_NOTICES
+    from personalclaw.dashboard.parked_chat_turns import take_back
+    from personalclaw.restart_request import RESTARTING
 
     monkeypatch.setattr(parked_turns, "RECORD_CAP", 10)
     gw = _Gateway(tmp_path, _edit(), _says("never"))
@@ -492,6 +499,79 @@ async def test_a_record_past_its_cap_is_not_written(tmp_path, monkeypatch):
         await asyncio.sleep(0.2)  # time enough for a record to have been written
         assert not parked_turns.path_of(key).exists()
         await gw.restart(monkeypatch)
+
+    assert not parked_turns.path_of(key).exists()
+    assert gw.world.file_rows(key)[-1]["content"] == TURN_CUT_WHILE_WAITING_NOTICES[RESTARTING]
+    after = _Gateway(tmp_path, _says("never"))
+    async with after.world.client():
+        assert await take_back(after.state) == 0
+    assert after.state._pending_approvals == {}
+    assert after.tool.invoked == []
+
+
+async def _took_back_after(tmp_path, monkeypatch, change) -> tuple[_Gateway, str]:
+    """A chat's turn kept through a restart, and the next start's settle of it after *change* was
+    made to the chat it opened; the gateway and the chat's key."""
+    from personalclaw import parked_turns
+    from personalclaw.dashboard.chat_persistence import resolve_session
+    from personalclaw.dashboard.parked_chat_turns import take_back
+
+    key = await _parked_chat(tmp_path, monkeypatch)
+    assert parked_turns.path_of(key).is_file()
+    after = _Gateway(tmp_path, _says("never"))
+    async with after.world.client():
+        session = resolve_session(after.state, key)
+        undo = change(session)
+        try:
+            assert await take_back(after.state) == 0
+        finally:
+            await undo()
+    return after, key
+
+
+@pytest.mark.parametrize("mode", ["incognito", "temporary"])
+async def test_a_chat_that_keeps_no_words_since_its_turn_was_kept_is_not_asked_again(
+    tmp_path, monkeypatch, mode
+):
+    """A chat turned Incognito or Temporary while the gateway was down keeps no words, so neither
+    does its waiting turn: the record is dropped at the start, and nothing is asked or run."""
+    from personalclaw import parked_turns
+
+    def turned(session):
+        session.memory_mode = mode
+
+        async def undo() -> None:
+            return None
+
+        return undo
+
+    after, key = await _took_back_after(tmp_path, monkeypatch, turned)
+    assert not parked_turns.path_of(key).exists()
+    assert after.state._pending_approvals == {}
+    assert after.tool.invoked == []
+
+
+async def test_a_chat_already_running_a_turn_at_the_start_does_not_take_its_kept_one(
+    tmp_path, monkeypatch
+):
+    """A chat that is running a turn when the start settles its kept one (a message sent to it
+    first) keeps the turn that runs: the kept one is dropped, and nothing is asked or run."""
+    from personalclaw import parked_turns
+
+    def running(session):
+        session.task = asyncio.ensure_future(asyncio.Event().wait())
+
+        async def undo() -> None:
+            session.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await session.task
+
+        return undo
+
+    after, key = await _took_back_after(tmp_path, monkeypatch, running)
+    assert not parked_turns.path_of(key).exists()
+    assert after.state._pending_approvals == {}
+    assert after.tool.invoked == []
 
 
 def test_a_restored_snapshots_waiting_turns_are_dropped(tmp_path):
