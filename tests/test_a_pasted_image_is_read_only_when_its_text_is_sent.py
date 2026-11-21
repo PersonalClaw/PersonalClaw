@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -296,7 +297,8 @@ async def test_an_image_sent_as_text_is_read_for_its_turn(tmp_path, uploads, rea
 async def test_an_image_nothing_reads_is_named_as_it_was_attached(tmp_path, uploads, seer):
     """With no image model, the text sent in the image's place is its size and format: named by
     the name it was attached with, in the sent turn's preview (``GET /api/attachment-extract``,
-    which returns this text) and to the model. The extraction graph really runs here."""
+    which returns this text) and to the model, which is told where it is saved only for the tools
+    it calls (``attachment_extract.saved_at``). The extraction graph really runs here."""
     _Catalog.tags = {"seer-1": ["chat"]}
     model = _RecordingModel()
     state = await _state(tmp_path, model)
@@ -309,4 +311,7 @@ async def test_an_image_nothing_reads_is_named_as_it_was_attached(tmp_path, uplo
     sent = _sent_text(model.requests[0])
     assert "### Attached file: image.png" in sent
     assert "Image: image.png (64x48, PNG" in sent, "the prompt is sent in ASCII"
-    assert STORED not in got.text and STORED not in sent, "the stored name reached the user"
+    assert STORED not in got.text, "the stored name reached the user"
+    saved = f"(saved at {os.path.realpath(image)})"
+    assert saved in sent
+    assert STORED not in sent.replace(saved, ""), "the model was given the stored name as a name"

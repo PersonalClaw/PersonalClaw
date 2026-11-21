@@ -64,6 +64,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **For apps, `personalclaw.sdk.action.ActionContext` has `cwd`: the folder the action runs in, which only its dispatch sets (a lifecycle hook's chat folder, or the workspace), and `""` from every other dispatch, whose command runs in the gateway's own folder as before.**
 - **An MCP server's sign-in whose authorization server has forgotten PersonalClaw's registration registers again at the next Sign in instead of failing every time. A client ID you entered that it stops accepting is kept, and the next Sign in asks for a new one. A signed-out card offers Sign out too.**
 - **The browser connector extension can pair from its own origin with a code from Settings › Devices, and attach, in the default sign-in mode. Its session reaches the connector's own routes and nothing else, and signing the device out forgets its origin.**
+- **A file you attach in a chat reaches a tool that takes a file path. The agent is told where the file is saved, so a tool such as Design Critique can open your screenshot. The chat still shows the file by the name you attached it with.**
 
 ### Security
 
