@@ -83,3 +83,18 @@ export function applyApprovalResolved(segs: Segment[], d: Frame): Segment[] {
     ? { ...sg, resolved: String(d.outcome ?? '') } as ApprovalSegment
     : sg)
 }
+
+/** `approval_resolved` over a transcript: the card it ends is the latest one under its id. Some
+ *  providers name each answer's calls from zero (`call-0`), and a call's approval is named by its
+ *  call, so an earlier turn can hold a card under the same id, which this answer leaves as it ended. */
+export function resolveApprovalIn<T extends { segments: Segment[] }>(turns: T[], d: Frame): T[] {
+  const id = String(d.request_id ?? '')
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].segments.some((sg) => sg.kind === 'approval' && sg.id === id)) {
+      const next = [...turns]
+      next[i] = { ...turns[i], segments: applyApprovalResolved(turns[i].segments, d) }
+      return next
+    }
+  }
+  return turns
+}

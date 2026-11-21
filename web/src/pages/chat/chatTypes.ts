@@ -755,7 +755,12 @@ function toolName(meta: HistMsg['meta'], content: string): string {
  *  must carry the whole answer, not just its opening message. */
 export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
   const turns: ChatTurn[] = []
-  const toolIndex = new Map<string, ToolSegment>()  // tool_call_id → segment ref (merge results in place)
+  // A call's card by its id within the answer it belongs to (merge results in place). Within, not
+  // across: some providers name each answer's calls from zero (`call-0`), so an id comes round
+  // again in a later turn, where it names a new call, as the live page reads it.
+  const toolIndex = new Map<string, ToolSegment>()
+  // The answer a call's row lands in (opened when the row is its first), as the key's scope.
+  const callKey = (id: string) => { lastAssistant(); return `${turns.length - 1}\u0000${id}` }
   let lastUserText = ''
   let assistantTextSinceUser = false  // distinguishes a re-injection from a real repeat
   // Backend visible-list cursor. Advances for EVERY user/assistant message — including
@@ -906,7 +911,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       }
       if (callId) ranHere = true
       const id = callId || `auto-${turns.length}-${lastAssistant().segments.length}`
-      const existing = toolIndex.get(id)
+      const existing = toolIndex.get(callKey(id))
       if (existing) {  // result/completion update for an already-seen call → merge
         if (m.meta?.output != null) existing.output = m.meta.output
         if (m.meta?.done) existing.done = true
@@ -928,7 +933,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
         if (ungated) existing.ungated = ungated
       } else {
         const seg: ToolSegment = { kind: 'tool', id, tool: toolName(m.meta, m.content), detail: m.meta?.detail, toolKind: m.meta?.kind, input: m.meta?.input, inputObj: m.meta?.input_obj, output: m.meta?.output, purpose: m.meta?.purpose, done: !!m.meta?.done, contentType: m.meta?.content_type, rawRef: m.meta?.raw_ref, truncated: m.meta?.truncated, originalLength: m.meta?.original_length, recoveryHints: m.meta?.recovery_hints, agentError: m.meta?.agent_error, ok: m.meta?.ok === false ? false : undefined, ungated: ungatedOf(m.meta) }
-        toolIndex.set(id, seg)
+        toolIndex.set(callKey(id), seg)
         lastAssistant().segments.push(seg)
       }
       // The question the call put to her, as its card ended — the card she saw live.
