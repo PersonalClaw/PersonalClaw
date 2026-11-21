@@ -65,17 +65,20 @@ async def probe_trigger_spool(ctx: DoctorContext) -> ProbeResult:
     A line there that holds no fire that can be read (not UTF-8, not JSON, a write cut short) does
     not run, and the tick that takes the fires around it keeps what it held beside the spool
     (``trigger-spool.jsonl.broken-<UTC instant>``, ``triggers.dispatch.clear_spool``). This row
-    names each such copy, so a fire that did not run is not known only to the log. A record, not a
-    fault to fix: it stays ok, as the automations file's row is once its file reads again.
+    names each such copy, so a fire that did not run is not known only to the log, and says when
+    the most are kept (``dispatch.SPOOL_COPIES_KEPT``), past which a later one is not. A record,
+    not a fault to fix: it stays ok, as the automations file's row is once its file reads again.
     Read-only.
     """
     from personalclaw import record_files
     from personalclaw.resilience.doctor import ProbeResult
-    from personalclaw.triggers.dispatch import SPOOL_FILENAME
+    from personalclaw.triggers.dispatch import SPOOL_COPIES_KEPT, SPOOL_FILENAME
 
     spool = ctx.home / SPOOL_FILENAME
     copies = [p.name for p in await asyncio.to_thread(record_files.kept_copies, spool)]
-    ev: dict[str, Any] = {"file": SPOOL_FILENAME, "kept": copies}
+    full = len(copies) >= SPOOL_COPIES_KEPT
+    ev: dict[str, Any] = {"file": SPOOL_FILENAME, "kept": copies, "most": SPOOL_COPIES_KEPT}
+    ev["full"] = full
     if not copies:
         return ProbeResult(
             ok=True, detail="Every fire parked for the next tick could be read.", evidence=ev
@@ -87,6 +90,12 @@ async def probe_trigger_spool(ctx: DoctorContext) -> ProbeResult:
             "Some fires parked for the next tick could not be read, so they did not run. What "
             f"they held is kept beside the spool as {which}; read it, and remove it when you no "
             "longer need it."
+            + (
+                f" That is the most it keeps ({SPOOL_COPIES_KEPT}): what a later one held is not "
+                "kept until you remove one."
+                if full
+                else ""
+            )
         ),
         evidence=ev,
     )

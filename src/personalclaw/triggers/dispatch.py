@@ -359,6 +359,11 @@ def coalesce_family(
 #: The spool's file, in the home: one fire per line, parked until a tick drains it.
 SPOOL_FILENAME = "trigger-spool.jsonl"
 
+#: The most copies of the spool's damaged lines kept beside it (`record_files.keep_copy`). Past
+#: it, a damaged line still leaves the spool, and what it held is not kept, so a spool damaged
+#: again and again cannot fill the disk; the Doctor's spool row says so.
+SPOOL_COPIES_KEPT = 5
+
 
 def spool_path() -> Path:
     """Where sync-context fires are parked until a loop can drain them.
@@ -526,14 +531,28 @@ def clear_spool(*, handled: int, path: Path | None = None) -> None:
             return
         damaged = [line for line in lines[:cut] if line.strip() and _spooled(line) is None]
         if damaged:
-            kept = record_files.keep_copy(target, b"".join(line + b"\n" for line in damaged))
+            data = b"".join(line + b"\n" for line in damaged)
+            kept = record_files.keep_copy(target, data, most=SPOOL_COPIES_KEPT)
             logger.warning(
                 "spool: %d line(s) held no fire that could be read, and did not run; %s",
                 len(damaged),
-                f"what they held is kept as {kept.name}" if kept else "no copy could be kept",
+                _where_kept(target, kept),
             )
         remaining = lines[cut:]
         atomic_write_bytes(target, b"".join(line + b"\n" for line in remaining))
+
+
+def _where_kept(target: Path, kept: Path | None) -> str:
+    """Where what the spool's damaged lines held is, as its warning says it: the copy kept, or why
+    there is none, the most copies being kept already (:data:`SPOOL_COPIES_KEPT`) or none made."""
+    if kept is not None:
+        return f"what they held is kept as {kept.name}"
+    if len(record_files.kept_copies(target)) >= SPOOL_COPIES_KEPT:
+        return (
+            f"what they held is not kept: {SPOOL_COPIES_KEPT} copies are kept beside the spool "
+            "already, the most it keeps; remove them once read, and later ones are kept again"
+        )
+    return "no copy could be kept"
 
 
 # ── the HELD envelope's retry budget: what makes HOLD bounded across restarts ──

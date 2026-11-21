@@ -73,6 +73,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An MCP server's sign-in whose authorization server has forgotten PersonalClaw's registration registers again at the next Sign in instead of failing every time. A client ID you entered that it stops accepting is kept, and the next Sign in asks for a new one. A signed-out card offers Sign out too.**
 - **The browser connector extension can pair from its own origin with a code from Settings › Devices, and attach, in the default sign-in mode. Its session reaches the connector's own routes and nothing else, and signing the device out forgets its origin.**
 - **A file you attach in a chat reaches a tool that takes a file path. The agent is told where the file is saved, so a tool such as Design Critique can open your screenshot. The chat still shows the file by the name you attached it with.**
+- **The trigger spool keeps at most five copies of the damaged lines it sets aside, so a spool damaged again and again no longer fills the disk with them; past five, a damaged line still leaves the spool and its fires still run, nothing kept is let go, the warning says why no copy was made, and the Doctor's automations row says the most are kept.**
 
 ### Security
 
