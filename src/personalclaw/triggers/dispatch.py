@@ -33,10 +33,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from personalclaw import record_files
+from personalclaw.atomic_write import atomic_write_bytes
+
+logger = logging.getLogger(__name__)
 
 #: How long two identical payloads are treated as one fire. Five minutes covers a webhook sender's
 #: retry ladder and an editor's save-twice, which are the two real sources of duplicate fires.
@@ -350,6 +356,10 @@ def coalesce_family(
 # ── the spool: the fix for the measured sync-context drop ──
 
 
+#: The spool's file, in the home: one fire per line, parked until a tick drains it.
+SPOOL_FILENAME = "trigger-spool.jsonl"
+
+
 def spool_path() -> Path:
     """Where sync-context fires are parked until a loop can drain them.
 
@@ -360,7 +370,7 @@ def spool_path() -> Path:
     """
     from personalclaw.config.loader import config_dir
 
-    return Path(config_dir()) / "trigger-spool.jsonl"
+    return Path(config_dir()) / SPOOL_FILENAME
 
 
 def spool_fire(envelope: Envelope, *, path: Path | None = None) -> bool:
@@ -376,11 +386,16 @@ def spool_fire(envelope: Envelope, *, path: Path | None = None) -> bool:
     unparseable line rather than refusing the whole file. A single JSON
     array would lose every spooled
     fire to one truncated write.
+
+    Appended under the spool's lock (`record_files.locked`, across processes), which its drain and
+    its ack take too: an append made while `clear_spool` rewrote the file used to land in the file
+    being replaced, and that fire never ran. Now it lands before the ack reads the file or after
+    the ack has replaced it.
     """
     target = path or spool_path()
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("a", encoding="utf-8") as handle:
+        with record_files.locked(target), target.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(envelope.to_dict(), separators=(",", ":")) + "\n")
         return True
     except Exception:
@@ -390,6 +405,35 @@ def spool_fire(envelope: Envelope, *, path: Path | None = None) -> bool:
         # the opposite trade would make
         # an unwritable disk take down ordinary use.
         return False
+
+
+def _spool_lines(raw: bytes) -> list[bytes]:
+    """The spool's lines, each as written and without its newline: a last line with no newline
+    (a write cut short) is a line too."""
+    lines = raw.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    return lines
+
+
+def _spooled(line: bytes) -> Envelope | None:
+    """The fire one spool line holds, or None for a line that holds none: blank, not UTF-8, not
+    JSON, or not an envelope. Each line is read on its own, so a damaged one hides nothing else."""
+    try:
+        return Envelope.from_dict(json.loads(line.decode("utf-8")))
+    except Exception:  # noqa: BLE001 - any damage to one line is that line's alone
+        return None
+
+
+def _read_spool(target: Path) -> bytes | None:
+    """The spool's bytes, read under its lock; None when there is no spool."""
+    if not target.exists():
+        return None
+    with record_files.locked(target):
+        try:
+            return target.read_bytes()
+        except FileNotFoundError:
+            return None
 
 
 def drain_spool(*, path: Path | None = None, limit: int = 500) -> tuple[list[Envelope], int]:
@@ -402,32 +446,62 @@ def drain_spool(*, path: Path | None = None, limit: int = 500) -> tuple[list[Env
 
     `limit` bounds a spool that grew while the gateway was down, so a restart drains a bounded batch
     rather than blocking boot on ten thousand events.
+
+    🔴 Line by line, as bytes. The whole file was decoded at once, and a read that failed returned
+    nothing, so one byte that was not UTF-8 stalled every parked fire, and every later one, for
+    good, with no damaged line counted. Now a line that holds no fire (not UTF-8, not JSON, a write
+    cut short) is counted in `skipped_bad_lines` and set aside by the ack (`clear_spool`); a blank
+    line is neither. Read under the spool's lock, so no append is seen half written. A spool that
+    is there and cannot be read raises, for the loop to say so.
     """
     target = path or spool_path()
+    raw = _read_spool(target)
+    if raw is None:
+        return [], 0
     envelopes: list[Envelope] = []
     skipped = 0
-    try:
-        lines = target.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return [], 0
-    for line in lines[:limit]:
-        stripped = line.strip()
-        if not stripped:
+    for line in _spool_lines(raw)[:limit]:
+        if not line.strip():
             continue
-        try:
-            envelopes.append(Envelope.from_dict(json.loads(stripped)))
-        except Exception:
+        envelope = _spooled(line)
+        if envelope is None:
             # One damaged line (a partial write at power-loss) must not hide the rest.
             skipped += 1
+        else:
+            envelopes.append(envelope)
     return envelopes, skipped
 
 
+def _consumed(lines: list[bytes], handled: int) -> int:
+    """How many of the spool's first *lines* an ack of *handled* fires drops: the shortest prefix
+    holding *handled* fires, and the lines that hold none after it, up to the next fire. The fires
+    are counted as the drain counted them, by line, so a damaged or blank line among them is
+    dropped with them rather than counted as one of them."""
+    cut = taken = 0
+    while cut < len(lines) and taken < handled:
+        if _spooled(lines[cut]) is not None:
+            taken += 1
+        cut += 1
+    while cut < len(lines) and _spooled(lines[cut]) is None:
+        cut += 1
+    return cut
+
+
 def clear_spool(*, handled: int, path: Path | None = None) -> None:
-    """Drop the first `handled` lines, keeping whatever arrived during the drain.
+    """Drop the lines the drain consumed: its first `handled` fires and the damaged or blank lines
+    among them and just after them, keeping whatever arrived during the drain.
 
     Rewrite-with-remainder rather than delete: a fire spooled while the
     drain was running would be lost
     by an unconditional truncate, and that window is exactly when a busy machine spools most.
+
+    🔴 It dropped the first `handled` LINES for `handled` fires, so a damaged line among them left
+    the last fire handled on disk, and the next tick ran it again. Now it drops by fire
+    (`_consumed`), and a damaged line it drops is kept beside the spool
+    (`record_files.keep_copy`: ``trigger-spool.jsonl.broken-<UTC instant>``), which the Doctor's
+    ``automations.spool`` check names. Done under the spool's lock, so a fire `spool_fire` appends
+    meanwhile lands before the read or after the replace, never in the file being replaced. A read
+    or a write that fails raises, so the loop says the fires it handled may run again.
 
     ⚠️ **PREFIX ACK ONLY, and that constrains the drain**. This can express "ack the
     first N" and nothing else — there is no "keep line 2, ack lines 1 and 3". So `DrainAction.HOLD`
@@ -439,17 +513,27 @@ def clear_spool(*, handled: int, path: Path | None = None) -> None:
     exists for (the event engine unreachable) fails the whole batch identically anyway.
     """
     target = path or spool_path()
-    try:
-        lines = target.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    if not target.exists():
         return
-    remaining = lines[handled:]
-    try:
-        from personalclaw.workflows.store import atomic_write
-
-        atomic_write(target, "\n".join(remaining) + ("\n" if remaining else ""))
-    except Exception:
-        return
+    with record_files.locked(target):
+        try:
+            raw = target.read_bytes()
+        except FileNotFoundError:
+            return
+        lines = _spool_lines(raw)
+        cut = _consumed(lines, max(0, handled))
+        if cut == 0:
+            return
+        damaged = [line for line in lines[:cut] if line.strip() and _spooled(line) is None]
+        if damaged:
+            kept = record_files.keep_copy(target, b"".join(line + b"\n" for line in damaged))
+            logger.warning(
+                "spool: %d line(s) held no fire that could be read, and did not run; %s",
+                len(damaged),
+                f"what they held is kept as {kept.name}" if kept else "no copy could be kept",
+            )
+        remaining = lines[cut:]
+        atomic_write_bytes(target, b"".join(line + b"\n" for line in remaining))
 
 
 # ── the HELD envelope's retry budget: what makes HOLD bounded across restarts ──

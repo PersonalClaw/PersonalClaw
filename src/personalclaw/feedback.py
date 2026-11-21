@@ -239,7 +239,8 @@ def _append(rec: FeedbackRecord) -> None:
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)
     exists = p.is_file()
-    with open(p, "a", encoding="utf-8") as f:
+    # Under the log's lock, which a trim takes too, so no trim's rewrite loses it (`bounded_log`).
+    with bounded_log.appending(p), open(p, "a", encoding="utf-8") as f:
         f.write(json.dumps(asdict(rec), ensure_ascii=False) + "\n")
     if not exists:
         try:

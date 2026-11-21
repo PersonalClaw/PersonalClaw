@@ -5,7 +5,8 @@ write to it is refused until it can be read, and a copy of it as it was is kept 
 checks name such a file before a refused write is the first anyone hears of it: the automations
 file in its own row (``automations.store``), which says what its being unreadable stops, in the
 Triggers page's own words; every other one this gateway found, in another
-(``durability.store_files``). A third names each chat the start could not give its record
+(``durability.store_files``). Another names what the trigger spool kept of the lines it could not
+read (``automations.spool``), and another each chat the start could not give its record
 (``durability.chat_records``). Registered by :mod:`~personalclaw.resilience.doctor`, which owns
 the probe registry.
 """
@@ -55,6 +56,40 @@ async def probe_trigger_store(ctx: DoctorContext) -> ProbeResult:
             evidence=ev,
         )
     return ProbeResult(ok=True, detail="The automations file can be read.", evidence=ev)
+
+
+async def probe_trigger_spool(ctx: DoctorContext) -> ProbeResult:
+    """automations — could every fire parked for the next tick be read?
+
+    A fire raised where no event loop runs is parked in ``trigger-spool.jsonl`` for the next tick.
+    A line there that holds no fire that can be read (not UTF-8, not JSON, a write cut short) does
+    not run, and the tick that takes the fires around it keeps what it held beside the spool
+    (``trigger-spool.jsonl.broken-<UTC instant>``, ``triggers.dispatch.clear_spool``). This row
+    names each such copy, so a fire that did not run is not known only to the log. A record, not a
+    fault to fix: it stays ok, as the automations file's row is once its file reads again.
+    Read-only.
+    """
+    from personalclaw import record_files
+    from personalclaw.resilience.doctor import ProbeResult
+    from personalclaw.triggers.dispatch import SPOOL_FILENAME
+
+    spool = ctx.home / SPOOL_FILENAME
+    copies = [p.name for p in await asyncio.to_thread(record_files.kept_copies, spool)]
+    ev: dict[str, Any] = {"file": SPOOL_FILENAME, "kept": copies}
+    if not copies:
+        return ProbeResult(
+            ok=True, detail="Every fire parked for the next tick could be read.", evidence=ev
+        )
+    which = ", ".join(copies)
+    return ProbeResult(
+        ok=True,
+        detail=(
+            "Some fires parked for the next tick could not be read, so they did not run. What "
+            f"they held is kept beside the spool as {which}; read it, and remove it when you no "
+            "longer need it."
+        ),
+        evidence=ev,
+    )
 
 
 async def probe_unreadable_store_files(ctx: DoctorContext) -> ProbeResult:
@@ -151,6 +186,13 @@ def store_file_probes() -> list[Probe]:
             Tier.CAPABILITY,
             probe_trigger_store,
             "The automations file can be read",
+        ),
+        Probe(
+            "automations.spool",
+            "automations",
+            Tier.CAPABILITY,
+            probe_trigger_spool,
+            "Every fire parked for the next tick could be read",
         ),
         Probe(
             "durability.store_files",

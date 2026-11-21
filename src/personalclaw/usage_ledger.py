@@ -159,7 +159,8 @@ def record_turn(u: TurnUsage) -> None:
     try:
         p = _path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "a", encoding="utf-8") as f:
+        # Under the log's lock, which a trim takes too (`bounded_log.appending`).
+        with bounded_log.appending(p), open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(u), ensure_ascii=False) + "\n")
         _maybe_trim(p)
     except Exception:  # noqa: BLE001 — the never-raises contract

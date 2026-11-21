@@ -18,6 +18,11 @@ So every bounded log in core keeps ONE rule, and keeps it here:
 * **A list of the log is newest first by the same time** (:func:`newest_first`), so a reader that
   shows the head of one, as the notification bell and the phone's Recent list do, shows what
   happened last whatever order the file holds.
+* **An append and a trim never interleave.** A trim reads the log and replaces it whole, and a
+  row appended in between went to the file being replaced, lost with no word. So a trim holds the
+  log's lock across its read and its replace (:func:`trim_jsonl`), and every append to a bounded
+  log holds it too (:func:`appending`): across processes, since the CLI and an agent CLI's tool
+  server write the same home as the gateway.
 
 A row's time is its *at*: the name of its field, or a function that reads it. The value is an
 instant written with its offset, a zone-less date-time (read as this machine's local time, as
@@ -29,14 +34,17 @@ first a trim lets go. Rows at the same time keep the order they had.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
 import re
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar, Union
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.instants import as_instant
 
@@ -96,6 +104,16 @@ def newest(rows: Iterable[T], keep: int, *, at: At) -> list[T]:
     return ordered[max(0, len(ordered) - max(0, keep)) :]
 
 
+@contextlib.contextmanager
+def appending(path: Path) -> Iterator[None]:
+    """Hold the lock of the bounded log at *path* for one append to it, so the append lands either
+    before a trim reads the log or after the trim has replaced it (:func:`trim_jsonl` takes the
+    same lock). Across processes and threads (`record_files.locked`), and not re-entrant: trim
+    after the block, never inside it."""
+    with record_files.locked(path):
+        yield
+
+
 def trim_jsonl(path: Path, keep: int, *, at: At, past: int | None = None) -> bool:
     """Rewrite the JSON-lines log at *path* to its *keep* newest rows, in time order, once it
     holds more than *past* rows (twice *keep* unless said): letting it grow to twice its bound
@@ -104,12 +122,18 @@ def trim_jsonl(path: Path, keep: int, *, at: At, past: int | None = None) -> boo
     Every line is judged by the row it holds, and kept byte for byte; a line that holds no row has
     no time, so it is the first to go. Raises ``OSError``, for a caller whose write is best-effort
     to report as it reports its own.
+
+    Read and replaced under the log's lock, which every append to it takes (:func:`appending`):
+    a row appended between the read and the replace was lost.
     """
-    lines = _lines(path)
-    if len(lines) <= (2 * keep if past is None else past):
+    if not path.exists():
         return False
-    kept = newest(lines, keep, at=lambda line: _line_value(line, at))
-    atomic_write(path, "".join(line + "\n" for line in kept))
+    with record_files.locked(path):
+        lines = _lines(path)
+        if len(lines) <= (2 * keep if past is None else past):
+            return False
+        kept = newest(lines, keep, at=lambda line: _line_value(line, at))
+        atomic_write(path, "".join(line + "\n" for line in kept))
     return True
 
 

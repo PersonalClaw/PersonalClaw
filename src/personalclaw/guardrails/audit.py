@@ -257,7 +257,9 @@ def record_attempt(rec: AttemptRecord) -> None:
         path = _audit_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         line = rec.to_json_line() + "\n"
-        with path.open("a", encoding="utf-8") as fh:
+        # Under the log's lock, which a trim takes too, so no trim's rewrite loses the attempt
+        # (`bounded_log.appending`).
+        with bounded_log.appending(path), path.open("a", encoding="utf-8") as fh:
             fh.write(line)
         _maybe_trim(path)
     except Exception:

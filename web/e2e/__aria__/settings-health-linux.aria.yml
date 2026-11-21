@@ -115,6 +115,7 @@
     - text: Automations
     - button "Investigate in chat"
     - group: The automations file can be read The automations file can be read.
+    - group: Every fire parked for the next tick could be read Every fire parked for the next tick could be read.
     - text: A legacy automation file back after its import no legacy automation file is waiting to be read Tools
     - button "Investigate in chat"
     - text: MCP servers left in the legacy settings/mcp.json no MCP server is left in the legacy settings/mcp.json

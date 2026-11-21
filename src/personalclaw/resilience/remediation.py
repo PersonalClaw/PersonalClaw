@@ -709,7 +709,8 @@ def _write_ledger(result: RunResult, *, now: float) -> None:
             "jobs": result.jobs,
             "stopped_reason": result.stopped_reason,
         }
-        with open_streamed(path, "ab") as fh:
+        # Under the log's lock, which the trim takes too (`bounded_log.appending`).
+        with bounded_log.appending(path), open_streamed(path, "ab") as fh:
             fh.write((json.dumps(row) + "\n").encode("utf-8"))
         bounded_log.trim_jsonl(path, _LEDGER_CAP, at="ts")
     except Exception:
