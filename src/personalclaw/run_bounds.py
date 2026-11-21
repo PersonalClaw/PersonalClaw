@@ -1,7 +1,7 @@
-"""Where a run's calls reach without a person saying yes: the allowed hosts, its own folders, and
-never the owner's protected folders.
+"""Where a run's calls reach without a person saying yes: the allowed hosts, its own folders,
+never the owner's protected folders, and commits only under the identity git is configured with.
 
-Three bounds, read from one reading of each call (:mod:`personalclaw.command_effects` for a shell
+Four bounds, read from one reading of each call (:mod:`personalclaw.command_effects` for a shell
 command, the path a native file tool is given):
 
 * **The network.** A shell command that reaches the network is held to the egress allow-list
@@ -24,6 +24,10 @@ command, the path a native file tool is given):
   included), or that deletes a path this reading cannot name, is put to a person whatever would
   otherwise have answered for it, as a call past the allowed hosts is; an unattended run is
   refused it (:mod:`personalclaw.protected_folders`).
+* **Who a commit is by.** A shell command this reading sees giving git a commit's author or
+  committer itself, or changing where git reads them from (``CommandEffects.identity``), is put
+  to a person the same way, and an unattended run is refused it and told to commit with a plain
+  ``git commit``. A commit and its sign-off are given in the owner's name.
 
 What a program does that its command line does not say (a script's own ``open``, a tool's own
 configuration naming another registry) is outside any reading of the text: the OS sandbox and
@@ -229,6 +233,8 @@ class Reach:
     unnamed_path: bool = False
     #: What it would delete of the owner's protected folders.
     deletes: ProtectedDelete = NOTHING
+    #: Each way it gives git a commit's author or committer itself (``CommandEffects.identity``).
+    identity: tuple[str, ...] = ()
 
     @property
     def network(self) -> bool:
@@ -240,12 +246,12 @@ class Reach:
 
     @property
     def asks(self) -> bool:
-        """It is put to a person whatever grant stands: past the allowed hosts, or a delete of a
-        protected folder."""
-        return self.network or bool(self.deletes)
+        """It is put to a person whatever grant stands: past the allowed hosts, a delete of a
+        protected folder, or a commit under an identity it gives git itself."""
+        return self.network or bool(self.deletes) or bool(self.identity)
 
     def __bool__(self) -> bool:
-        return self.network or self.writes or bool(self.deletes)
+        return self.network or self.writes or bool(self.deletes) or bool(self.identity)
 
 
 NOWHERE = Reach()
@@ -301,6 +307,7 @@ def call_reach(
 
     runs = shell_call_command(title, tool_kind, tool_input, declared)
     deletes = protected_folders.protected_delete(runs, cwd=cwd, tmpdir=tmpdir) if runs else NOTHING
+    identity = tuple(sorted(command_effects(runs).identity)) if runs else ()
     command = shell_command(title, tool_kind, tool_input, declared)
     if command:
         reach = effects_reach(
@@ -310,9 +317,9 @@ def call_reach(
             within=within,
             scratch=scratch,
         )
-        return replace(reach, deletes=deletes)
-    if deletes:
-        return Reach(deletes=deletes)
+        return replace(reach, deletes=deletes, identity=identity)
+    if deletes or identity:
+        return Reach(deletes=deletes, identity=identity)
     arg = FILE_WRITES.get(title)
     if within is None or arg is None or not declared_level(declared):
         return NOWHERE
@@ -451,6 +458,7 @@ def past_bounds(reach: Reach, within: Sequence[str] = ()) -> str:
         network_sentence(reach),
         writes_sentence(reach, within),
         protected_folders.clause(reach.deletes),
+        identity_sentence(reach),
     ]
     return (
         "this run is unattended, so nobody is here to allow a call past its bounds: "
@@ -482,6 +490,8 @@ def refusal(
             f"leave {protected_folders.ALWAYS_ASKS} alone, and name in the command each path a "
             "delete removes"
         )
+    if reach.identity:
+        steps.append(_IDENTITY_STEP)
     return (
         past_bounds(reach, within)
         + ". To go on, "
@@ -492,8 +502,9 @@ def refusal(
 
 def ask_note(reach: Reach) -> str:
     """The line an attended run's card shows for a call put to a person past every grant (one
-    that reaches past the allowed hosts, or that deletes a protected folder): why it asks, though
-    a standing grant would have answered any other call."""
+    that reaches past the allowed hosts, that deletes a protected folder, or that gives git its
+    own author or committer): why it asks, though a standing grant would have answered any other
+    call."""
     notes = []
     sentence = network_sentence(reach)
     if sentence:
@@ -509,7 +520,33 @@ def ask_note(reach: Reach) -> str:
             + f" A command that deletes {protected_folders.ALWAYS_ASKS} is always asked about, "
             "whatever this chat or its agent allows."
         )
+    sentence = identity_sentence(reach)
+    if sentence:
+        notes.append(
+            sentence[0].upper()
+            + sentence[1:]
+            + ". A command that gives git its own author or committer is always asked about, "
+            "whatever this chat or its agent allows."
+        )
     return " ".join(notes)
+
+
+#: What a run refused a commit under its own identity can do instead.
+_IDENTITY_STEP = (
+    "commit with a plain `git commit` (`-s` for a sign-off), and change no git setting or "
+    "settings file; if git has no identity for the user, leave the commit for the user"
+)
+
+
+def identity_sentence(reach: Reach) -> str:
+    """How the call gives git a commit's author or committer, in a clause (``it gives git …``)."""
+    if not reach.identity:
+        return ""
+    return (
+        f"it gives git the author or committer of a commit itself ({_listed(reach.identity)}), "
+        "where a commit is made under the identity git is configured with, and its sign-off "
+        "is given in that name"
+    )
 
 
 def reach_note(
@@ -548,7 +585,8 @@ def put_to_a_person(event: Any, *, session_key: str, cwd: str) -> bool:
     must be answered by a person whatever grant stands: it asks for a project secret file
     (``secret_file_grants``), it reaches a host off the allowed hosts, or one its command does not
     name, or it deletes one of the owner's protected folders, or a path its command does not name
-    (:mod:`personalclaw.protected_folders`). No grant answers it."""
+    (:mod:`personalclaw.protected_folders`), or it gives git a commit's author or committer
+    itself. No grant answers it."""
     from personalclaw.secret_file_grants import asked_of
 
     if asked_of(event):

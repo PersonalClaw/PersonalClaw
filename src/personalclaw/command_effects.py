@@ -68,6 +68,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit
 
+from personalclaw import command_identity as ident
 from personalclaw.command_operands import _scan, _Scan, _tail, _value_words
 from personalclaw.command_shell import (
     _ASSIGNMENT,
@@ -114,6 +115,10 @@ class CommandEffects:
     and whether one removes a path this reading cannot name (one built from a variable, or one
     ``xargs`` hands it). A delete that ``targets`` names only the folder of (``git clean``) removes
     nothing here.
+
+    ``identity`` names each way it gives git the author or committer of a commit itself, past the
+    identity git is configured with, as the command spells it: a setting (``user.email`` in
+    ``git -c`` or ``git config``), ``git commit --author``, a variable (``GIT_AUTHOR_EMAIL``).
     """
 
     writes: bool = False
@@ -126,6 +131,7 @@ class CommandEffects:
     target_unread: bool = False
     removes: frozenset[Removal] = frozenset()
     removes_unread: bool = False
+    identity: frozenset[str] = frozenset()
 
     @property
     def reads_only(self) -> bool:
@@ -143,6 +149,7 @@ class CommandEffects:
             target_unread=self.target_unread or other.target_unread,
             removes=self.removes | other.removes,
             removes_unread=self.removes_unread or other.removes_unread,
+            identity=self.identity | other.identity,
         )
 
 
@@ -154,6 +161,11 @@ _WRITES = CommandEffects(writes=True, target_unread=True)
 _DELETES = CommandEffects(writes=True, deletes=True, target_unread=True)
 #: The network, at a host the command does not name.
 _NETWORK = CommandEffects(network=True, host_unread=True)
+
+
+def _who(identity: frozenset[str]) -> CommandEffects:
+    """The commit identity a form gives git (``command_identity``), as an effect."""
+    return CommandEffects(identity=identity) if identity else _READ
 
 
 def _writes_to(*paths: str) -> CommandEffects:
@@ -404,11 +416,22 @@ def _simple_effects(one: Simple, depth: int = 0, *, relayed: bool = False) -> Co
     k, relays = _assignments(words)
     if k:
         # A variable set for the program changes how it runs.
-        effects = effects | _UNREAD
+        effects = (
+            effects
+            | _UNREAD
+            | _who(ident.gives_identity(words[:k], words[k] if k < len(words) else None))
+        )
         if k == len(words):
             return effects
+    if words[k].text in ident.SETS_VARIABLES:
+        effects = effects | _who(ident.gives_identity(words[k + 1 :]))
     program = _program_effects(words[k:], depth)
-    return effects | (_relayed(program) if relayed or relays else program)
+    effects = effects | (_relayed(program) if relayed or relays else program)
+    if ident.is_git(words[k]):
+        return effects
+    return effects | _who(
+        ident.settings_file_written(effects.targets, words[k + 1 :] if program.unread else ())
+    )
 
 
 def _program_effects(words: list[Word], depth: int) -> CommandEffects:
@@ -1481,6 +1504,7 @@ def _git_config(args: list[Word]) -> CommandEffects:
     else:
         scope = next((scope for scope in _GIT_CONFIG_SCOPES if scope in scan.seen), "--local")
         effects = _writes_to(_GIT_CONFIG_SCOPES[scope])
+    effects = effects | _who(ident.config_identity(scan, _GIT_CONFIG_SUBCOMMANDS))
     return effects | _UNREAD if words & {"-e", "--edit", "edit"} else effects
 
 
@@ -1539,12 +1563,16 @@ def _git(args: list[Word]) -> CommandEffects:
             base = posixpath.join(base, folder.text) if base else folder.text
             i += 2
         elif word.text in _GIT_GLOBAL_VALUED and i + 1 < len(args):
-            extra = _UNREAD
+            extra = extra | _UNREAD | _who(ident.git_setting_identity(word.text, args[i + 1]))
             elsewhere = elsewhere or _git_sends_elsewhere(word.text, args[i + 1])
             i += 2
         elif word.text.startswith(_GIT_GLOBAL_OTHER):
-            extra = _UNREAD
             option, given, value = word.text.partition("=")
+            extra = (
+                extra
+                | _UNREAD
+                | _who(ident.git_setting_identity(option, _tail(word, len(option) + 1)))
+            )
             elsewhere = elsewhere or bool(given and _git_sends_elsewhere(option, Word(value)))
             i += 1
         else:
@@ -1559,6 +1587,12 @@ def _git(args: list[Word]) -> CommandEffects:
         effects = read(args[i + 1 :])
     else:
         effects = _GIT_DESCRIBED.get(sub, _UNREAD)
+    if sub == "commit":
+        effects = effects | _who(ident.commit_author(args[i + 1 :]))
+    elif sub == "am" and not {w.text for w in args[i + 1 :]} & ident.AM_ENDS:
+        effects = effects | _who(frozenset({"git am"}))
+    elif sub == "rebase":
+        effects = effects | _who(ident.rebase_runs_identity(args[i + 1 :]))
     effects = _under(extra | effects, base)
     return _relayed(effects) if elsewhere else effects
 
@@ -2326,7 +2360,7 @@ def _started(
     if relays or given:
         inner = _relayed(inner)
     if k:
-        inner = inner | _UNREAD
+        inner = inner | _UNREAD | _who(ident.gives_identity(args[:k], args[k]))
     return _under(inner, base.text, base_glob=base.glob_at) if base and base.text else inner
 
 
@@ -2334,6 +2368,7 @@ def _env(args: list[Word], depth: int) -> CommandEffects:
     i = 0
     base: Word | None = None
     relays = False
+    given: list[Word] = []
     while i < len(args):
         word = args[i]
         t = word.text
@@ -2360,10 +2395,14 @@ def _env(args: list[Word], depth: int) -> CommandEffects:
             return _UNREAD  # `-S` splits a string into the command, and the rest are unknown
         elif _ASSIGNMENT.match(t):
             relays = relays or _relays(word)
+            given.append(word)
             i += 1
         else:
             break
-    return _started(args[i:], depth, base=base, relays=relays)
+    program = args[i] if i < len(args) else None
+    return _started(args[i:], depth, base=base, relays=relays) | _who(
+        ident.gives_identity(given, program)
+    )
 
 
 def _skip_options(

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from personalclaw import (
     approval_grants,
+    helper_commits,
     memory_writes,
     pre_tool_hooks,
     run_bounds,
@@ -1605,6 +1606,7 @@ class SubagentManager:
         # counts from HERE, the start of the run, which the reaper reads too (`_run_started`): a
         # wait for a slot or for its owner to approve the start is not the run.
         timeout = self._default_timeout
+        await helper_commits.started(info)  # who its folder commits as, before it runs anything
         self._run_started[info.id] = time.monotonic()
         try:
             await asyncio.wait_for(self._run_inner(info, session_key), timeout=timeout)
@@ -1676,6 +1678,7 @@ class SubagentManager:
                     logger.exception("Subagent %s: reset failed", info.id)
             self._tasks.pop(info.id, None)
 
+        await helper_commits.ended(info)  # the commits it made as anyone else, for its report
         if self._on_done and not info.reaped:
             # Enqueue for COALESCED batch delivery instead of starting a
             # dedicated parent turn per completion. A burst of completions for one

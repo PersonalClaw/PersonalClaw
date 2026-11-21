@@ -746,6 +746,53 @@ def has_base_commit(workspace: str) -> bool:
     return rc == 0
 
 
+def head_commit(workspace: str) -> str | None:
+    """The commit HEAD points at in *workspace*; ``""`` in a repository with no commit yet, and
+    ``None`` when *workspace* is in no repository."""
+    rc, inside = _git(workspace, "rev-parse", "--is-inside-work-tree", errors=False)
+    if rc != 0 or inside.strip() != "true":
+        return None
+    rc, head = _git(workspace, "rev-parse", "--verify", "HEAD", errors=False)
+    return head.strip() if rc == 0 else ""
+
+
+class MadeCommit(NamedTuple):
+    """One commit, with who it says it is by: its author and committer, and its sign-offs."""
+
+    sha: str
+    author: tuple[str, str]
+    committer: tuple[str, str]
+    signed_off: tuple[str, ...]
+
+
+#: The most commits :func:`commits_made_since` reads.
+_MADE_LIMIT = 50
+
+
+def commits_made_since(workspace: str, base: str, since: float) -> list[MadeCommit]:
+    """The commits on the branches of *workspace* (and a detached HEAD) that are not in *base*
+    (``""``: none was) and were committed at or after *since*, newest first, at most
+    :data:`_MADE_LIMIT`: what was committed there since a moment *base* was HEAD."""
+    fields = (
+        "%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f"
+        "%(trailers:key=Signed-off-by,valueonly,separator=%x1e)"
+    )
+    args = ["log", "-z", f"--format={fields}", f"--since=@{int(since)}", f"-n{_MADE_LIMIT}"]
+    args += ["--branches", "HEAD"] + (["--not", base] if base else [])
+    rc, out = _git(workspace, *args, errors=False)
+    if rc != 0:
+        return []
+    made = []
+    for record in out.split("\0"):
+        parts = record.strip("\n").split("\x1f")
+        if len(parts) != 6 or not parts[0]:
+            continue
+        sha, an, ae, cn, ce, trailers = parts
+        offs = tuple(t.strip() for t in trailers.split("\x1e") if t.strip())
+        made.append(MadeCommit(sha, (an, ae), (cn, ce), offs))
+    return made
+
+
 def has_uncommitted_changes(workspace: str, *, untracked: bool = False) -> bool:
     """Whether ``workspace`` has changes to tracked files that are not committed (and, with
     ``untracked``, files git does not track yet).

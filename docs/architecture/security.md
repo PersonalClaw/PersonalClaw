@@ -1538,6 +1538,18 @@ starts do not, so what they reach is read from the command they run
   command too: the action denylist for every unattended command path
   (`unattended_protected_delete`), a bash action and an app's lifecycle hook. Any other delete
   follows the normal rules.
+- **Who a commit is by.** A commit an agent makes, and its sign-off, are given in the owner's
+  name. A shell command that gives git a commit's author or committer itself, or changes where git
+  reads them from, as `command_effects` reads it (`CommandEffects.identity`), is put to a person
+  past every grant, as a delete of a protected folder is, and refused in an unattended run, which
+  is told to commit with a plain `git commit` and change no git setting
+  (`run_bounds.Reach.identity`). A plain commit, `--reset-author`, and a read of a setting follow
+  the normal rules.
+  Git also takes a commit's identity from places a command never spells, so every commit a helper
+  makes is checked too (`helper_commits`): who git commits as in its folder and where HEAD is are
+  read as it starts, before it runs anything, and each commit made since whose author, committer or
+  `Signed-off-by` names anyone else is listed in its report, in PersonalClaw's words, for the chat
+  that started it and in the owner's note.
 - **Apps.** `apps/launch_egress.py` reads every launch an app's code makes, at Python's own audit
   event for it, so whatever helper started it: each host its command line names gets an
   `egress_launch` row naming the app and the program, and a host neither the manifest declares for

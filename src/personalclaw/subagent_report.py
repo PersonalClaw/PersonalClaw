@@ -51,7 +51,8 @@ def for_a_model(agent_id: str, report: str) -> str:
     """The whole *report* of the helper *agent_id* as a model is handed it (``subagent_status``):
     fenced with the helper as its source, or the door's sentence when the screen refuses it."""
     admitted = handed_on(agent_id, report)
-    return _withheld(agent_id, admitted.refused) if admitted.refused else admitted.text
+    said = _withheld(agent_id, admitted.refused) if admitted.refused else admitted.text
+    return _with_commits_note(agent_id, said)
 
 
 def for_a_person(agent_id: str, report: str) -> str:
@@ -59,7 +60,7 @@ def for_a_person(agent_id: str, report: str) -> str:
     door's sentence when the screen refuses it, so a note that travels on (to a channel, say)
     never carries words no model may be handed."""
     refused = handed_on(agent_id, report).refused
-    return _withheld(agent_id, refused) if refused else report
+    return _with_commits_note(agent_id, _withheld(agent_id, refused) if refused else report)
 
 
 def for_its_chat(agent_id: str, report: str, chat_key: str) -> str:
@@ -71,6 +72,19 @@ def for_its_chat(agent_id: str, report: str, chat_key: str) -> str:
     projection is fenced, and after the fence, in PersonalClaw's own words, come the handles that
     read all of it, the projection's ``tool_result_get`` and ``subagent_status``.
     """
+    return _with_commits_note(agent_id, _for_its_chat(agent_id, report, chat_key))
+
+
+def _with_commits_note(agent_id: str, said: str) -> str:
+    """*said*, and after it, in PersonalClaw's own words, the commits the helper made under an
+    identity other than the owner's (``helper_commits``)."""
+    from personalclaw.helper_commits import note_for
+
+    note = note_for(agent_id)
+    return f"{said}\n\n{note}" if note else said
+
+
+def _for_its_chat(agent_id: str, report: str, chat_key: str) -> str:
     kept_it = keep(chat_key, agent_id, report)
     whole = handed_on(agent_id, report)
     if whole.refused:
