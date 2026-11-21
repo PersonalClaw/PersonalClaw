@@ -81,6 +81,7 @@ import re
 import shutil
 import subprocess
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import website_installer_shared
@@ -518,10 +519,14 @@ class TestTruncatedDownloadFailsClosed:
 
         Every prefix rather than a sample, because the interesting ones are unguessable —
         the boundary that matters is wherever a future edit happens to put a statement.
+
+        Each prefix is its own ``sh``, and they run a few at a time: one after another they
+        were over two hundred process starts in a row, which on a loaded machine took most of
+        the test's minute alone and past it beside other jobs.
         """
         lines = installer_text.splitlines(keepends=True)
-        started: list[int] = []
-        for count in range(1, len(lines)):
+
+        def begins(count: int) -> bool:
             proc = subprocess.run(
                 [SH, "-s"],
                 input="".join(lines[:count]),
@@ -530,8 +535,11 @@ class TestTruncatedDownloadFailsClosed:
                 timeout=60,
                 env=dict(sandbox_env),
             )
-            if "==>" in proc.stdout:
-                started.append(count)
+            return "==>" in proc.stdout
+
+        counts = range(1, len(lines))
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            started = [count for count, began in zip(counts, pool.map(begins, counts)) if began]
         assert not started, (
             "a truncated download began installing at these line counts: "
             f"{started!r}. `curl | sh` no longer fails closed on a partial transfer."
