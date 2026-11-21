@@ -1070,13 +1070,16 @@ def commits_not_by(workspace: str, task_id: str, identity: tuple[str, str]) -> l
     """The commits task *task_id*'s branch holds that the checked-out branch does not and that
     were authored or committed as anyone but *identity* (name, email), newest first, each as its
     short hash and the name and email it carries. A branch git cannot list reads as one such
-    commit, so work git cannot vouch for is never merged as its owner's."""
+    commit, so work git cannot vouch for is never merged as its owner's; a branch that is gone
+    (its own merge removed it) holds no one's commits."""
     if not _safe_task_id(task_id):
         return []
     rc, out = _git(
         workspace, "log", "--format=%h%x09%an%x09%ae%x09%cn%x09%ce", f"HEAD..{branch_name(task_id)}"
     )
     if rc != 0:
+        if not branch_exists(workspace, task_id):
+            return []
         return [f"{branch_name(task_id)} (git could not list its commits)"]
     other: list[str] = []
     for line in out.splitlines():
