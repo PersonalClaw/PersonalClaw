@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -616,8 +617,14 @@ def pending_question(loop_id: str) -> dict | None:
         return None
     if not isinstance(q, dict):
         return None
-    # When it was asked: a worker's own question carries no time, so its file's is read.
-    q.setdefault("ts", asked_at)
+    # When it was asked, as a number: a worker writes its own question, with no time or a time in
+    # words of its own ("2026-11-12T18:30:00"), and then its file's is read. The waiting list and
+    # the loop's pause (`manager.question_holds`) read this one time.
+    ts = q.get("ts")
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool) and math.isfinite(ts):
+        q["ts"] = float(ts)
+    else:
+        q["ts"] = asked_at
     for k in ("question", "why"):
         if isinstance(q.get(k), str):
             q[k] = redact_for_display(q[k])
