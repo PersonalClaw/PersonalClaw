@@ -17,7 +17,7 @@ from personalclaw.triggers import tools as T
 from personalclaw.triggers.schedule_view import to_schedule_row
 from personalclaw.triggers.store import TriggerStore
 
-_NOTIFY = {"provider": "notify", "config": {"title": "hi", "body": "there"}}
+_NOTIFY = {"provider": "notify", "config": {"title_template": "hi", "body_template": "there"}}
 
 
 class _State:

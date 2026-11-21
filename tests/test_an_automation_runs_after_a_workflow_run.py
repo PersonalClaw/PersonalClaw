@@ -349,7 +349,10 @@ def _post_create(home, monkeypatch, body: dict[str, Any]) -> tuple[int, dict[str
     return resp.status, json.loads(resp.body.decode())
 
 
-_NOTIFY = {"provider": "notify", "config": {"title": "Research", "body": "$summary"}}
+_NOTIFY = {
+    "provider": "notify",
+    "config": {"title_template": "Research", "body_template": "$summary"},
+}
 
 
 def test_the_triggers_page_makes_one_that_waits_on_a_run_going_now(home, store, monkeypatch):

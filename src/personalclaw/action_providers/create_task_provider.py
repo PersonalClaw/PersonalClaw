@@ -24,8 +24,15 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
 )
-from personalclaw.action_providers.template import render_template
+from personalclaw.action_providers.template import render_template, title_template_problem
 from personalclaw.errors import AgentError
+
+
+def config_problem(config: dict[str, Any]) -> str:
+    """Why an automation's create-task action can't be saved, as each fire refuses it: it has no
+    ``title_template`` to title its task with (`template.title_template_problem`); "" when it
+    can."""
+    return title_template_problem(config, what="A task")
 
 
 class CreateTaskActionProvider(ActionProvider):

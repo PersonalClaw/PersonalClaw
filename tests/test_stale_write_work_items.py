@@ -296,7 +296,10 @@ def _seed_hook(hooks) -> str:
             "event": "PreToolUse",
             "matcher": "write_file",
             "provider": "notify",
-            "provider_config": {"title": "a write is about to run", "body": "check it"},
+            "provider_config": {
+                "title_template": "a write is about to run",
+                "body_template": "check it",
+            },
         }
     )
     return hook.id
@@ -309,7 +312,7 @@ async def _hook_row(c: TestClient, hook_id: str) -> dict:
 
 def _hook_save(title: str) -> dict:
     """What the lifecycle edit form sends (`api.updateHook`): every field plus the action."""
-    config = {"title": title, "body": "check it"}
+    config = {"title_template": title, "body_template": "check it"}
     return {
         "name": "Guard writes",
         "event": "PreToolUse",
@@ -337,7 +340,7 @@ class TestALifecycleSaveFromAStaleCopy:
             )
             assert resp.status == 200, await resp.text()
         hook = hooks.get(hook_id)
-        assert (hook.provider_config["title"], hook.enabled) == ("edited", False)
+        assert (hook.provider_config["title_template"], hook.enabled) == ("edited", False)
 
 
 # ── tasks (PUT /api/tasks/{id}) ────────────────────────────────────────────────────────────────

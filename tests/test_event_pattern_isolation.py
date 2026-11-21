@@ -222,7 +222,7 @@ def test_an_EDIT_that_introduces_the_pattern_is_warned_on_the_row(tmp_path):
         name="watch",
         kind="event",
         spec={"pattern": CONTENT_MATCH, "content_re": "deploy"},
-        workflow={"inline": {"provider": "notify", "config": {}}},
+        workflow={"inline": {"provider": "notify", "config": {"title_template": "x"}}},
         created_by="user",
     )
     assert made.ok, made.text

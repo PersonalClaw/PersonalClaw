@@ -176,7 +176,7 @@ class TestApiAndDoctor:
                     "trigger_type": "schedule",
                     "name": "x",
                     "cron": "whenever feels right",
-                    "action": {"provider": "notify", "config": {}},
+                    "action": {"provider": "notify", "config": {"title_template": "x"}},
                 },
             )
             assert resp.status == 400, "#483: any-string cron must be a 400, not a dead row"

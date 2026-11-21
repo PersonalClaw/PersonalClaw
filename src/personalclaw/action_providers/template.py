@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import re
 from string import Template
+from typing import Any
 
 from personalclaw.action_providers.base import ActionContext
 from personalclaw.security import UNTRUSTED_CLOSE, UNTRUSTED_OPEN
@@ -124,3 +125,18 @@ def without_fence(text: str) -> str:
     if not text:
         return text
     return _SHOWN_CLOSE.sub("", _SHOWN_OPEN.sub("", text))
+
+
+def title_template_problem(config: dict[str, Any], *, what: str) -> str:
+    """Why an action that renders its title from ``title_template`` can't be saved: it holds none,
+    so every fire refuses it (``notify``, ``create-task``); "" when it holds one. *what* names what
+    the title is for, as the sentence starts. A config that sets ``title`` instead is told the key
+    the action reads. A template that renders empty from one fire's payload is still that fire's
+    to refuse: only a template with no words at all is known at save."""
+    template = config.get("title_template")
+    if isinstance(template, str) and template.strip():
+        return ""
+    hint = "it can use $EVENT, $CONTEXT or a key of the event's payload"
+    if "title" in config:
+        return f"{what} takes its title from title_template, not title: rename the key ({hint})."
+    return f"{what} needs a title: set title_template ({hint})."

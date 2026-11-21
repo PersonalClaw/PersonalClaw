@@ -243,7 +243,12 @@ def _automation(scratch: Path, mp: pytest.MonkeyPatch) -> str:
         name="Nightly backup reminder",
         kind="clock",
         spec={"kind": "cron", "expr": "0 3 * * *"},
-        workflow={"inline": {"provider": "notify", "config": {"title": "Back up", "body": "now"}}},
+        workflow={
+            "inline": {
+                "provider": "notify",
+                "config": {"title_template": "Back up", "body_template": "now"},
+            }
+        },
         created_by="user",
         owner_consented=True,
     )

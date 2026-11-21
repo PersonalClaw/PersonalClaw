@@ -995,7 +995,8 @@ async def _action_problem(action: Any) -> str:
     set up here, or an id no channel, or more than one, takes
     (`send_message_provider.config_problem`). So did the working folder an agent it starts works in
     (`invoke-agent`, `run-prompt`), when the owner did not allow it. And a `browse` start page
-    each fire refuses (`browse_provider.config_problem`).
+    each fire refuses (`browse_provider.config_problem`), and a `notify` or `create-task` action
+    with no `title_template` to title what it makes (`template.title_template_problem`).
     """
     if not isinstance(action, dict):
         return ""
@@ -1016,9 +1017,21 @@ async def _action_problem(action: Any) -> str:
         from personalclaw.action_providers.run_workflow_provider import config_problem
 
         return await config_problem(config if isinstance(config, dict) else {})
-    from personalclaw.action_providers import bash_provider, browse_provider, send_message_provider
+    from personalclaw.action_providers import (
+        bash_provider,
+        browse_provider,
+        create_task_provider,
+        notify_provider,
+        send_message_provider,
+    )
 
-    own = {"send-message": send_message_provider, "bash": bash_provider, "browse": browse_provider}
+    own = {
+        "send-message": send_message_provider,
+        "bash": bash_provider,
+        "browse": browse_provider,
+        "notify": notify_provider,
+        "create-task": create_task_provider,
+    }
     if provider in own:  # a provider that judges its own config
         return own[provider].config_problem(config if isinstance(config, dict) else {})
     return ""

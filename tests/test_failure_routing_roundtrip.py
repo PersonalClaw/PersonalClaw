@@ -179,7 +179,10 @@ async def test_create_then_read_back_the_route_the_user_chose(home):
             "silent": True,
             "failure_delivery": "inbox",
             "failure_dedupe": True,
-            "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+            "action": {
+                "provider": "notify",
+                "config": {"title_template": "hi", "body_template": "there"},
+            },
         },
     )
     # The create RESPONSE already answers, in the same projection the list uses.
@@ -204,7 +207,10 @@ async def test_the_defaults_a_form_that_sends_nothing_gets(home):
         {
             "name": "plain",
             "every": 3600,
-            "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+            "action": {
+                "provider": "notify",
+                "config": {"title_template": "hi", "body_template": "there"},
+            },
         },
     )
     assert row["failure_delivery"] == Trigger.failure_delivery == "inbox"
@@ -220,7 +226,10 @@ async def test_patch_round_trips_every_route_and_both_dedupe_states(home, fakech
         {
             "name": "nightly",
             "every": 3600,
-            "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+            "action": {
+                "provider": "notify",
+                "config": {"title_template": "hi", "body_template": "there"},
+            },
         },
     )
     raw = row["raw_id"]
@@ -252,7 +261,10 @@ async def test_toggling_dedupe_off_is_an_edit_not_a_no_op(home):
             "name": "nightly",
             "every": 3600,
             "failure_dedupe": True,
-            "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+            "action": {
+                "provider": "notify",
+                "config": {"title_template": "hi", "body_template": "there"},
+            },
         },
     )
     raw = row["raw_id"]
@@ -273,7 +285,10 @@ async def test_patching_dedupe_preserves_the_autopause_threshold_beside_it(home)
         {
             "name": "nightly",
             "every": 3600,
-            "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+            "action": {
+                "provider": "notify",
+                "config": {"title_template": "hi", "body_template": "there"},
+            },
         },
     )
     raw = row["raw_id"]
@@ -300,7 +315,10 @@ async def test_an_unhonourable_route_is_refused_on_both_paths(home):
         "name": "bad",
         "every": 3600,
         "failure_delivery": "emial",
-        "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+        "action": {
+            "provider": "notify",
+            "config": {"title_template": "hi", "body_template": "there"},
+        },
     }
     resp = await handlers._create_schedule(state, body, _request(body))
     assert resp.status == 400
@@ -312,7 +330,10 @@ async def test_an_unhonourable_route_is_refused_on_both_paths(home):
         {
             "name": "good",
             "every": 3600,
-            "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+            "action": {
+                "provider": "notify",
+                "config": {"title_template": "hi", "body_template": "there"},
+            },
         },
     )
     status, payload = await _update(state, row["raw_id"], {"failure_delivery": "slack"})
@@ -332,7 +353,10 @@ async def test_a_non_bool_dedupe_is_refused_rather_than_coerced(home):
         {
             "name": "nightly",
             "every": 3600,
-            "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+            "action": {
+                "provider": "notify",
+                "config": {"title_template": "hi", "body_template": "there"},
+            },
         },
     )
     status, payload = await _update(state, row["raw_id"], {"failure_dedupe": "false"})
@@ -357,7 +381,10 @@ async def test_editing_the_failure_route_leaves_the_rest_of_the_advanced_block_a
             "timezone": "America/Los_Angeles",
             "skip_dates": ["2027-12-25"],
             "silent": True,
-            "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+            "action": {
+                "provider": "notify",
+                "config": {"title_template": "hi", "body_template": "there"},
+            },
         },
     )
     raw = row["raw_id"]

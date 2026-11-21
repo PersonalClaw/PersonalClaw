@@ -37,6 +37,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat whose generated title came back without a title line is asked for it again, and a restart no longer forgets a title owed: the start asks again for every restored chat with a turn and no title.**
 - **A turn you move to another agent before it answers is asked again with the steers it had taken, after your message and in order, so the new agent follows them; before, it answered your message as if you had never steered it.**
 - **Rewind to here, and Edit & resend of a message you did not change, run the message as it was stored: a widget's action as its action, an optimized message as the text the model answered, and with the files you attached, the knowledge items and artifacts you @-mentioned and how you said it. An edited message keeps its attachments and mentions too.**
+- **A Notify or Create task automation with no title to make is refused where it is saved, on the Triggers page and through the chat and the CLI, instead of being saved and failing at every fire; a config that set `title` is told the key the action reads is `title_template`.**
 
 ### Security
 
