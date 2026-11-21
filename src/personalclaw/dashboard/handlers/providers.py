@@ -33,6 +33,7 @@ from personalclaw.dashboard.handlers._shared import (
     RefusedInConfigTransaction,
     config_write_refusal,
 )
+from personalclaw.providers import model_changes
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import RequestValidationError, require_string
 
@@ -851,6 +852,7 @@ async def api_provider_create(request: web.Request) -> web.Response:
 
     get_connection_board().forget(name)
     _refresh_media_registries()
+    model_changes.announce()
     return web.json_response({"ok": True, "name": name})
 
 
@@ -1025,6 +1027,7 @@ async def api_provider_update(request: web.Request) -> web.Response:
     # What was measured belongs to the settings that were just replaced.
     get_connection_board().forget(name)
     _refresh_media_registries()
+    model_changes.announce()
     return web.json_response({"ok": True, "name": name})
 
 
@@ -1080,6 +1083,7 @@ async def api_provider_delete(request: web.Request) -> web.Response:
 
     get_connection_board().forget(name)
     _refresh_media_registries()
+    model_changes.announce()
     if BoundEmbedding.ref() != embedding_before:
         from personalclaw.dashboard.handlers.embedding_reindex import (
             schedule_reindex_for_binding,
