@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import tempfile
 import time
@@ -2446,15 +2447,22 @@ def _slugify_intent(intent_id: str, goal: str) -> str:
 
 
 def _auto_skill_path(skills_dir: Path, slug: str) -> Path:
-    """The folder a skill generated as *slug* lives in: resolved, and held to *skills_dir*'s
-    ``auto/``. :func:`_slugify_intent` keeps only letters, digits and hyphens, so its slug is
-    always a plain name there; this is the bound the path itself keeps, whatever the slug's
-    character set. ``ValueError`` when it would land anywhere else, ``auto/`` itself included."""
+    """The folder a skill generated as *slug* lives in, held to *skills_dir*'s ``auto/`` before
+    anything is read or written for it. :func:`_slugify_intent` keeps only letters, digits and
+    hyphens, so its slug is always a plain name there; this is the bound the path itself keeps,
+    whatever the slug's character set. ``ValueError`` when it would land anywhere else, ``auto/``
+    itself included, or when a link there leads out of it.
+
+    Shaped as ``chat_record.held_child``: a normalised join, then ``startswith`` the folder, which
+    is the containment code scanning reads as one (``resolve`` with ``is_relative_to`` isn't)."""
     from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE
 
-    auto = (skills_dir / AUTO_SKILL_NAMESPACE).resolve()
-    target = (auto / slug).resolve()
-    if target == auto or not target.is_relative_to(auto):
+    folder = os.path.normpath(os.path.abspath(skills_dir / AUTO_SKILL_NAMESPACE))
+    held = os.path.normpath(os.path.join(folder, slug))
+    if not held.startswith(folder + os.sep) or os.path.dirname(held) != folder:
+        raise ValueError(f"a generated skill's folder would land outside {AUTO_SKILL_NAMESPACE}/")
+    target = Path(held).resolve()
+    if target.parent != Path(folder).resolve():
         raise ValueError(f"a generated skill's folder would land outside {AUTO_SKILL_NAMESPACE}/")
     return target
 

@@ -38,3 +38,18 @@ def test_a_slug_that_would_land_outside_auto_is_refused(tmp_path: Path, slug: st
     the folder's bound doesn't rest on the slug's character set alone."""
     with pytest.raises(ValueError, match="outside"):
         _auto_skill_path(tmp_path, slug)
+
+
+def test_a_link_under_auto_that_leads_out_is_refused(tmp_path: Path):
+    """A link already under ``auto/`` with the slug's name, pointing outside, is refused: the held
+    folder is resolved before it is used. A link that stays under ``auto/`` is still a skill there.
+    """
+    auto = tmp_path / AUTO_SKILL_NAMESPACE
+    auto.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    (auto / "linked-out").symlink_to(tmp_path / "elsewhere")
+    (auto / "kept").mkdir()
+    (auto / "linked-in").symlink_to(auto / "kept")
+    with pytest.raises(ValueError, match="outside"):
+        _auto_skill_path(tmp_path, "linked-out")
+    assert _auto_skill_path(tmp_path, "linked-in") == (auto / "kept").resolve()
