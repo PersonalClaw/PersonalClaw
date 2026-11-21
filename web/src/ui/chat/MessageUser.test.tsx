@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
@@ -56,5 +56,33 @@ describe('a sent message', () => {
     expect(screen.getByText('Ship the motion pass')).toBeInTheDocument()
     expect(bubble.style.opacity, 'the bubble fades in').toBe('')
     expect(bubble.style.transform, 'the bubble travels or rises in').toBe('')
+  })
+})
+
+// ── Find in conversation opens the long message it lands on ──────────────────────────────────────
+//
+// A match below a long message's fold was counted and its turn scrolled into view, with the match
+// itself clipped behind the fold. The host now says which message Find has landed on (`reveal`):
+// it opens, as a click on "Show full message" would, without telling the host the reader chose to
+// read it (`onExpand`, which stops following a turn still arriving).
+
+describe('a long message Find lands on', () => {
+  const LONG = Array.from({ length: LONG_MESSAGE_LINES + 4 }, (_, i) => `line ${i}`).join('\n')
+
+  it('🔴 opens when revealed, and tells the host nothing', () => {
+    const onExpand = vi.fn()
+    const { container, rerender } = render(<MessageUser onExpand={onExpand}>{LONG}</MessageUser>)
+    expect(container.querySelector('[data-user-message-folded]')).not.toBeNull()
+
+    rerender(<MessageUser onExpand={onExpand} reveal>{LONG}</MessageUser>)
+    expect(container.querySelector('[data-user-message-folded]')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe('true')
+    expect(onExpand).not.toHaveBeenCalled()
+  })
+
+  it('folds again when she folds it, while Find is still on it', async () => {
+    const { container } = render(<MessageUser reveal>{LONG}</MessageUser>)
+    await userEvent.click(screen.getByRole('button', { name: 'Show less' }))
+    expect(container.querySelector('[data-user-message-folded]')).not.toBeNull()
   })
 })

@@ -67,6 +67,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Self-remediation's schedule says when it is waiting for a fix to come off its cooldown. It used to read "now: every 60m", as though nothing needed repair, while the health score sat under target; it now reads "now: waiting for a fix in its cooldown", and it still looks again when the fix is due.**
 - **A workflow step whose helper a restart of PersonalClaw found still running, its shell commands included, is ended before the step runs again. When PersonalClaw cannot tell that process is the step's, or cannot end it, the step fails and names the process instead of running a second time beside it.**
 - **Until a chat has its title, it is named by its first message without its Markdown everywhere: the live chat list (no longer by its latest line, such as an answer's table), the title given after five turns with none, Regenerate's fallback, an export's file name (no longer its key) and the history list.**
+- **Find in conversation opens a long message when the match it steps to sits below the message's fold, and scrolls to the match itself; a long message without a match stays folded.**
 
 ### Security
 
