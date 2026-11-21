@@ -1,6 +1,6 @@
 {"site": "src/personalclaw/action_providers/run_workflow_provider.py::RunWorkflowActionProvider.execute", "reason": "its own run: the run its step belongs to, named by the dispatch, and whether a run of the workflow it starts is going (a count)", "added": "2026-11-01"}
 {"site": "src/personalclaw/action_providers/run_workflow_provider.py::_run_of_step", "reason": "its own run: the run whose step it dispatches, named by the dispatch (`base.run_identity`), never by the step", "added": "2026-11-01"}
-{"site": "src/personalclaw/approval_grants.py::batch_allowed", "reason": "its own run: the batch a spawn belongs to, named by its `workflow:<run>` key, for whether its start was allowed", "added": "2026-11-01"}
+{"site": "src/personalclaw/approval_grants.py::_batch_consent", "reason": "its own run: the batch a spawn belongs to, named by its `workflow:<run>` key, for what allowed its start (whether it was, and whether by her own answer)", "added": "2026-11-01"}
 {"site": "src/personalclaw/approval_source.py::_run_of", "reason": "wording: the run an approval came from, named by the approval itself, for the sentence that asks", "added": "2026-11-01"}
 {"site": "src/personalclaw/approval_source.py::loop_name_of", "reason": "another store's: the loop store's `get`, which this module binds under the run store's name", "added": "2026-11-01"}
 {"site": "src/personalclaw/apps/app_work.py::of_run_id", "reason": "its own run: whose app's work a step's run is, by the id its dispatch names; an unreadable record fails closed", "added": "2026-11-01"}

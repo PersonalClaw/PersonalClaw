@@ -393,6 +393,12 @@ _SPAWN_GRANT_REASONS = {
 }
 
 
+def _call_reason(grant: str) -> str:
+    """The ``reason`` a call a grant approved records: the batch's own, else the one every
+    standing grant's row has always carried."""
+    return "batch_task_allowed" if grant == approval_grants.BATCH_TASK else "parent_policy_auto"
+
+
 class SubagentManager:
     """Spawn and track isolated background agents."""
 
@@ -632,6 +638,34 @@ class SubagentManager:
         if hooks is not None and hooks.auto_approve_subagent_tools is True:
             candidates.append(approval_grants.HOOK_SETTING)
         return approval_grants.first_for(candidates, self._asked_for(info)) if candidates else ""
+
+    def _call_grant(self, info: SubagentInfo, event: LLMEvent, *, to_a_person: bool) -> str:
+        """The grant that approves *event*, a call of *info*'s agent past every refusal, or ``""``
+        (it is asked): none for a call a bound or hook puts to a person; else her Allow of the
+        agent's batch for a call inside what its ask showed (:meth:`_batch_task_grant`), else a
+        standing grant (:meth:`_grant_now`)."""
+        if to_a_person:
+            return ""
+        return self._batch_task_grant(info, event) or self._grant_now(info, audit=True)
+
+    @staticmethod
+    def _batch_task_grant(info: SubagentInfo, event: LLMEvent) -> str:
+        """:data:`approval_grants.BATCH_TASK` when *info*'s agent is a task of a batch she allowed
+        herself and *event* is inside what its ask showed for it (`batch_task_scope.covers`, in the
+        task's own folder), bounded by the operator ceiling; else ``""``. Never an app's batch:
+        its tasks' calls ask her, as the ask said."""
+        from personalclaw import batch_task_scope
+
+        if info.app or not info.parent_run or not info.cwd:
+            return ""
+        if not approval_grants.batch_allowed_by_her(info.parent_run):
+            return ""
+        if not batch_task_scope.covers(event, info.cwd):
+            return ""
+        grant = approval_grants.BATCH_TASK
+        caller = info.parent_session_key or f"subagent:{info.id}"
+        subject = _redact(event.title or "")[:80]
+        return grant if approval_grants.stands(grant, caller=caller, subject=subject) else ""
 
     def _grant_now(self, info: SubagentInfo, *, audit: bool) -> str:
         """:meth:`_standing_grant`, if the operator ceiling lets it stand; else ``""``."""
@@ -2050,11 +2084,11 @@ class SubagentManager:
                         continue
                     # A standing grant, read at THIS call (it may have been revoked since the agent
                     # started) and bounded by the ceiling.
-                    grant = "" if to_a_person else self._grant_now(info, audit=True)
+                    grant = self._call_grant(info, event, to_a_person=to_a_person)
                     if grant:
                         await approve(
                             decided_by=grant,
-                            metadata={"subagent_id": info.id, "reason": "parent_policy_auto"},
+                            metadata={"subagent_id": info.id, "reason": _call_reason(grant)},
                         )
                         await self._fire_granted(info, event, grant, call_inputs)
                         continue

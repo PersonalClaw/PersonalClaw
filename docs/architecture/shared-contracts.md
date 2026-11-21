@@ -2588,7 +2588,7 @@ it (decision 22):
   `yolo`, `trust_reads`, `agent_floor`, `parent_trust`, `approval_mode`, `loop_mode` (landed: a loop's
   own grant to its sessions), `trigger_grant`, `heartbeat_task` (landed: a heartbeat task's calls on the
   owner's Allow of it), `setting`, `hook_setting`, `source`, `cli`, `app_grant`, `remembered`,
-  `approved_before_resume`, `batch_allowed`, `gate_policy`, `acp_mode`, `session_policy`, `auto_execute`,
+  `approved_before_resume`, `batch_allowed`, `batch_task`, `gate_policy`, `acp_mode`, `session_policy`, `auto_execute`,
   `result_injection`, `eval_safe_tools`), plus `no_approval_needed` (a native tool whose definition asks
   nobody and that is not a declared read; today's audit rows already write it,
   `llm/events.unasked_reason`, `llm/events.py:185`), the mini apps' `miniapp_writes`, and this
