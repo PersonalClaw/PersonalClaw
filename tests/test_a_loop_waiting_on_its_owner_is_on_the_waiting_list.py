@@ -117,6 +117,28 @@ def test_a_loop_whose_question_cannot_be_read_leaves_the_others_listed_and_is_sa
     assert unreadable.count("loop_question") == 1
 
 
+@pytest.mark.parametrize("broken_how", ["closed", "not json", "not a question"])
+def test_a_question_file_that_cannot_be_read_is_said_and_leaves_the_others_listed(broken_how):
+    """🔴 Red before: the file read as no question, so the loop was listed waiting on nothing
+    (an empty question, no time) and the list said it had read everything."""
+    broken = _asking("Fix the README", "May I?")
+    fine = _asking("Sort the inbox", "May I archive it?")
+    folder = loop_files.loop_dir(broken)
+    assert folder is not None
+    asked = folder / "questions.json"
+    if broken_how == "closed":
+        os.chmod(asked, 0)
+    else:
+        asked.write_text("{not json" if broken_how == "not json" else "[1, 2]", encoding="utf-8")
+    try:
+        listed, unreadable = _listed()
+    finally:
+        os.chmod(asked, 0o600)
+
+    assert set(listed) == {fine}, listed
+    assert unreadable.count("loop_question") == 1
+
+
 def test_a_loop_its_stage_gate_paused_is_listed_with_the_gates_words_and_a_steer():
     held = (
         "Every task of stage 'Checks' is done, but its gate can't confirm every exit criterion "

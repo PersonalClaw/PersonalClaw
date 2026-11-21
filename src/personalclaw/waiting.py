@@ -432,7 +432,7 @@ def _loop_question(loop: Any, now: float) -> dict[str, Any] | None:
     if status not in WAITS_ON_YOU:
         return None
     if status == "needs_input":
-        q = loop_files.pending_question(loop.id) or {}
+        q = loop_files.pending_question(loop.id, strict=True) or {}
     else:
         # A stalled or blocked loop asks for a steer to start it again, its reason the why:
         # masked as a question's why is (``pending_question``).
