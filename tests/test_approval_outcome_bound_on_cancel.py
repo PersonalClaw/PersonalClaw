@@ -14,7 +14,9 @@ leaves anything asking for a decision it can no longer receive.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 
 import pytest
 from test_dashboard_approval import (  # reuse the file's harness
@@ -27,6 +29,7 @@ from test_dashboard_approval import (  # reuse the file's harness
 )
 
 import personalclaw.dashboard.chat_runner as cr
+from personalclaw.dashboard import parked_chat_turns
 from personalclaw.dashboard.chat import run_chat
 
 
@@ -61,20 +64,61 @@ async def test_cancelling_an_approval_wait_expires_it_everywhere_and_propagates(
     assert resolved and resolved[-1]["approved"] is False and resolved[-1]["request_id"] == "req-1"
 
 
-def test_outcome_is_bound_before_the_try(tmp_path):
-    # Source-contract guard: `outcome` must be initialised before the try that
-    # can be cancelled, so the finally can never read it unbound. Comments
-    # stripped so the docstring's own words don't satisfy the assertion.
-    import inspect
+def _parks_the_future(stmt: ast.stmt) -> bool:
+    """``session._approval_futures[request_id] = fut``: the wait's future, parked."""
+    return (
+        isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Subscript)
+        and ast.unparse(stmt.targets[0]) == "session._approval_futures[request_id]"
+        and ast.unparse(stmt.value) == "fut"
+    )
 
-    src = inspect.getsource(cr)
-    src = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
-    anchor = "session._approval_futures[request_id] = fut"
-    i = src.index(anchor)
-    window = src[i : i + 600]
-    assert (
-        'outcome = "rejected"' in window
-    ), "outcome must be bound right after the future is parked"
-    assert window.index('outcome = "rejected"') < window.index(
-        "try:"
-    ), "the outcome default must come BEFORE the try, or the cancel path is still unbound"
+
+def _binds_outcome_rejected(stmt: ast.stmt) -> bool:
+    """``outcome = "rejected"``, alone or as one name of a tuple assignment."""
+    if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+        return False
+    target, value = stmt.targets[0], stmt.value
+    pairs = (
+        zip(target.elts, value.elts)
+        if isinstance(target, ast.Tuple) and isinstance(value, ast.Tuple)
+        else [(target, value)]
+    )
+    return any(
+        isinstance(name, ast.Name)
+        and name.id == "outcome"
+        and isinstance(bound, ast.Constant)
+        and bound.value == "rejected"
+        for name, bound in pairs
+    )
+
+
+@pytest.mark.parametrize(
+    "module", [cr, parked_chat_turns], ids=["chat_runner", "parked_chat_turns"]
+)
+def test_outcome_is_bound_before_the_try(module):
+    """Source-contract guard: in every wait that parks an approval's future, ``outcome`` is bound
+    to "rejected" after the future is parked and before the try that can be cancelled, so the
+    finally can never read it unbound, and a wait nobody answered never runs the call. Read from
+    the syntax tree, so a comment or a docstring cannot satisfy it and the binding's form (alone
+    or in a tuple) does not matter."""
+    tree = ast.parse(inspect.getsource(module))
+    waits = [
+        f
+        for f in ast.walk(tree)
+        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(_parks_the_future(s) for s in f.body)
+    ]
+    assert waits, f"{module.__name__} parks no approval future: the guard is reading nothing"
+    for wait in waits:
+        body = wait.body
+        parked = next(k for k, s in enumerate(body) if _parks_the_future(s))
+        tried = next(
+            (k for k in range(parked + 1, len(body)) if isinstance(body[k], ast.Try)), None
+        )
+        assert tried is not None, f"{wait.name}: no try after the future is parked"
+        assert any(_binds_outcome_rejected(s) for s in body[parked + 1 : tried]), (
+            f'{wait.name}: outcome must be bound to "rejected" after the future is parked and '
+            "BEFORE the try, or the cancel path reads it unbound"
+        )
