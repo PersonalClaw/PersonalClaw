@@ -149,6 +149,15 @@ def _keep_copy(path: Path, raw: bytes) -> Path | None:
         return None
 
 
+def keep_copy(path: Path, raw: bytes) -> Path | None:
+    """*raw*, what a reader of *path* could not read, kept beside it as ``<name>.broken-<UTC
+    instant>`` (:data:`SET_ASIDE_MARK`, listed by :func:`kept_copies`), and that copy's path; None,
+    logged, when none could be made. For a file kept a line at a time, the trigger spool, whose
+    damaged lines are taken out of it when its fires are taken (`triggers.dispatch.clear_spool`)
+    rather than left in it to be skipped on every read."""
+    return _keep_copy(path, raw)
+
+
 def _found(path: Path, why: str, raw: bytes | None, at: tuple[int, int, int] | None) -> Unreadable:
     """The refusal for *path*, found unreadable for *why*: a copy of *raw* kept, the finding
     named for :func:`unreadable_files`, and said in the log when it is new — the first time, or

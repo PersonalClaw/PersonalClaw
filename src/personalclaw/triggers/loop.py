@@ -689,12 +689,14 @@ def _drain_spool(*, now: float = 0.0) -> int:
     if bad:
         # Loud, not silent: a damaged line is a fire nobody will ever run, which counts
         # as a drop. It is skipped rather than retried forever (an unparseable line cannot become
-        # parseable), so the log is the only record there will be.
+        # parseable), and the ack sets it aside beside the spool, which the Doctor names.
         logger.warning("spool drain skipped %d unparseable line(s)", bad)
     if not envelopes:
         # An empty spool has nothing left to hold a budget for. Clearing here rather than only on
         # the ack path stops a stale count outliving the envelope it belonged to.
         clear_spool_hold()
+        if bad:
+            _ack_spool(clear_spool, 0)
         return 0
 
     now_ts = now or time.time()
@@ -775,17 +777,23 @@ def _drain_spool(*, now: float = 0.0) -> int:
 
     if not holding:
         clear_spool_hold()
-    if handled:
-        try:
-            clear_spool(handled=handled)
-        except Exception:  # noqa: BLE001
-            # NOT re-raised, and the ack is what failed: the fires already ran, so the next tick
-            # will re-run them. Logged loudly because a double-fire is the one banned outcome,
-            # and an unwritable spool file is the only way to reach it.
-            logger.warning(
-                "spool ack failed; %d fire(s) may re-run next tick", handled, exc_info=True
-            )
+    # A damaged line is taken out with the fires it sits among, and set aside (`clear_spool`), even
+    # when the drain consumed no fire: left at the head, it would be skipped, and said, every tick.
+    if handled or bad:
+        _ack_spool(clear_spool, handled)
     return handled
+
+
+def _ack_spool(clear_spool: Any, handled: int) -> None:
+    """Take the *handled* fires a drain consumed, and the damaged lines among them, off the spool
+    (`dispatch.clear_spool`), saying so when that fails."""
+    try:
+        clear_spool(handled=handled)
+    except Exception:  # noqa: BLE001
+        # NOT re-raised, and the ack is what failed: the fires already ran, so the next tick
+        # will re-run them. Logged loudly because a double-fire is the one banned outcome,
+        # and an unwritable spool file is the only way to reach it.
+        logger.warning("spool ack failed; %d fire(s) may re-run next tick", handled, exc_info=True)
 
 
 def _hold_resumes(wk: Any, deliveries: list[Any], pending: list[Any] | None) -> None:

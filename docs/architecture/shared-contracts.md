@@ -340,7 +340,10 @@ From `AGENTS.md` ("Shared conventions", "Storage") and the code, binding on ever
 - Writes go through `atomic_write` / `atomic_json_write`; a JSON store with several writers holds a lock
   file beside it (`record_files.locked`, which locks `.<stem>.lock`, `src/personalclaw/record_files.py:76-86`).
 - An append-only JSONL log trims at twice its cap, keeping the newest rows by each row's own time
-  (`bounded_log.trim_jsonl`, `src/personalclaw/bounded_log.py:99`; `tests/test_bounded_log_rail_trims_by_time.py`).
+  (`bounded_log.trim_jsonl`, `src/personalclaw/bounded_log.py`; `tests/test_bounded_log_rail_trims_by_time.py`).
+  The trim holds the log's lock across its read and its replace, and every append to the log holds it
+  too (`bounded_log.appending`), so no row appended meanwhile is lost to the rewrite
+  (`tests/test_the_spool_reads_every_good_line_and_keeps_every_append.py`).
 - A path built from an id goes through `record_ids.require_safe_record_id` / `record_path`
   (`src/personalclaw/record_ids.py:101-118`).
 - Each read site states whether it fails open (availability surfaces) or closed (security surfaces, and

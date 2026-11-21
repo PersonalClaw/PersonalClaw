@@ -122,7 +122,8 @@ def audit(
 def _append(path: Path, row: dict) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
+        # Under the log's lock, which a trim takes too (`bounded_log.appending`).
+        with bounded_log.appending(path), path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         _maybe_trim(path)
     except Exception:  # noqa: BLE001

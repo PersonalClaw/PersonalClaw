@@ -625,7 +625,10 @@ def queue_for_digest(note: dict[str, Any]) -> None:
     with _DIGEST_LOCK:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as fh:
+            # Under the queue's own lock as well, across processes: the CLI and an agent CLI's
+            # tool server queue notes too, and `_DIGEST_LOCK` keeps out only this process's
+            # threads. A note appended while a trim or a drain rewrote the queue was lost.
+            with bounded_log.appending(path), path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(note, ensure_ascii=False) + "\n")
         except OSError:
             logger.warning("digest queue append failed", exc_info=True)
@@ -652,20 +655,25 @@ def drain_digest_queue() -> list[dict[str, Any]]:
     concurrent appender's write lands in the next digest instead of recreating a file this
     process just unlinked. A malformed line is skipped, not fatal — one bad append must
     not strand every queued notification.
+
+    The read and the truncate are one step under the queue's lock, which every append takes
+    (`queue_for_digest`), so a note queued meanwhile lands before the read, in this digest, or
+    after the truncate, in the next; never between them, where it was lost.
     """
     path = digest_queue_path()
     with _DIGEST_LOCK:
         if not path.is_file():
             return []
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            logger.warning("digest queue read failed", exc_info=True)
-            return []
-        try:
-            atomic_write(path, "")
-        except OSError:
-            logger.warning("digest queue truncate failed", exc_info=True)
+        with record_files.locked(path):
+            try:
+                raw = path.read_text(encoding="utf-8")
+            except OSError:
+                logger.warning("digest queue read failed", exc_info=True)
+                return []
+            try:
+                atomic_write(path, "")
+            except OSError:
+                logger.warning("digest queue truncate failed", exc_info=True)
     out: list[dict[str, Any]] = []
     for line in raw.splitlines():
         line = line.strip()
@@ -693,35 +701,40 @@ def retext_digest_queue(texts: Mapping[str, tuple[str, str]]) -> int:
     with _DIGEST_LOCK:
         if not path.is_file():
             return 0
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            logger.warning("digest queue read failed", exc_info=True)
-            return 0
-        changed = 0
-        out: list[str] = []
-        for line in lines:
+        # The read and the rewrite are one step under the queue's lock, which every append takes
+        # (`queue_for_digest`): a note queued between them was lost.
+        with record_files.locked(path):
             try:
-                note = json.loads(line) if line.strip() else None
-            except json.JSONDecodeError:
-                note = None
-            words = texts.get(str(note.get("inbox_item") or "")) if isinstance(note, dict) else None
-            if (
-                isinstance(note, dict)
-                and words is not None
-                and (note.get("title"), note.get("body")) != words
-            ):
-                note["title"], note["body"] = words
-                line = json.dumps(note, ensure_ascii=False)
-                changed += 1
-            out.append(line)
-        if changed:
-            try:
-                atomic_write(path, "\n".join(out) + "\n")
+                lines = path.read_text(encoding="utf-8").splitlines()
             except OSError:
-                logger.warning("digest queue retext failed", exc_info=True)
+                logger.warning("digest queue read failed", exc_info=True)
                 return 0
-        return changed
+            changed = 0
+            out: list[str] = []
+            for line in lines:
+                try:
+                    note = json.loads(line) if line.strip() else None
+                except json.JSONDecodeError:
+                    note = None
+                words = (
+                    texts.get(str(note.get("inbox_item") or "")) if isinstance(note, dict) else None
+                )
+                if (
+                    isinstance(note, dict)
+                    and words is not None
+                    and (note.get("title"), note.get("body")) != words
+                ):
+                    note["title"], note["body"] = words
+                    line = json.dumps(note, ensure_ascii=False)
+                    changed += 1
+                out.append(line)
+            if changed:
+                try:
+                    atomic_write(path, "\n".join(out) + "\n")
+                except OSError:
+                    logger.warning("digest queue retext failed", exc_info=True)
+                    return 0
+            return changed
 
 
 # ── The digest ──────────────────────────────────────────────────────────

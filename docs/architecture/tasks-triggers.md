@@ -108,7 +108,10 @@ relative to `PersonalClaw/src/personalclaw/`.
   and at most 30 event fires a minute run across all event triggers. A process
   with no gateway — the CLI, or the `mcp-core` server an agent's memory tools
   run in — parks an event a stored trigger wants in `trigger-spool.jsonl`, and
-  the gateway's next tick re-emits it. An agent-lifecycle event (a session
+  the gateway's next tick re-emits it, each parked fire once. The spool is read a line at a
+  time under its lock, so a damaged line hides nothing else: the tick that takes the fires
+  around it keeps it beside the spool (`trigger-spool.jsonl.broken-<UTC instant>`), and the
+  Doctor's `automations.spool` row names it. An agent-lifecycle event (a session
   ending, a tool call) is a **lifecycle** trigger, not an event trigger.
 - **Legacy automation files** (`triggers/legacy_import.py`) — `crons.json`,
   `event_triggers.json` and `autonudge.json` held automations before the one

@@ -351,7 +351,8 @@ def _record_outcome(
         }
         path = _outcomes_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
+        # Under the log's lock, which a trim takes too (`bounded_log.appending`).
+        with bounded_log.appending(path), path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
         _trim_outcomes(path)
     except Exception:  # noqa: BLE001
