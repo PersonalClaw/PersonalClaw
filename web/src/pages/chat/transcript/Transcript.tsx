@@ -62,6 +62,9 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
   liveLine?: React.ReactNode
 }) {
   const { scrollRef, endRef, followTurnRef, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode, widgetWordsIn } = transcript
+  // The turn Find in conversation has landed on (its coordinate): its long message opens, so the
+  // match is on screen. Only that one; a long message without a match stays folded.
+  const [findLanding, setFindLanding] = useState<number | null>(null)
   // The turn column growing or shrinking (a reply streaming in, a widget's height, a card opening)
   // moves every widget frame below the change under a resting pointer: they are coming to rest
   // again, so an arrival over one right after isn't read as the owner moving onto it.
@@ -125,6 +128,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
               // bar) remounts it so it re-seeds + re-scrolls; an empty seed (⌘F) is a
               // constant key, so the manual bar is never remounted out from under a typist.
               <FindBar key={`find-${findSeed}`} items={turns} segmentsOf={findSegments} nodeOf={(t, i) => turnNodes.current.get(markCoordOf(t, i))}
+                revealOf={(t, i) => setFindLanding(markCoordOf(t, i))}
                 scrollRef={scrollRef} label="Find in conversation" initialQuery={findSeed} onClose={() => setFindOpen(false)} />
             )}
           </AnimatePresence>
@@ -165,7 +169,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
                     ) : (
                       <div className="group/msg">
                         <MessageUser onFileClick={setOpenFile} pastes={turn.pastes} optimized={turn.optimized} ranPrompt={turn.ranPrompt} steered={turn.steered}
-                          onExpand={() => { followTurnRef.current = false }}>{turnTextOf(turn)}</MessageUser>
+                          onExpand={() => { followTurnRef.current = false }} reveal={findOpen && findLanding === markCoordOf(turn, i)}>{turnTextOf(turn)}</MessageUser>
                         {turn.files && turn.files.length > 0 && <TurnAttachments paths={turn.files} delivery={turn.imageDelivery} onOpenFile={setOpenFile} />}
                         {turn.rewound && turn.rewound.length > 0 && (
                           <RewindDivider snapshots={turn.rewound} canFork={memoryMode === 'persistent'} onFork={(si) => forkRewound(i, si)} />
