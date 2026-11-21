@@ -12,17 +12,19 @@ credential on a network surface is a security event.
 A refusal answered before any credential admitted its caller (a surface that's off, a peer the
 surface refuses, no token or a wrong one, another machine the origin check turns away) comes from
 a caller nobody has identified, so nothing else bounds how fast it can be sent. Its rows are held
-to :data:`REFUSED_ROWS_PER_WINDOW` per caller in a window, and the window's further refusals are
-counted into one summary row in each log (:class:`_RefusedRows`). The request is refused all the
-same.
+to :data:`REFUSED_ROWS_PER_WINDOW` per caller and :data:`REFUSED_ROWS_PER_SURFACE` per surface in
+a window, and the window's further refusals are counted into one summary row in each log
+(:class:`_RefusedRows`). The request is refused all the same.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,9 +42,16 @@ _MAX_LINES = 5_000
 REFUSED_ROWS_WINDOW_SECS = 60.0
 #: The rows such a caller writes in a window; its further refusals in it are only counted.
 REFUSED_ROWS_PER_WINDOW = 10
+#: The rows every caller still unknown to one surface writes in a window, together, so many
+#: callers at once can't each write their own allowance.
+REFUSED_ROWS_PER_SURFACE = 100
 #: Callers with a window open at once. Further callers share one window per surface.
 _REFUSED_MAX_OPEN = 64
 _FURTHER_CALLERS = "further callers"
+#: The reasons a window's summary counts by name; any further reason is counted with the others.
+_REFUSED_REASONS_NAMED = 5
+_OTHER_REASONS = "other reasons"
+_REASON_CHARS = 120
 #: How often, at most, a row looks for the windows that have closed.
 _REFUSED_SWEEP_SECS = 1.0
 
@@ -156,7 +165,7 @@ def _sel_refusal(
 
 def _writes(path: Path, surface: str, route: str, status: int, refused: str, request: Any) -> bool:
     """Whether this row is written: always, unless it's a refusal of a caller still unknown past
-    its caller's allowance. A throttle that fails writes the row."""
+    its allowance. A throttle that fails writes the row."""
     try:
         if request is None or not refused:
             _REFUSED_ROWS.sweep(path)
@@ -171,20 +180,43 @@ def _writes(path: Path, surface: str, route: str, status: int, refused: str, req
         return True
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def caller_of(peer: str) -> str:
+    """The caller a refusal is counted against, from the transport's peer address: an IPv4
+    address (an IPv4-mapped IPv6 one as its IPv4 form), an IPv6 address's /64, since one host
+    holds a whole /64 and can rotate through it, or *peer* as given when it isn't an address."""
+    try:
+        ip = ipaddress.ip_address(peer.split("%", 1)[0])
+    except ValueError:
+        return peer or "unknown"
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.IPv6Network((ip, 64), strict=False))
+    return str(ip)
+
+
 class _RefusedRows:
     """The rows of refusals answered before any credential admitted the caller, held to a rate.
 
-    Each caller, keyed on the transport's peer and never a header, writes its first
-    :data:`REFUSED_ROWS_PER_WINDOW` refusals in a window as rows, as they happen. Its further
-    refusals in that window are counted, and when the window closes (the next row after it,
-    of any request) or the gateway stops (:func:`flush_refused_rows`), one summary row in the
-    audit file and one in the Security log say how many there were, with the last one's route,
-    status and reason. Every refusal is accounted for.
+    Each caller (:func:`caller_of` the transport's peer, never a header) writes its first
+    :data:`REFUSED_ROWS_PER_WINDOW` refusals in a window as rows, as they happen, and every
+    caller still unknown to one surface writes :data:`REFUSED_ROWS_PER_SURFACE` at most
+    between them. A caller's further refusals in its window are counted: how many, the first
+    and last one's time, the last one's route and status, and how many of each reason (the
+    first :data:`_REFUSED_REASONS_NAMED` by name). When the window closes (at the next row of
+    any request after it) or the gateway stops (:func:`flush_refused_rows`), one summary row in
+    the audit file and one in the Security log say so; the audit row is dated by the last
+    refusal it counts. A gateway killed before it stops loses the counts still open.
 
     Past :data:`_REFUSED_MAX_OPEN` callers at once, further callers share one window per
-    surface, so a caller with many addresses can't grow this. Windows are kept for one audit
-    file: when the home changes, the old one's counts go to its own file, and its Security log
-    is no longer the one written.
+    surface, so a caller with many addresses can't grow this. The caller is the transport's
+    peer, so every caller behind a relay or tunnel on this machine is one. Windows are kept for
+    one audit file: when the home changes, the old one's counts go to its own file, and its
+    Security log is no longer the one written.
     """
 
     def __init__(
@@ -192,11 +224,18 @@ class _RefusedRows:
         window_secs: float = REFUSED_ROWS_WINDOW_SECS,
         per_window: int = REFUSED_ROWS_PER_WINDOW,
         max_open: int = _REFUSED_MAX_OPEN,
+        per_surface: int = REFUSED_ROWS_PER_SURFACE,
+        clock: Callable[[], float] = time.monotonic,
+        now: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._window = window_secs
         self._per_window = per_window
+        self._per_surface = per_surface
         self._max_open = max_open
+        self._clock = clock
+        self._now = now
         self._open: dict[tuple[str, str], dict[str, Any]] = {}
+        self._surfaces: dict[str, dict[str, Any]] = {}
         self._path: Path | None = None
         self._last_sweep = 0.0
         self._lock = threading.Lock()
@@ -205,30 +244,34 @@ class _RefusedRows:
         self, path: Path, surface: str, peer: str, *, route: str, status: int, refused: str
     ) -> bool:
         """True when this refusal is written as its rows; else it is counted into its window."""
-        now = time.monotonic()
+        tick, wall = self._clock(), self._now()
         with self._lock:
-            due = self._take_due(path, now)
-            key = (surface, peer or "unknown")
+            due = self._take_due(path, tick)
+            key = (surface, caller_of(peer))
             if key not in self._open and len(self._open) >= self._max_open:
                 key = (surface, _FURTHER_CALLERS)
             entry = self._open.get(key)
-            if entry is not None and now - entry["since"] >= self._window:
+            if entry is not None and tick - entry["since"] >= self._window:
                 due.append((path, key, entry, True))
                 entry = None
             if entry is None:
-                entry = self._open[key] = {"since": now, "written": 0, "more": 0}
-            written = entry["written"] < self._per_window
+                entry = self._open[key] = {"since": tick, "written": 0, "more": 0, "reasons": {}}
+            shared = self._surfaces.get(surface)
+            if shared is None or tick - shared["since"] >= self._window:
+                shared = self._surfaces[surface] = {"since": tick, "written": 0}
+            written = entry["written"] < self._per_window and shared["written"] < self._per_surface
             if written:
                 entry["written"] += 1
+                shared["written"] += 1
             else:
-                entry.update(more=entry["more"] + 1, route=route, status=status, reason=refused)
+                _count(entry, wall, route=route, status=status, refused=refused)
         self._summarize(due)
         return written
 
     def sweep(self, path: Path) -> None:
         """Summarize the windows that have closed (a row of any request calls this)."""
         with self._lock:
-            due = self._take_due(path, time.monotonic())
+            due = self._take_due(path, self._clock())
         self._summarize(due)
 
     def flush(self) -> None:
@@ -236,6 +279,7 @@ class _RefusedRows:
         with self._lock:
             path, pending = self._path, list(self._open.items())
             self._open.clear()
+            self._surfaces.clear()
         if path is not None:
             self._summarize([(path, key, entry, True) for key, entry in pending])
 
@@ -246,6 +290,7 @@ class _RefusedRows:
         if path != self._path:
             old, pending = self._path, list(self._open.items())
             self._open.clear()
+            self._surfaces.clear()
             self._path, self._last_sweep = path, now
             return [(old, k, e, False) for k, e in pending] if old is not None else []
         if now - self._last_sweep < _REFUSED_SWEEP_SECS and len(self._open) < self._max_open:
@@ -257,19 +302,23 @@ class _RefusedRows:
         return [(path, k, e, True) for k, e in closed]
 
     def _summarize(self, due: list[tuple[Path, tuple[str, str], dict, bool]]) -> None:
-        for path, (surface, peer), entry, to_sel in due:
+        for path, (surface, caller), entry, to_sel in due:
             more = int(entry["more"])
             if more <= 0:
                 continue  # every refusal of the window is already its own row
-            who = "further callers" if peer == _FURTHER_CALLERS else "the same caller"
+            first, last = entry["first"], entry["last"]
+            reasons = dict(entry["reasons"])
+            who = "further callers" if caller == _FURTHER_CALLERS else "the same caller"
             reason = (
-                f"{more} more refusal(s) of {who} within {int(self._window)} s, counted and not "
-                f"written one by one; the last: {entry['reason']}"
+                f"{more} more refusal(s) of {who} from {first:%H:%M:%S} to {last:%H:%M:%S} UTC, "
+                "counted and not written one by one: "
+                + "; ".join(f"{n} {why}" for why, n in reasons.items())
             )[:200]
+            times = {"first_ts": first.isoformat(), "last_ts": last.isoformat()}
             _append(
                 path,
                 {
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": last.isoformat(),
                     "surface": surface,
                     "client_id": "",
                     "route": entry["route"],
@@ -280,6 +329,8 @@ class _RefusedRows:
                     "rate_limited": False,
                     "refused_reason": reason,
                     "suppressed": more,
+                    "reasons": reasons,
+                    **times,
                 },
             )
             if to_sel:
@@ -291,8 +342,22 @@ class _RefusedRows:
                         "summary": True,
                         "suppressed": more,
                         "window_secs": int(self._window),
+                        "reasons": reasons,
+                        **times,
                     },
                 )
+
+
+def _count(entry: dict[str, Any], wall: datetime, *, route: str, status: int, refused: str) -> None:
+    """Count one refusal into its caller's window *entry*. Caller holds the lock."""
+    entry["more"] += 1
+    entry.setdefault("first", wall)
+    entry.update(last=wall, route=route, status=status)
+    reasons: dict[str, int] = entry["reasons"]
+    why = (refused or "refused")[:_REASON_CHARS]
+    if why not in reasons and len(reasons) >= _REFUSED_REASONS_NAMED:
+        why = _OTHER_REASONS
+    reasons[why] = reasons.get(why, 0) + 1
 
 
 _REFUSED_ROWS = _RefusedRows()

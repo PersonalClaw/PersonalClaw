@@ -285,7 +285,8 @@ Both keep the inbound surfaces' rules:
   (`429`, `Retry-After`): a sender token per sender, the agent-turn door per caller before its
   token is read. Every request either door answers is one row of `inbound_audit.jsonl` (surface
   `webhook`), and so is each one the gateway refuses before it for coming from another machine, up
-  to 10 a minute from one caller, with one more row counting the rest; a
+  to 10 a minute from one caller (the connection's address, so every caller behind a relay on this
+  machine is one), with one more row counting the rest; a
   refusal is a Security-log row too, and so is an accepted call, under its sender
   (`inbound:webhook:<client>` or `inbound:webhook`, outcome `allowed`), since it starts work
   nobody watches.

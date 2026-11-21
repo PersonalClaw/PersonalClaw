@@ -734,8 +734,11 @@ A surface that is off, or has no working token, answers `404` on its next reques
 audit trail names the switch that refused it: every request (allowed or refused) is recorded in
 `<home>/inbound_audit.jsonl`, and refusals also land in the security event log. A caller refused
 before any token admits it (a surface that's off, another machine, no token or a wrong one) writes
-at most 10 rows a minute to each, and one more row says how many it was refused besides. Nothing
-needs a restart — except the control bridge, whose own loopback listener starts with the gateway.
+at most 10 rows a minute to each, and all such callers of one surface 100 between them; one more
+row says how many it was refused besides, when and why. The caller is the connection's address,
+an IPv6 one by its /64, so every caller behind a relay or tunnel on this machine counts as one,
+and a gateway that is killed rather than stopped loses the last minute's counts. Nothing needs a
+restart — except the control bridge, whose own loopback listener starts with the gateway.
 
 Remote access (`external_access.<surface>.allow_remote` + `external_access.public_url`)
 lets a program on another machine call the MCP, OpenAI-compatible or A2A surface, when its
