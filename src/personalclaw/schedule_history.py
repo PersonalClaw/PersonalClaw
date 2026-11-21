@@ -25,10 +25,10 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Sequence
 
 from personalclaw import bounded_log
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.durability import home_paths
 
 logger = logging.getLogger(__name__)
@@ -348,6 +348,33 @@ def _newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for _at, row in timed] + untimed[::-1]
 
 
+@dataclass
+class _Lines:
+    """One read of a history file (`ScheduleRunStore._read`): its rows, and the lines in it that
+    are not UTF-8, as they are, for a rewrite to keep."""
+
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    not_utf8: list[bytes] = field(default_factory=list)
+
+
+#: The history files already said in the log to hold a line that is not UTF-8, so a file read on
+#: every fire says it once, not on every read.
+_SAID_NOT_UTF8: set[str] = set()
+
+
+def _say_not_utf8(path: Path, count: int) -> None:
+    key = str(path)
+    if key in _SAID_NOT_UTF8:
+        return
+    _SAID_NOT_UTF8.add(key)
+    logger.warning(
+        "Run history %s holds %d line(s) that are not UTF-8: each is skipped, and kept as it is "
+        "when the file is rewritten",
+        path,
+        count,
+    )
+
+
 class ScheduleRunStore:
     """JSONL-per-job store of :class:`ScheduleRun` records, owned by the service.
 
@@ -388,30 +415,60 @@ class ScheduleRunStore:
 
     @staticmethod
     def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-        """Lock-free read; tolerates a partial trailing line (concurrent append)."""
-        rows: list[dict[str, Any]] = []
-        try:
-            with path.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rows.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        # Partial final line from an in-flight append — skip it.
-                        continue
-        except FileNotFoundError:
-            return []
-        except OSError:
-            logger.debug("Failed reading run history %s", path, exc_info=True)
-            return []
-        return rows
+        """Lock-free read; tolerates a partial trailing line (concurrent append), and a line that
+        is not UTF-8 (:meth:`_read`)."""
+        return ScheduleRunStore._read(path).rows
 
     @staticmethod
-    def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    def _read(path: Path) -> _Lines:
+        """The rows of *path*, and the lines it holds that are not UTF-8, as they are.
+
+        Read as bytes and decoded a line at a time: a byte that is not UTF-8 (an append a crash
+        cut inside a character, a damaged disk block) spoils its own line only. Read as text, it
+        raised out of the whole read, and every reader of the file failed from then on: the
+        automation's History, the list's last run, the record of each later run (the append
+        trims, so it reads the file again), and the hourly cap's count, which then let fires
+        through. Such a line is skipped here, said once in the log, and handed to a rewrite to
+        keep (:meth:`_write_jsonl`). A line that is not JSON is a torn append and skipped, as
+        before.
+        """
+        read = _Lines()
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:
+            return read
+        except OSError:
+            logger.debug("Failed reading run history %s", path, exc_info=True)
+            return read
+        for line in raw.split(b"\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                text = line.decode("utf-8")
+            except UnicodeDecodeError:
+                read.not_utf8.append(line)
+                continue
+            try:
+                read.rows.append(json.loads(text))
+            except json.JSONDecodeError:
+                # Partial final line from an in-flight append — skip it.
+                continue
+        if read.not_utf8:
+            _say_not_utf8(path, len(read.not_utf8))
+        return read
+
+    @staticmethod
+    def _write_jsonl(path: Path, rows: list[dict[str, Any]], kept: Sequence[bytes] = ()) -> None:
+        """Write *rows* to *path*, after the lines *kept* as they were: lines that are not UTF-8
+        (:meth:`_read`) hold no row and no time, so they go first and are written back byte for
+        byte, never decoded and never dropped by a rewrite or a trim."""
         content = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
-        atomic_write(path, content, mode=0o600)
+        if not kept:
+            atomic_write(path, content, mode=0o600)
+            return
+        data = b"".join(line + b"\n" for line in kept) + content.encode("utf-8")
+        atomic_write_bytes(path, data, mode=0o600)
 
     # ── Write ─────────────────────────────────────────────────────────
 
@@ -473,10 +530,10 @@ class ScheduleRunStore:
         changed = False
         with self._lock():
             for path in sorted(self._dir.glob("*.jsonl")):
-                rows = self._read_jsonl(path)
-                rewritten = [change(row) for row in rows]
-                if rewritten != rows:
-                    self._write_jsonl(path, rewritten)
+                read = self._read(path)
+                rewritten = [change(row) for row in read.rows]
+                if rewritten != read.rows:
+                    self._write_jsonl(path, rewritten, read.not_utf8)
                     changed = True
         return changed
 
@@ -527,7 +584,8 @@ class ScheduleRunStore:
         }
         job_path = self._job_path(job_id)
         with self._lock():
-            rows = self._read_jsonl(job_path)
+            read = self._read(job_path)
+            rows = read.rows
             named = [row for row in rows if row.get("work_id") == work_id]
             if not named:
                 key = (str(self._dir), job_id, work_id)
@@ -540,12 +598,12 @@ class ScheduleRunStore:
                 return False
             run_id = row.get("run_id")
             _settle_row(row, ending, with_trace=True)
-            self._write_jsonl(job_path, rows)
-            index = self._read_jsonl(self._index)
-            for entry in index:
+            self._write_jsonl(job_path, rows, read.not_utf8)
+            index = self._read(self._index)
+            for entry in index.rows:
                 if entry.get("job_id") == job_id and entry.get("run_id") == run_id:
                     _settle_row(entry, ending, with_trace=False)
-            self._write_jsonl(self._index, index)
+            self._write_jsonl(self._index, index.rows, index.not_utf8)
         return True
 
     def unsettled_row(self, job_id: str, work_id: str) -> dict[str, Any] | None:
@@ -729,10 +787,10 @@ class ScheduleRunStore:
         the file and a file grouped by class would read out of order.
         """
         path = self._job_path(job_id)
-        rows = self._read_jsonl(path)
-        if len(rows) <= _MAX_RECORDS_PER_JOB:
+        read = self._read(path)
+        if len(read.rows) <= _MAX_RECORDS_PER_JOB:
             return
-        rows = bounded_log.in_time_order(rows, at="started_at")
+        rows = bounded_log.in_time_order(read.rows, at="started_at")
         from personalclaw.triggers.models import INERT_OUTCOMES
 
         sup_idx = [i for i, r in enumerate(rows) if str(r.get("status") or "") in INERT_OUTCOMES]
@@ -745,7 +803,7 @@ class ScheduleRunStore:
         keep_suppressed = sup_idx[-_MAX_SUPPRESSED_PER_JOB:]
         keep_work = work_idx[-(_MAX_RECORDS_PER_JOB - len(keep_suppressed)) :]
         keep = sorted(set(keep_suppressed) | set(keep_work))
-        self._write_jsonl(path, [rows[i] for i in keep])
+        self._write_jsonl(path, [rows[i] for i in keep], read.not_utf8)
 
     def _rotate_index_locked(self) -> None:
         """Trim the cross-job index, bounding how much of it ONE job may hold.
@@ -766,11 +824,11 @@ class ScheduleRunStore:
         busy jobs and room to spare keeps everything, so nothing regresses for an install that never
         hits the cap.
         """
-        rows = self._read_jsonl(self._index)
-        if len(rows) <= _MAX_INDEX_RECORDS:
+        read = self._read(self._index)
+        if len(read.rows) <= _MAX_INDEX_RECORDS:
             return
         # In time order first (`bounded_log`), so each job's own tail is its newest runs.
-        rows = bounded_log.in_time_order(rows, at="started_at")
+        rows = bounded_log.in_time_order(read.rows, at="started_at")
         per_job: dict[str, list[int]] = {}
         for i, r in enumerate(rows):
             per_job.setdefault(str(r.get("job_id") or ""), []).append(i)
@@ -778,7 +836,9 @@ class ScheduleRunStore:
         for idxs in per_job.values():
             keep.update(idxs[-_MAX_INDEX_PER_JOB:])
         # Then the global cap, on the fair-shared set, kept in time order.
-        self._write_jsonl(self._index, [rows[i] for i in sorted(keep)[-_MAX_INDEX_RECORDS:]])
+        self._write_jsonl(
+            self._index, [rows[i] for i in sorted(keep)[-_MAX_INDEX_RECORDS:]], read.not_utf8
+        )
 
     def _rotate_all_sync(self) -> None:
         """Rotate every job file + the index. Runs once at gateway boot.
@@ -848,9 +908,11 @@ class ScheduleRunStore:
                 pass
             except OSError:
                 logger.debug("Failed deleting run history %s", path, exc_info=True)
-            # Drop the job's rows from the cross-job index.
-            rows = [r for r in self._read_jsonl(self._index) if r.get("job_id") != job_id]
-            self._write_jsonl(self._index, rows)
+            # Drop the job's rows from the cross-job index. A line that is not UTF-8 names no job,
+            # so it stays.
+            index = self._read(self._index)
+            rows = [r for r in index.rows if r.get("job_id") != job_id]
+            self._write_jsonl(self._index, rows, index.not_utf8)
 
     async def delete_for_job(self, job_id: str) -> None:
         import asyncio

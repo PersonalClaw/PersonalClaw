@@ -50,6 +50,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A file's comments follow it into a home restored at another path: after a snapshot is restored, or an export imported, on another machine or under another account's name, a comment on a file in the old home's workspace or elsewhere in that home shows on the same file there, highlighted, and Submit to AI names the file where it is now. Comments on artifacts, and on files outside the home, are left as they were.**
 - **Pressing Update on an auto-nudge that stopped at its Max cycles starts it again when the new limit leaves it cycles to spare (a higher limit, or 0 for no limit). It carries on from the cycles it has fired. A nudge you stopped yourself stays stopped.**
 - **An auto-nudge saved before v0.3.9 without a number, which had no limit only because that was the old default, now stops after 10 cycles like a new one. A no limit you choose (Max cycles 0) is kept.**
+- **One damaged byte in an automation's run history no longer breaks it. A line that is not UTF-8 (an append a crash cut inside a character, a damaged disk block) is skipped and said once in the log. The automation's History, the run feed and each later run's record carry on, its hourly cap still counts its fires, and every rewrite of the file keeps the line as it was.**
 
 ### Security
 
