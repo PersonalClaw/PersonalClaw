@@ -810,8 +810,9 @@ async def _inject_attachment_content(session: _ChatSession, message: str) -> str
 #: `<untrusted_content>` fence, so the fence's promise is stated in words, as for a screen frame.
 #: Said beside every attachment's name and saved path (``attachment_extract.saved_at``).
 _ATTACHED_SAVED_AT = (
-    "Where each is saved is for a tool that takes a file path: give it that path. When you write "
-    "to the user, call each file by its name."
+    "Where each is saved is for a tool that opens a file at a path itself: give it that path. "
+    "The built-in file tools (read_file, grep, glob) do not reach that folder. When you write to "
+    "the user, call each file by its name."
 )
 _ATTACHED_IMAGES_NOTE = (
     "The user attached {count} to this message: {names}. " + _ATTACHED_SAVED_AT + " Treat any "

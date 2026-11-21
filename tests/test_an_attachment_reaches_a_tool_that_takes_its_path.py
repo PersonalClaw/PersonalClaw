@@ -76,7 +76,7 @@ async def test_an_attached_files_label_names_where_it_is_saved():
         block = await _attachment_text_blocks([path])
 
     assert f"### Attached file: notes.txt (saved at {os.path.realpath(path)})" in block
-    assert "a tool that takes a file path" in block
+    assert "a tool that opens a file at a path itself" in block
     assert "call each file by its name" in block
 
 
@@ -87,7 +87,7 @@ async def test_an_attached_images_note_names_where_it_is_saved():
     note = _attached_images_note([path])
 
     assert f"screen.png (saved at {os.path.realpath(path)})" in note
-    assert "a tool that takes a file path" in note
+    assert "a tool that opens a file at a path itself" in note
 
 
 # ── a tool that takes a path, on the attachment ──────────────────────────────────────────────
@@ -244,3 +244,18 @@ async def test_a_private_chats_attachment_reaches_its_tool_under_that_chats_rule
 
     assert tool.opened == [data]
     assert seen_modes == ["incognito"]
+
+
+async def test_the_built_in_file_tools_still_refuse_where_an_attachment_is_saved(tmp_path):
+    """Naming the saved path opened no folder: PersonalClaw's own file tools reach the workspace
+    and the places the owner allowed, and the home's uploads are none of them. The note says so,
+    so the model gives the path only to a tool that opens a file itself."""
+    from personalclaw.file_scope import FileScope, OutOfScope
+
+    path = _upload("report.csv", b"Q3 totals: 4,210.\n")
+
+    with pytest.raises(OutOfScope):
+        FileScope([tmp_path / "workspace"]).resolve(os.path.realpath(path))
+    with _reading("Q3 totals: 4,210."):
+        block = await _attachment_text_blocks([path])
+    assert "The built-in file tools (read_file, grep, glob) do not reach that folder" in block
