@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 from personalclaw import run_processes, turn_streams
@@ -110,6 +110,7 @@ class LoopPhases:
     _staged_parts: dict[str, int] | None
     _message_parts: list[tuple[dict, dict[str, int], int]]
     _turn_message: dict | None
+    _carried: dict[str, tuple[str, dict]]
     _turn_window: Window | None
     _schema_budget: int | None
     _last_context_pct: float | None
@@ -171,12 +172,8 @@ class LoopPhases:
 
     # ── the turn's opening ──
 
-    async def _open_turn(self, st: LoopState, message: str) -> None:
-        """Begin the turn on *st*: its message into the history, its tools and their note, the
-        window it is served with, and the model it starts on.
-
-        ``message`` is the full, context-built turn-0 prompt the chat runner already assembled.
-        """
+    def _begin_turn(self, st: LoopState) -> None:
+        """Number the turn *st* is, and start its stop scope, breaker and steers afresh."""
         self._turn_seq += 1
         st.turn = self._turn_seq
         self._cancel.begin_turn(run_processes.turn_owner(self._session_key))
@@ -187,13 +184,10 @@ class LoopPhases:
         # the previous turn and requeues what it finds, so replaying it here would deliver
         # a second copy of a steer the user can already see in the queue strip.
         self._steer_pending.clear()
-        self._turn_images, self._staged_images = self._staged_images, []
-        self._messages.append({"role": "user", "content": message})
-        self._turn_message = self._messages[-1]
-        if self._staged_parts:
-            self._message_parts.append((self._turn_message, self._staged_parts, len(message)))
-        self._staged_parts = None
 
+    async def _turn_tools(self, st: LoopState, message: str) -> str:
+        """The tools *st*'s turn is offered for *message*, and the window it is served with;
+        returns the note that says which tools are on offer, ``""`` for none."""
         # A tool installed, removed or switched off since the last turn reaches this one.
         await self._follow_tool_surface()
         from personalclaw.context_headroom import resolve_window
@@ -201,6 +195,36 @@ class LoopPhases:
         self._turn_window = await resolve_window(serving=self)
         self._schema_budget = self._tool_schema_budget(self._turn_window)
         st.tools, turn_note = await self._prepare_turn_tools(message)
+        return turn_note
+
+    def _turn_served(self, st: LoopState) -> None:
+        """The reply *st*'s turn owes, and the model it starts on, put back when it ends."""
+        # ONE request for the reply per turn (`owed_reply`): a model that goes quiet a second time
+        # ends the turn, and the surface says the turn has no answer.
+        self._owed = st.owed
+        # The model this turn starts on, put back when it ends: a turn that fell back must not
+        # leave the next one answering on the fallback with nothing saying so (nor a previous
+        # turn whose cleanup has not run yet, see `stream`'s `finally`).
+        if self._turn_home is not None:
+            self._model, self._definition.model = self._turn_home
+        st.home = self._turn_home = (self._model, self._definition.model)
+        self._fallback.begin(self.failover)
+
+    async def _open_turn(self, st: LoopState, message: str) -> None:
+        """Begin the turn on *st*: its message into the history, its tools and their note, the
+        window it is served with, and the model it starts on.
+
+        ``message`` is the full, context-built turn-0 prompt the chat runner already assembled.
+        """
+        self._begin_turn(st)
+        self._turn_images, self._staged_images = self._staged_images, []
+        self._messages.append({"role": "user", "content": message})
+        self._turn_message = self._messages[-1]
+        if self._staged_parts:
+            self._message_parts.append((self._turn_message, self._staged_parts, len(message)))
+        self._staged_parts = None
+
+        turn_note = await self._turn_tools(st, message)
         # The last turn's note leaves as this turn's arrives: it described the tools on offer
         # THEN, and kept in the history each turn carried every earlier turn's catalog as well
         # as its own — a request that grew by a whole catalog a turn and said nothing new.
@@ -213,16 +237,48 @@ class LoopPhases:
             # checkpoint, never as a turn of its own (a model answers that as the user's). Fenced
             # as the runtime's (``system_note_text``), so it reads as such wherever it lands.
             self._messages.append(turn_note_message(turn_note))
-        # ONE request for the reply per turn (`owed_reply`): a model that goes quiet a second time
-        # ends the turn, and the surface says the turn has no answer.
-        self._owed = st.owed
-        # The model this turn starts on, put back when it ends: a turn that fell back must not
-        # leave the next one answering on the fallback with nothing saying so (nor a previous
-        # turn whose cleanup has not run yet, see `stream`'s `finally`).
-        if self._turn_home is not None:
-            self._model, self._definition.model = self._turn_home
-        st.home = self._turn_home = (self._model, self._definition.model)
-        self._fallback.begin(self.failover)
+        self._turn_served(st)
+
+    async def _reopen_turn(self, st: LoopState, point: Mapping[str, Any]) -> None:
+        """Begin on *st* the turn *point* describes (``runtime.park_point``), inside the step it
+        stopped in: its history as its model read it, the turn's own message and images, the
+        step's calls not yet answered, and the results it already has for some of them.
+
+        The tools are offered as for any turn; the note in the history stays the one its model
+        read, since the step's calls were written against it.
+        """
+        messages = [dict(m) for m in point.get("messages") or ()]
+        turn_index = int(point.get("turn_index", -1))
+        # The step is the turn's last answer: the calls it made that have no result yet.
+        last = max((i for i, m in enumerate(messages) if m.get("role") == "assistant"), default=-1)
+        if not 0 <= turn_index < last:
+            raise ValueError("native: a turn to carry on names no message and step of its own")
+        self._begin_turn(st)
+        self._messages = messages
+        self._turn_message = messages[turn_index]
+        self._turn_images, self._staged_images = [str(u) for u in point.get("images") or ()], []
+        self._staged_parts = None
+        await self._turn_tools(st, str(self._turn_message.get("content") or ""))
+        self._turn_served(st)
+        answered = {str(m.get("tool_call_id") or "") for m in messages[last + 1 :]}
+        st.calls = [
+            AgentEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=str(tc.get("id") or ""),
+                title=str((tc.get("function") or {}).get("name") or ""),
+                tool_input=(tc.get("function") or {}).get("arguments") or "",
+                tool_meta=(
+                    {"extra_content": tc["extra_content"]} if tc.get("extra_content") else {}
+                ),
+            )
+            for tc in messages[last].get("tool_calls") or ()
+            if str(tc.get("id") or "") not in answered
+        ]
+        st.steps = sum(1 for m in messages[turn_index + 1 :] if m.get("role") == "assistant")
+        self._carried = {
+            str(cid): (str(kept[0]), dict(kept[1]))
+            for cid, kept in (point.get("carried") or {}).items()
+        }
 
     def _cache_mode(self) -> PromptCache:
         """The prompt-cache mode of the model the next call goes to.

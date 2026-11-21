@@ -464,6 +464,25 @@ chat, channel thread, loop worker, webhook, subagent).
   slug's plan records another chat (or can't be read) keeps
   `{safe_key}-{8 hex}.json`, and a chat reads, approves and cancels only a
   plan that records it.
+- **A turn waiting on an approval when the gateway stops is kept**
+  (`parked_turns.py`, `chat_parked/<hash of the key>.json`), when PersonalClaw's
+  own runtime serves it and its chat keeps words. The record holds where the
+  runtime says the turn stands (`NativeAgentRuntime.park_point`): its history as
+  its model read it, with tool outputs and finished calls masked as the
+  transcript masks them and the call it waits on as sent. It also holds the
+  approval's card and row, and a digest over them and the call, so a record
+  whose card and call disagree is dropped. The digest is unkeyed: it binds the
+  record against corruption and drift, not against someone who can write the
+  home, who could change its config as well. A record past `RECORD_CAP` is not
+  written. Any ending of the wait but the gateway's stop drops it. The next start
+  asks the approval again for the window it had left, as the chat's running
+  turn, so a message sent meanwhile waits behind it and Stop ends it
+  (`dashboard/parked_chat_turns.py`). The record is taken off disk before the
+  call can run, and the answer carries the turn on (`run_chat(resume=…)`,
+  `NativeAgentRuntime.resume`): an Allow runs the call on its guarded path, a
+  Deny runs nothing, and the model is asked only for what comes after the call.
+  An agent CLI's turn ends at a restart as before. A replace restore drops the
+  records it brings back (`parked_turns.settle_restored`).
 - **Each chat's settings are its record** (`chat_record.py`), beside its
   transcript: `{safe_key}.chat.json`. Its title, pin, folder, tags, archive,
   memory mode, runtime binding and consolidation mark are read from it, and a

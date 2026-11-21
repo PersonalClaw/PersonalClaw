@@ -738,7 +738,9 @@ is running, by its recorded process id, so another machine's run or loop used
 to run a second time here, on this machine's files, and another machine's
 agent could name a process of this one. A backup carries them. Named
 workspaces (`workflows/workspaces`), the working folders runs share, stay on
-each machine by the same rule.
+each machine by the same rule, and so does a chat turn kept waiting on an
+approval through a restart (its record in `chat_parked`): it is asked again,
+and its call runs, only on the machine whose turn asked.
 
 **A replace restore holds what was in flight.** A replace restore brings the
 records back with the whole home, and a snapshot is a moment in the past: a run

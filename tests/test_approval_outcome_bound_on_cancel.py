@@ -9,7 +9,9 @@ traceback, so a CI hang read as an unrelated error (the reported symptom).
 Binding ``outcome = "rejected"`` before the try fixes it: the cancellation propagates unmasked,
 and the ``finally`` still runs its bookkeeping — which is now expiring the approval on every
 surface that lists it (the registry row, the Inbox row, open cards), so a torn-down turn never
-leaves anything asking for a decision it can no longer receive.
+leaves anything asking for a decision it can no longer receive. That the binding comes before the
+try is a rail of its own: ``tests/rails/``
+``test_an_approval_wait_binds_its_outcome_before_it_can_be_cancelled_tree.py``.
 """
 
 from __future__ import annotations
@@ -26,7 +28,6 @@ from test_dashboard_approval import (  # reuse the file's harness
     _set_stream,
 )
 
-import personalclaw.dashboard.chat_runner as cr
 from personalclaw.dashboard.chat import run_chat
 
 
@@ -59,22 +60,3 @@ async def test_cancelling_an_approval_wait_expires_it_everywhere_and_propagates(
         c.args[1] for c in state.broadcast_ws.call_args_list if c.args[0] == "approval_resolved"
     ]
     assert resolved and resolved[-1]["approved"] is False and resolved[-1]["request_id"] == "req-1"
-
-
-def test_outcome_is_bound_before_the_try(tmp_path):
-    # Source-contract guard: `outcome` must be initialised before the try that
-    # can be cancelled, so the finally can never read it unbound. Comments
-    # stripped so the docstring's own words don't satisfy the assertion.
-    import inspect
-
-    src = inspect.getsource(cr)
-    src = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
-    anchor = "session._approval_futures[request_id] = fut"
-    i = src.index(anchor)
-    window = src[i : i + 600]
-    assert (
-        'outcome = "rejected"' in window
-    ), "outcome must be bound right after the future is parked"
-    assert window.index('outcome = "rejected"') < window.index(
-        "try:"
-    ), "the outcome default must come BEFORE the try, or the cancel path is still unbound"

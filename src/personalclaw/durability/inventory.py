@@ -1731,6 +1731,20 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="plan-mode walkthrough sessions, one JSON per chat",
     ),
+    StateEntry(
+        id="chat_parked",
+        kind=KIND_JSON_ENTITY_DIR,
+        path="chat_parked",
+        domain=DOMAIN_WORK,
+        merge=MERGE_UNION_BY_ID,
+        help="chat turns the gateway stopped while they waited on an approval, one JSON per chat",
+        # A turn this machine's gateway stopped while it waited on her answer to a call, which the
+        # next start asks again and carries on here (`parked_turns`): another machine's, synced or
+        # merged in, would ask for a call to run on this machine's files. A replace restore drops
+        # the ones it brings back (`parked_turns.settle_restored`): a snapshot's turn is past.
+        machine_local=True,
+        merged_in=False,
+    ),
     # A nested `{"rows": {topic_key: {...}}}` document, NOT a list of id-keyed rows, so
     # `replace_only` rather than `lww_by_updated_at`: the per-row `updated_at` inside
     # `rows` is not the row identity the merge engine keys on, and pointing an id-keyed

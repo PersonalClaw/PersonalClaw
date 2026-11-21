@@ -37,6 +37,7 @@ from personalclaw.agents.native.approval import (
     APPROVE,
     REJECT,
     ApprovalGate,
+    Refusal,
     deny_list_refusal,
     refusal_of,
 )
@@ -274,6 +275,13 @@ class NativeAgentRuntime(
 
         # Conversation history — owned by the loop (complete() is stateless).
         self._messages: list[dict] = []
+        # The call the turn waits on an answer for, as ``(request id, tool call id)``, while it
+        # waits (`_gated`): what `park_point` describes. The results a wave already has for its
+        # calls whose turn in the history has not come yet (`_execute_wave`), and the ones a
+        # carried-on turn brings for its step (`resume`), by tool call id.
+        self._parked: tuple[str, str] | None = None
+        self._wave_results: dict[str, tuple[str, dict]] = {}
+        self._carried: dict[str, tuple[str, dict]] = {}
         # Images staged for the NEXT turn (`stage_image_part`), and the ones riding the turn
         # in flight with the user message they belong to. Pixels never enter `_messages`:
         # they are laid onto each inference's REQUEST copy (`_request_messages`), so every
@@ -857,7 +865,9 @@ class NativeAgentRuntime(
             return True
 
     # ── the turn ──
-    async def stream(self, message: str) -> AsyncIterator[AgentEvent]:
+    async def stream(
+        self, message: str, *, carried: Mapping[str, Any] | None = None
+    ) -> AsyncIterator[AgentEvent]:
         """Run the ReAct loop for one user turn (``message`` is the full, context-built turn-0
         prompt the chat runner already assembled).
 
@@ -865,14 +875,27 @@ class NativeAgentRuntime(
         never kept, and each step runs the five phases over it (:mod:`.loop_phases`): compact,
         infer, end, dispatch, steer. Each says what comes next (``Next``): the next phase, the next
         step, or the turn's end, which it has already said.
+
+        A turn carried on after a restart (*carried*, :meth:`resume`) is put back where it stood
+        and begins inside its step, at the calls it was waiting to run: that step has counted
+        already, so its calls run even when it was the turn's last.
         """
         st = LoopState()
-        await self._open_turn(st, message)
+        # A turn carried on begins inside its step, at its dispatch. The answer given ahead for
+        # the call it waited on holds for that step alone, asked or not (a grant, the mode, a
+        # guard or a hook may decide the call first): a later call under its id is asked.
+        inside_step = carried is not None
+        waited_on = str(carried["point"].get("call") or "") if carried is not None else ""
+        if carried is None:
+            await self._open_turn(st, message)
+        else:
+            await self._reopen_turn(st, carried["point"])
+            self._answer_the_call_it_waited_on(st, carried)
         # end_turn() in a finally, not at each return: a stop arriving in the window
         # between a turn ending and the next beginning must answer "no_turn", and an
         # exception-terminated turn is exactly the case a per-return-site reset misses.
         try:
-            while st.steps < self._max_turns:
+            while inside_step or st.steps < self._max_turns:
                 for phase in (
                     self._compact_phase,
                     self._infer_phase,
@@ -880,6 +903,12 @@ class NativeAgentRuntime(
                     self._dispatch_phase,
                     self._steer_phase,
                 ):
+                    if inside_step and phase in (
+                        self._compact_phase,
+                        self._infer_phase,
+                        self._end_phase,
+                    ):
+                        continue
                     st.next = None
                     async with turn_streams.closing_stream(phase(st)) as events:
                         async for ev in events:
@@ -890,6 +919,8 @@ class NativeAgentRuntime(
                         return
                     if st.next is Next.BREAK:
                         break
+                self._approval.forget_ahead(waited_on)
+                inside_step = False
             # max_turns exhausted
             yield st.ending(
                 "max_turns",
@@ -912,7 +943,74 @@ class NativeAgentRuntime(
                 self._turn_images = []
                 self._turn_message = None
                 self._owed.pending = False
+                self._carried = {}
+                self._approval.forget_ahead(waited_on)
                 self._cancel.end_turn()
+
+    async def resume(
+        self, point: Mapping[str, Any], *, allowed: bool, why: str = "", kind: str = "user"
+    ) -> AsyncIterator[AgentEvent]:
+        """Carry on, after a restart, the turn *point* describes (:meth:`park_point`), from the
+        call it waited on, answered by *allowed* through the approval kept for it.
+
+        The turn's history is put back as its model read it, and the step's calls not yet run are
+        dispatched: the one it waited on first-hand answered, the others as any call is. A Deny
+        runs nothing, whatever would be asked of the call now, and is told to the model as hers,
+        or, given *why* (an approval nobody answered, of ``security.DENY_KIND_*`` *kind*), as what
+        it was. An Allow takes the call's guarded path (the deny list, the task mode, its hooks,
+        its bounds), answered at its gate, so nobody is asked again. Then the turn goes on as after
+        any step: no model is asked again for the call it waited on.
+        """
+        carried = {"point": point, "allowed": allowed, "why": why, "kind": kind}
+        async with turn_streams.closing_stream(self.stream("", carried=carried)) as events:
+            async for ev in events:
+                yield ev
+
+    def _answer_the_call_it_waited_on(self, st: LoopState, carried: Mapping[str, Any]) -> None:
+        """Answer, ahead of its ask, the call a carried-on turn waited on (:meth:`resume`): an
+        Allow at its gate, anything else as its refusal, which it runs nothing for."""
+        call = str(carried["point"].get("call") or "")
+        if carried.get("allowed"):
+            self._approval.answer_ahead(call, APPROVE)
+            return
+        from personalclaw import security
+
+        name = next((c.title or "" for c in st.calls if c.tool_call_id == call), "")
+        why = str(carried.get("why") or "")
+        decision = Refusal(why, str(carried.get("kind") or "user")) if why else REJECT
+        _, refused = security.classify_denial(*refusal_of(decision), self._resolve_name(name))
+        self._carried[call] = (refused, dict(_FAILED))
+
+    def park_point(self, request_id: str | int) -> dict[str, Any] | None:
+        """What the turn waiting on *request_id*'s answer is carried on from should the gateway
+        restart before it is answered (:meth:`resume`, ``parked_turns``): its history as its model
+        read it, where the turn's own message is in it, the turn's images, the call it waits on,
+        and the results its step already has for calls whose turn in the history has not come.
+
+        ``None`` when the turn waits on no such call, or on one its model sent with no id, which
+        an answer after the restart could not find again. The history is copied, message by
+        message, so what is written is what the turn had when it asked.
+        """
+        parked = self._parked
+        if parked is None or parked[0] != str(request_id) or not parked[1]:
+            return None
+        turn_index = next((i for i, m in enumerate(self._messages) if m is self._turn_message), -1)
+        if turn_index < 0:
+            return None
+        answered = {
+            str(m.get("tool_call_id") or "") for m in self._messages if m.get("role") == "tool"
+        }
+        return {
+            "messages": [dict(m) for m in self._messages],
+            "turn_index": turn_index,
+            "call": parked[1],
+            "carried": {
+                cid: [result, dict(meta)]
+                for cid, (result, meta) in self._wave_results.items()
+                if cid != parked[1] and cid not in answered and result is not _NEEDS_APPROVAL
+            },
+            "images": list(self._turn_images),
+        }
 
     def _tool_schema_budget(self, window: Window) -> int | None:
         """The characters of full tool schemas this turn's *window* affords, or ``None``.
@@ -1191,8 +1289,13 @@ class NativeAgentRuntime(
                 async for ev in self._drop_queued_call(wave[0]):
                     yield ev
                 return
+            # A carried-on turn's step brings what it already has for the call (`resume`).
+            carried = self._carried.pop(wave[0].call.tool_call_id or "", None)
             async for ev in self._run_tool(
-                wave[0], prefetched=self._unrunnable_result(wave[0], poisoned)
+                wave[0],
+                prefetched=(
+                    carried if carried is not None else self._unrunnable_result(wave[0], poisoned)
+                ),
             ):
                 yield ev
             return
@@ -1203,6 +1306,10 @@ class NativeAgentRuntime(
                 # QUEUED-BUT-UNSTARTED — dropped without executing. Decided BEFORE the
                 # card, so a call that never ran never claims on screen that it did.
                 results[i] = _DROPPED
+                continue
+            carried = self._carried.pop(prep.call.tool_call_id or "", None)
+            if carried is not None:
+                results[i] = carried
                 continue
             stopped = self._unrunnable_result(prep, poisoned)
             if stopped is not None:
@@ -1233,17 +1340,27 @@ class NativeAgentRuntime(
                     )
                 else:
                     results[i] = outcome
-        for prep, prefetched in zip(wave, results):
-            if prefetched is _DROPPED or (prefetched is None and self._cancelled):
-                # Second half of the same per-call rule. `prefetched is None` means the
-                # breaker classified this call as not-to-be-invoked; if the streak has
-                # since been cleared by a successful sibling, `_run_tool` would INVOKE it
-                # right here — after this wave's awaits, and so possibly after a stop.
-                async for ev in self._drop_queued_call(prep):
+        # What the wave already has for each call, while the calls take their turns below: a
+        # call among them that waits on an answer is carried on with them (`park_point`).
+        self._wave_results = {
+            str(prep.call.tool_call_id): r
+            for prep, r in zip(wave, results)
+            if prep.call.tool_call_id and isinstance(r, tuple)
+        }
+        try:
+            for prep, prefetched in zip(wave, results):
+                if prefetched is _DROPPED or (prefetched is None and self._cancelled):
+                    # Second half of the same per-call rule. `prefetched is None` means the
+                    # breaker classified this call as not-to-be-invoked; if the streak has
+                    # since been cleared by a successful sibling, `_run_tool` would INVOKE it
+                    # right here — after this wave's awaits, and so possibly after a stop.
+                    async for ev in self._drop_queued_call(prep):
+                        yield ev
+                    continue
+                async for ev in self._run_tool(prep, prefetched=prefetched, card_emitted=True):
                     yield ev
-                continue
-            async for ev in self._run_tool(prep, prefetched=prefetched, card_emitted=True):
-                yield ev
+        finally:
+            self._wave_results = {}
 
     async def _drop_queued_call(self, prep: "_PreparedCall") -> AsyncIterator[AgentEvent]:
         """Answer a call a stop reached before it was dispatched, without running it.
@@ -1462,23 +1579,31 @@ class NativeAgentRuntime(
             # approve/reject that arrives the instant the UI sees the prompt
             # (or synchronously, as in tests) is not lost to a race.
             fut = self._approval.register(request_id)
-            yield AgentEvent(
-                kind=EVENT_PERMISSION_REQUEST,
-                request_id=request_id,
-                tool_call_id=call.tool_call_id,
-                title=tool_name,
-                tool_input=args,
-                # What this tool declares (the gate resolves effective risk from it, and
-                # the dashboard's task-mode gate re-checks the call against it).
-                risk_level=self.declared(tool_name).value,
-                builds=tool_name in self._tool_builds,
-                proposes=tool_name in self._tool_proposes,
-                tells_owner=self._tells_owner(tool_name, args),
-                annotations=self._annotations_of(tool_name),
-                hooks_asked=self._hook_fire is not None,
-                consequences=self._tool_consequences.get(tool_name),
-            )
-            decision = await self._approval.wait(request_id, fut)
+            # Marked before the request is said: its host reads `park_point` while it handles it.
+            self._parked = (request_id, call.tool_call_id or "")
+            try:
+                # A call answered ahead (a turn carried on after a restart, `resume`) is not
+                # asked again: its answer was given to the approval kept for it.
+                if not fut.done():
+                    yield AgentEvent(
+                        kind=EVENT_PERMISSION_REQUEST,
+                        request_id=request_id,
+                        tool_call_id=call.tool_call_id,
+                        title=tool_name,
+                        tool_input=args,
+                        # What this tool declares (the gate resolves effective risk from it, and
+                        # the dashboard's task-mode gate re-checks the call against it).
+                        risk_level=self.declared(tool_name).value,
+                        builds=tool_name in self._tool_builds,
+                        proposes=tool_name in self._tool_proposes,
+                        tells_owner=self._tells_owner(tool_name, args),
+                        annotations=self._annotations_of(tool_name),
+                        hooks_asked=self._hook_fire is not None,
+                        consequences=self._tool_consequences.get(tool_name),
+                    )
+                decision = await self._approval.wait(request_id, fut)
+            finally:
+                self._parked = None
             if self._cancelled:
                 result_str = "Error: cancelled"
                 meta.update(_FAILED)

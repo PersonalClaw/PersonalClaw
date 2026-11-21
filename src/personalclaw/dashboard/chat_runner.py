@@ -5,7 +5,7 @@ import functools
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from personalclaw import (
@@ -47,6 +47,7 @@ from personalclaw.dashboard import (
     chat_questions,
     chat_refusals,
     headless_run,
+    parked_chat_turns,
     running_turn,
     turn_deadline,
     turn_endings,
@@ -306,6 +307,37 @@ TURN_INTERRUPTED_NOTICES = {
         "The gateway shut down before this reply finished. Send your message again to retry."
     ),
 }
+#: Said instead when that turn was waiting on your answer to a call, and is kept: the next start
+#: asks it again, and your answer carries the reply on from that call (`parked_chat_turns`).
+TURN_KEPT_WAITING_NOTICES = {
+    RESTARTING: (
+        "The gateway restarted while this reply waited on your answer. Answer it and the reply "
+        "carries on."
+    ),
+    SHUTTING_DOWN: (
+        "The gateway shut down while this reply waited on your answer. Answer it once the gateway "
+        "is back and the reply carries on."
+    ),
+}
+#: Said instead when that turn was waiting on your answer to a call and could not be kept: its
+#: runtime cannot go on from the middle of a call (an agent CLI's), its chat keeps no words, or it
+#: was too large to keep (`parked_chat_turns`). The chat offers Retry on it, as on any notice.
+TURN_CUT_WHILE_WAITING_NOTICES = {
+    RESTARTING: (
+        "The gateway restarted while this reply waited on your answer, and it can't be carried "
+        "on from there. Send your message again to retry."
+    ),
+    SHUTTING_DOWN: (
+        "The gateway shut down while this reply waited on your answer, and it can't be carried "
+        "on from there. Send your message again to retry."
+    ),
+}
+#: Said where a conversation is when a turn kept through a restart cannot be carried on: the runtime
+#: that serves the chat now cannot go on from the middle of a call.
+TURN_NOT_CARRIED_ON_NOTICE = (
+    "This reply waited on your answer when the gateway restarted, and the agent that serves this "
+    "chat now cannot carry it on from there. Send your message again to retry."
+)
 #: Said on the channel a conversation is linked to when the owner stopped its turn from the
 #: dashboard, where the stop card already says so.
 TURN_STOPPED_FROM_DASHBOARD_NOTICE = "Stopped from the dashboard before the reply finished."
@@ -351,6 +383,7 @@ def say_how_an_unanswered_turn_ended(
     outcome: str,
     *,
     after_deny: str = "",
+    waited: str = "",
 ) -> None:
     """Say why a turn ended without its answer, where the conversation is.
 
@@ -364,8 +397,10 @@ def say_how_an_unanswered_turn_ended(
     off by it. A conversation with no linked channel sends nothing.
 
     A turn the gateway ended to restart or shut down says so in the chat too, in those words, so a
-    question it cut off is never left there unanswered with nothing saying why. One its agent
-    stopped after her Deny says that instead of the cut-short notice (*after_deny*).
+    question it cut off is never left there unanswered with nothing saying why. One it ended while
+    it waited on her answer says how that wait ended (*waited*, ``parked_chat_turns``): kept for
+    the next start, her answer carries it on; not kept, it cannot be carried on from there.
+    One its agent stopped after her Deny says that instead of the cut-short notice (*after_deny*).
     """
     if outcome == TURN_ERROR:
         # Every path that ends a turn in error adds the error row it is known by first.
@@ -374,9 +409,11 @@ def say_how_an_unanswered_turn_ended(
             TURN_CUT_SHORT_NOTICE,
         )
     elif outcome == TURN_INTERRUPTED:
-        note = TURN_INTERRUPTED_NOTICES.get(
-            state.stopping_for, TURN_INTERRUPTED_NOTICES[SHUTTING_DOWN]
-        )
+        notices = {
+            parked_chat_turns.KEPT: TURN_KEPT_WAITING_NOTICES,
+            parked_chat_turns.CUT: TURN_CUT_WHILE_WAITING_NOTICES,
+        }.get(waited, TURN_INTERRUPTED_NOTICES)
+        note = notices.get(state.stopping_for, notices[SHUTTING_DOWN])
         session.append("error", note, "msg msg-err")
     elif outcome == TURN_STOPPED and session._stop_asked:
         note = TURN_STOPPED_FROM_DASHBOARD_NOTICE
@@ -1170,6 +1207,133 @@ def _apply_approval_floor(
             logger.warning("SEL audit failed for trust_reads floor seeding", exc_info=True)
 
 
+async def _await_her_answer(
+    state: DashboardState,
+    session: _ChatSession,
+    client: object,
+    event: Any,
+    perm_meta: dict[str, Any],
+    *,
+    effective_risk: str,
+    read_only: bool,
+    blast_radius: dict[str, bool] | None,
+    reach: str,
+    deny_effect: str,
+    asked_for: str,
+    confirms: Sequence[str] | None,
+    asked_for_by: Mapping[str, str] | None,
+) -> tuple[str, bool]:
+    """Ask her about *event*'s call on every surface and wait for her answer: ``(outcome,
+    timed_out)``. A wait the gateway's stop ends keeps the turn for the next start to ask again
+    (``parked_chat_turns``), which the turn's ending reads (``was_kept``).
+
+    The future is parked BEFORE publishing: publication is what makes the call answerable from
+    anywhere, and an answer that arrives the instant it is listed must find the future in place.
+    ``outcome`` is bound before the wait, so the ``finally`` can never hit UnboundLocalError when
+    the wait is cancelled (pytest-timeout, gateway shutdown, client disconnect, navigation away),
+    which used to REPLACE the cancellation in the traceback (#1536). It defaults to "rejected": a
+    never-answered approval must not execute the tool. The cancellation still propagates.
+    """
+    fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    request_id = str(event.request_id)
+    session._approval_futures[request_id] = fut
+    outcome, timed_out, answered = "rejected", False, False
+    keeping: asyncio.Future[bool] | None = None
+    # The interactive window: an unattended turn failed fast before this, so a human is who this
+    # waits for, as long as the owner's setting says. Read before the wait, for the `finally`.
+    approval_window = state.approval_window_secs()
+    try:
+        # ONE registration for every surface, inside the try, so a turn torn down mid-publication
+        # still leaves nothing listed. The registry's `approval` frame is what renders the card
+        # LIVE, and it is the same entry `GET /api/approvals` lists, Home counts, To triage and the
+        # phone offer to answer, and the Inbox row is raised from. A chat approval used to
+        # broadcast a frame of its own and register nowhere else, so it was invisible to every one
+        # of those.
+        await state.hold_session_approval(
+            session,
+            request_id,
+            tool=event.title,
+            tool_input=perm_meta.get("tool_input", ""),
+            tool_purpose=event.tool_purpose or "",
+            agent=_agent_label(session),
+            risk=effective_risk,
+            # #2821: the third input the approval brief names, read off the RAW input.
+            is_read_only=read_only,
+            blast_radius=blast_radius,
+            # The live card needs the grant target too, not just the rehydrated one: a prompt
+            # answered without a reload is the COMMON case, and it is the one that was promising
+            # blind (#541).
+            grant_agent=perm_meta.get("grant_agent", ""),
+            reach=reach,
+            deny_effect=deny_effect,
+            asked_for=asked_for,
+            confirms=confirms,
+            secret_file=secret_file_grants.asked_of(event),
+        )
+        # Kept on disk while it waits, so a restart carries the turn on from this call rather than
+        # losing it: written in a task of its own, which the wait's end settles.
+        keeping = parked_chat_turns.keep(
+            state,
+            session,
+            client,
+            request_id,
+            row={"title": event.title, "meta": perm_meta},
+            asked_for_by=asked_for_by,
+            window_secs=approval_window,
+        )
+        outcome = await asyncio.wait_for(fut, timeout=approval_window)
+        answered = True
+    except asyncio.TimeoutError:
+        outcome, timed_out = "rejected", True
+    finally:
+        session._approval_futures.pop(request_id, None)
+        # Unanswered on the way out (expired, or its turn torn down), every surface still listing
+        # it drops it saying which, and the transcript row records it, unless the turn is kept for
+        # the next start (`parked_chat_turns.settle`). A no-op when a decision already withdrew it.
+        await parked_chat_turns.settle(
+            state,
+            session,
+            request_id,
+            keeping,
+            answered=answered,
+            timed_out=timed_out,
+            window_secs=approval_window,
+        )
+    return outcome, timed_out
+
+
+async def _record_carried_on_answer(
+    session: _ChatSession,
+    session_key: str,
+    resume: Mapping[str, Any],
+    *,
+    allowed: bool,
+    why: str,
+) -> None:
+    """Record her answer to the call a turn kept through a restart waited on, as the runner
+    records any answer it waited for: approved, rejected, or expired when nobody answered (*why*)
+    (``parked_chat_turns``)."""
+    card = resume.get("card") or {}
+    outcome = "approved" if allowed else ("expired" if why else "rejected")
+    await sel_log_async(
+        sel().log_tool_invocation,
+        session_key=session_key,
+        agent=_agent_label(session),
+        source="dashboard",
+        tool_name=str(card.get("tool") or ""),
+        tool_kind="",
+        outcome=outcome,
+        request_id=str(resume.get("request_id") or ""),
+        tool_input=str(card.get("tool_input") or ""),
+        metadata={
+            "reason": "interactive",
+            "risk": str(card.get("risk") or ""),
+            "decided_by": approval_grants.YOU if not why else "",
+            "carried_on": "after a restart",
+        },
+    )
+
+
 def _settle_granted(
     state: DashboardState, session: _ChatSession, *, tool: str, tool_input: Any, grant: str
 ) -> None:
@@ -1331,6 +1495,9 @@ async def run_chat(
     arrived_from_channel: bool = False,
     asked_for_by: Mapping[str, str] | None = None,
     _retry: bool = False,
+    resume: Mapping[str, Any] | None = None,
+    resume_allowed: bool = False,
+    resume_why: str = "",
 ) -> None:
     """Stream LLM response into *session*.  Survives browser disconnect.
 
@@ -1355,9 +1522,17 @@ async def run_chat(
     by the queue): the same message, whose row is already in the transcript, and the same turn,
     so it opens no new checkpoint turn and is handed the same context the first attempt was.
 
+    ``resume`` is a turn the last gateway stopped while it waited on her answer to a call, kept
+    on disk (``parked_turns``) and answered since (``parked_chat_turns``): this run carries it on
+    from that call, *resume_allowed* or refused (for *resume_why*, when nobody answered). Its rows
+    are in the transcript already, so it runs as a retry does (``_retry``: no new checkpoint
+    turn, the turn taken up), assembles no context and fires no prompt hook: its runtime is handed
+    where the turn stood, and the model is asked only for what comes after the call.
+
     Every turn says what it is doing as it runs (:func:`_says_its_phases`, ``chat_phase``), and
     its last ``work_phase`` frame says how it ended.
     """
+    _carrying_on = resume is not None
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored, session._last_turn_refusal = False, None
     session._last_turn_declined = []  # what she declines this turn (`declined_calls.declined_step`)
@@ -2064,6 +2239,10 @@ async def run_chat(
         _acquired = True
         if refused_on_a_substitute(state, session, client):
             return
+        if parked_chat_turns.cannot_carry_on(resume, client):
+            # The runtime serving the chat now cannot go on from the middle of a call.
+            session.append("error", TURN_NOT_CARRIED_ON_NOTICE, "msg msg-err")
+            return
         # A slash word its runtime runs (`runs_as_command`), and `/compact` on a session that holds
         # none of the chat yet (answered here), is a command: it sends the model no message, so a
         # new session's opening waits for the first one that does. Any other is a message.
@@ -2146,7 +2325,13 @@ async def run_chat(
         _prior_transcript = prior_turns_transcript(
             session, _in_flight_text, nested=_prompt_depth > 0
         )
-        _restores = is_new and not resumed and not is_command and bool(state.context_builder)
+        _restores = (
+            is_new
+            and not resumed
+            and not is_command
+            and not _carrying_on
+            and bool(state.context_builder)
+        )
         if _restores and _prior_transcript:
             # What the fresh runtime is handed of those turns: while the chat's background
             # summary (`bg_compress`) still describes its oldest span, the summary stands in
@@ -2175,7 +2360,7 @@ async def run_chat(
         # turn's context is assembled, so an image sent as text is budgeted and assembled
         # exactly like any other attachment's text. Pixels are staged later, just before
         # the stream opens. Depth 0 only, like the other attachment injection.
-        if _prompt_depth == 0 and not is_slash:
+        if _prompt_depth == 0 and not is_slash and not _carrying_on:
             try:
                 message, _turn_pixels = await _prepare_image_attachments(session, client, message)
             except Exception:
@@ -2266,7 +2451,9 @@ async def run_chat(
         _assembled = None  # the turn's assembly, when it has one (a command's turn has none)
         # What fed it ({kind, text}), said live and stamped on its answer at the end.
         _context_fed: dict[str, str] = {}
-        if is_command:
+        if _carrying_on:
+            full_message = ""  # its runtime is handed where the turn stood, not a message
+        elif is_command:
             full_message = message
             await sel_log_async(
                 sel().log_tool_invocation,
@@ -2571,13 +2758,14 @@ async def run_chat(
         else:
             full_message = message
 
-        if is_new and not is_command:  # the session starts with the message this turn sends
+        if is_new and not is_command and not _carrying_on:  # it starts with this turn's message
             await _fire(HOOK_EVENT_SESSION_START, session_key)
             spawn_injected = await _fire(HOOK_EVENT_AGENT_SPAWN, session_key)
         else:
             spawn_injected = []
 
-        injected = await _fire(HOOK_EVENT_USER_PROMPT_SUBMIT, message)
+        # A turn carried on sends no prompt: its hooks fired when it was asked.
+        injected = [] if _carrying_on else await _fire(HOOK_EVENT_USER_PROMPT_SUBMIT, message)
         all_injected = spawn_injected + injected
         if all_injected:
             # A hook's output is read, like a command's: masked where it joins the prompt.
@@ -2634,7 +2822,7 @@ async def run_chat(
         # burn the frame the next real turn wants. Never re-entrant: a depth>0
         # prompt-expansion re-dispatch reaches its own `run_chat`, whose drain finds
         # the slot already empty (one-shot), so the frame can attach only once.
-        if not is_slash:
+        if not is_slash and not _carrying_on:
             try:
                 full_message = await _apply_screen_frame(session, client, full_message)
             except Exception:
@@ -2678,6 +2866,14 @@ async def run_chat(
             _in_its_place = None if is_command and is_new else full_message
             event_stream = stream_slash_command(
                 client, message, prompt=_in_its_place, notify=_slash_notice
+            )
+        elif resume is not None:
+            # Her answer to the call it waited on, recorded as any answer of hers is.
+            await _record_carried_on_answer(
+                session, session_key, resume, allowed=resume_allowed, why=resume_why
+            )
+            event_stream = client.resume(  # type: ignore[attr-defined]
+                resume["point"], allowed=resume_allowed, why=resume_why
             )
         else:
             # This runner says which model answered (the live line and the reply's meta below),
@@ -3853,76 +4049,22 @@ async def run_chat(
                     event.title,
                     json.dumps(perm_meta),
                 )
-                # Park the future BEFORE publishing: publication is what makes the call
-                # answerable from anywhere, and an answer that arrives the instant it is
-                # listed must find the future in place.
-                loop = asyncio.get_running_loop()
-                fut: asyncio.Future[str] = loop.create_future()
-                request_id = str(event.request_id)
-                session._approval_futures[request_id] = fut
-                # Bind `outcome` BEFORE the try so the finally (and the post-block reads
-                # below) can never hit UnboundLocalError. It is set by the wait and by the
-                # TimeoutError handler — but NOT when the wait is cancelled (pytest-timeout,
-                # gateway shutdown, client disconnect, navigation away). On that path the
-                # finally used to raise UnboundLocalError, which REPLACED the cancellation
-                # in the traceback (so a CI hang read as an unrelated error, #1536).
-                # Default "rejected": a never-answered approval must not execute the tool.
-                # The cancellation still propagates (the finally doesn't swallow it).
-                outcome = "rejected"
-                # How the approval ends if nobody answers it: its window closing is `expired`;
-                # the turn being torn down first is `cancelled`. See `request_approval`.
-                timed_out = False
-                # The interactive window: an unattended turn failed fast above, so a human is who
-                # this waits for — as long as the owner's setting says. Read before the wait so the
-                # `finally` below can name it.
-                approval_window = state.approval_window_secs()
-                try:
-                    # ONE registration for every surface — inside the try, so a turn torn
-                    # down mid-publication still leaves nothing listed. The registry's
-                    # `approval` frame is what renders the card LIVE, and it is the same entry
-                    # `GET /api/approvals` lists, Home counts, To triage and the phone offer
-                    # to answer, and the Inbox row is raised from. A chat approval used to
-                    # broadcast a frame of its own and register nowhere else, so it was
-                    # invisible to every one of those.
-                    await state.hold_session_approval(
-                        session,
-                        request_id,
-                        tool=event.title,
-                        tool_input=perm_meta.get("tool_input", ""),
-                        tool_purpose=event.tool_purpose or "",
-                        agent=_agent_label(session),
-                        risk=effective_risk,
-                        # #2821: the third input the approval brief names, read off the RAW input
-                        # above.
-                        is_read_only=read_only,
-                        blast_radius=blast_radius,
-                        # The live card needs the grant target too, not just the rehydrated
-                        # one — a prompt answered without a reload is the COMMON case, and
-                        # it is the one that was promising blind (#541).
-                        grant_agent=perm_meta.get("grant_agent", ""),
-                        reach=_reach_note,
-                        deny_effect=_deny_effect,
-                        asked_for=_asked_for,
-                        confirms=_confirms,
-                        secret_file=secret_file_grants.asked_of(event),
-                    )
-                    outcome = await asyncio.wait_for(fut, timeout=approval_window)
-                except asyncio.TimeoutError:
-                    outcome = "rejected"
-                    timed_out = True
-                finally:
-                    session._approval_futures.pop(request_id, None)
-                    # Unanswered on the way out — expired, or its turn was torn down — so every
-                    # surface still listing it drops it saying which, and the transcript row
-                    # records it (a reload then shows what happened, not a dead live card). A
-                    # no-op when a decision already withdrew it. An expired one leaves its note
-                    # in the Inbox, naming how long it waited.
-                    state.end_session_approval(
-                        session,
-                        request_id,
-                        outcome="expired" if timed_out else "cancelled",
-                        window_secs=approval_window if timed_out else 0.0,
-                    )
+                # Her answer, waited for on every surface (`_await_her_answer`).
+                outcome, timed_out = await _await_her_answer(
+                    state,
+                    session,
+                    client,
+                    event,
+                    perm_meta,
+                    effective_risk=effective_risk,
+                    read_only=read_only,
+                    blast_radius=blast_radius,
+                    reach=_reach_note,
+                    deny_effect=_deny_effect,
+                    asked_for=_asked_for,
+                    confirms=_confirms,
+                    asked_for_by=asked_for_by,
+                )
                 if outcome == "approved_trust_reads":
                     session._trust_reads = True
                     session._trust_from_floor = ""  # yours now, not a floor's to withdraw
@@ -4799,7 +4941,13 @@ async def run_chat(
             state, session, session_key, _answered, _send_again, _this_attempt
         ):
             say_how_an_unanswered_turn_ended(
-                state, session, session_key, _turn_outcome, after_deny=_deny_note
+                state,
+                session,
+                session_key,
+                _turn_outcome,
+                after_deny=_deny_note,
+                # How its wait on her answer ended, when the gateway stopped while it waited.
+                waited=parked_chat_turns.how_the_wait_ended(session),
             )
         if _acquired:
             if is_new and not _sent_a_message:

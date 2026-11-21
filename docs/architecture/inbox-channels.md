@@ -451,10 +451,14 @@ turn instead of reading it as a Deny. Only an answer makes the row `handled`
 (`resolve_attention_items`). One that ended with nobody answering is `expired`
 (`expire_attention_items`), and why rides on the row and the frame (`ended`): "nobody answered within
 2 hours", "the loop that started its run was stopped", "the gateway stopped before anyone
-answered" — the Inbox's `ApprovalDecision` says it in place of a decision. No approval survives a
-restart (its answer is awaited in memory), so a gateway that stops ends each one it holds that way,
-and `close_orphaned_approval_rows` expires, at boot, any row a killed process left asking for one
-("the gateway restarted before anyone answered"). However it closes, the row's text stops asking
+answered" — the Inbox's `ApprovalDecision` says it in place of a decision. An approval's answer is
+awaited in memory, so a gateway that stops ends each one it holds that way, and
+`close_orphaned_approval_rows` expires, at boot, any row a killed process left asking for one
+("the gateway restarted before anyone answered"). One kind is asked again: a chat turn on
+PersonalClaw's own runtime that was waiting on its approval when the gateway stopped is kept
+(`parked_turns`, `chat_parked/`), held again at the next start, with the same card on every surface
+and the window it had left, and carried on by its answer (`dashboard/parked_chat_turns.py`).
+However it closes, the row's text stops asking
 (`approval_state.settled_row_text`): "Approval needed: bash … is waiting for your decision on bash"
 reads "Denied: bash … asked for your decision on bash. It was denied.", from the same four outcomes
 ("It was approved.", "It expired: nobody answered within 2 hours.", "It was cancelled: its turn was
