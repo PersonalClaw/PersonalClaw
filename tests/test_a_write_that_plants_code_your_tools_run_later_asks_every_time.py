@@ -58,6 +58,10 @@ WRITES = {
     "cp": lambda root: _shell(f"cp /tmp/theirs.json {SETTINGS}"),
     "mv": lambda root: _shell("mv /tmp/theirs.json app.code-workspace"),
     "ln": lambda root: _shell("ln -s /tmp/theirs.json .zed/settings.json"),
+    "cp into the folder": lambda root: _shell("cp src/settings.json .vscode/"),
+    "mv into the folder": lambda root: _shell("mv src/settings.json .vscode/"),
+    "ln -sf into the folder": lambda root: _shell("ln -sf ../src/settings.json .vscode/"),
+    "cp -t the folder": lambda root: _shell("cp -t .vscode src/settings.json"),
     "write_file": lambda root: _native("write_file", SETTINGS),
     "edit_file, named in another case": lambda root: _native("edit_file", ".VSCode/Settings.json"),
     "an agent CLI's edit": lambda root: _cli_edit(str(root / SETTINGS)),
@@ -69,6 +73,29 @@ def test_each_write_path_is_put_to_you_whatever_grant_stands(project, how):
     """🔴 Red before: the write ran on Trust, YOLO or a standing grant, unasked."""
     event = WRITES[how](project)
     assert run_bounds.put_to_a_person(event, session_key="dashboard:chat-1", cwd=str(project))
+
+
+def test_a_copy_into_the_folder_named_bare_asks_when_it_is_one(project):
+    """🔴 Red before: what lands in a folder is the folder's entry of the source's name, which the
+    command names only by the folder. Named bare, the folder on disk says it is one."""
+    copy = _shell("cp src/settings.json .vscode")
+    assert not run_bounds.put_to_a_person(copy, session_key="s", cwd=str(project))  # a file
+    (project / ".vscode").mkdir()
+    assert run_bounds.put_to_a_person(copy, session_key="s", cwd=str(project))
+
+
+def test_a_copy_reads_where_it_lands_and_compares_as_before():
+    from dataclasses import replace
+
+    from personalclaw.command_effects import command_effects
+
+    assert command_effects("cp a.json b.json .vscode/").into == {
+        (".vscode/", "a.json"),
+        (".vscode/", "b.json"),
+    }
+    assert command_effects("cp -t .vscode a.json").into == {(".vscode/", "a.json")}
+    copy = command_effects("cp a b")
+    assert copy.into and replace(copy, into=frozenset()) == copy  # what lands is not compared
 
 
 def test_its_card_says_which_file_and_what_runs_it(project):

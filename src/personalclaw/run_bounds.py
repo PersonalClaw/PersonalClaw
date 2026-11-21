@@ -687,7 +687,8 @@ def call_reach(
             within=within,
             scratch=scratch,
         )
-        plants = planted(effects.targets, cwd=cwd) if effects.writes else ()
+        written = [*effects.targets, *_landed(effects.into, cwd)] if effects.writes else []
+        plants = planted(written, cwd=cwd)
         return replace(reach, deletes=deletes, identity=identity, plants=plants)
     hosts, unnamed = argument_network(title, tool_kind, tool_input, session_key=session_key)
     plants = planted(_written(title, tool_kind, tool_input, declared, named), cwd=cwd)
@@ -700,6 +701,18 @@ def call_reach(
     if not isinstance(raw, str) or not raw:
         return NOWHERE  # the tool says what is missing
     return Reach(paths=outside([raw], cwd=cwd, within=within, scratch=scratch), plants=plants)
+
+
+def _landed(into: Iterable[tuple[str, str]], cwd: str) -> list[str]:
+    """Where each copy, move or link into a folder lands (``CommandEffects.into``): the folder's
+    entry of the source's name, for a destination spelled as a folder or one that is a folder on
+    disk, read from *cwd*."""
+    landed = []
+    for destination, source in into:
+        spelled = os.path.expanduser(destination)
+        if destination.endswith("/") or os.path.isdir(os.path.join(cwd or ".", spelled)):
+            landed.append(os.path.join(destination, os.path.basename(source.rstrip("/"))))
+    return landed
 
 
 #: The kinds of an agent CLI's call that write the files they name (``acp.translate``).
