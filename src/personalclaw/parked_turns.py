@@ -39,6 +39,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from personalclaw import record_ids
 from personalclaw.atomic_write import atomic_write
 from personalclaw.ledger.hashing import canonical_digest
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -85,7 +86,7 @@ def _dir() -> Path:
 def path_of(session_key: str) -> Path:
     """The file the chat *session_key*'s waiting turn is kept in, named from the whole key."""
     name = hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:32]
-    return _dir() / f"{name}.json"
+    return record_ids.record_path(_dir(), name, kind="waiting turn")
 
 
 def _mask(text: str) -> str:
