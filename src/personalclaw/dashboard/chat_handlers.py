@@ -1203,6 +1203,10 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     name = body.get("name")
     if name is not None and not isinstance(name, str):
         return web.json_response({"error": "name must be a string"}, status=400)
+    # Before anything is made or opened: a name another kind of session has would be judged as
+    # that kind's, and one a live session of it holds would open that session as a chat.
+    if name and (refusal := session_keys.chat_name_refusal(name)):
+        return json_error("chat_name_refused", message=refusal, status=400)
     agent = body.get("agent", "")
     model = body.get("model", "")
     project_id = str(body.get("project_id", "") or "")

@@ -210,6 +210,29 @@ def kind_of(key: str) -> SessionKind | None:
     return found
 
 
+def chat_name_refusal(name: str) -> str | None:
+    """Why a client cannot name a chat *name*, or ``None`` when it can.
+
+    A chat's name is its session's key, and the key decides what the work is wherever that is
+    asked: whether anybody watches it, where its approvals are answered, the notes it leaves when
+    nothing answered. So a name a client gives a chat (``POST /api/chat/sessions``'s ``name``) may
+    not be another kind's (:data:`KINDS`), and a name a live session of that kind holds is not
+    opened as a chat. A chat's own form (:data:`CHAT`), a name no kind claims, and the key
+    ``personalclaw run --session`` makes for its name (``inbound:cli:<name>``, ``cli_run``) are a
+    chat's to take."""
+    kind = kind_of(name or "")
+    if kind is None or kind is CHAT or (name or "").startswith(INBOUND.key("cli:")):
+        return None
+    if kind.who == CHAT.who:
+        whose = "PersonalClaw's own keys for chats"
+    else:
+        whose = f"{kind.who[0].lower()}{kind.who[1:]}'s own sessions"
+    return (
+        f"A chat can't be named {name!r}: names that start with {kind.prefix!r} are {whose}. "
+        "Choose another name."
+    )
+
+
 def _judged(key: str) -> tuple[SessionKind | None, str]:
     """The kind the work *key* names is judged as (:func:`judged_kind`), and *key* in that kind's
     own form: without the dashboard's wrapper when it is judged through it."""
