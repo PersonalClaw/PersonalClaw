@@ -814,23 +814,6 @@ async def dispatch_stage(
             "cannot be keyed — not spawning",
             "thread the node's instance path through `dispatch` into `dispatch_stage`",
         )
-    claim_target = claim_key(run_id, instance_path)
-    holder = claim_holder(run_id, node.id or "")
-    if claim_target:
-        granted, reason = leases.acquire_claim(claim_target, holder)
-        if granted is None:
-            # DEGRADED, not FAILED: another worker holding the claim means this leaf is already
-            # being executed, which is the lease working. Failing would turn a successful
-            # duplicate-suppression into a red branch on a run that is proceeding correctly.
-            return NodeResult(
-                state=InstanceState.DEGRADED,
-                output=None,
-                degraded_reason=(
-                    f"another worker holds the claim on this node ({reason}) — not executing twice"
-                ),
-                resolved_prompt=prompt,
-            )
-
     # The run OWNS this session: `workflow:<run_id>:<node_id>`. Passed as the parent key so the
     # spawn's own audit + session plumbing attributes it to the run rather than to whatever chat
     # happened to start it.
@@ -867,6 +850,23 @@ async def dispatch_stage(
         capability=capability,
     )
     approved_request, approved_at = approved_start
+    claim_target = claim_key(run_id, instance_path)
+    holder = claim_holder(run_id, node.id or "")
+    if claim_target:
+        granted, reason = leases.acquire_claim(claim_target, holder)
+        if granted is None:
+            # DEGRADED, not FAILED: another worker holding the claim means this leaf is already
+            # being executed, which is the lease working. Failing would turn a successful
+            # duplicate-suppression into a red branch on a run that is proceeding correctly.
+            return NodeResult(
+                state=InstanceState.DEGRADED,
+                output=None,
+                degraded_reason=(
+                    f"another worker holds the claim on this node ({reason}) — not executing twice"
+                ),
+                resolved_prompt=prompt,
+            )
+
     try:
         info = subagents.spawn(
             task=prompt,
