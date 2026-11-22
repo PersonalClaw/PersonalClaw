@@ -607,7 +607,11 @@ class ScheduleRunStore:
         the history passed over it.
         """
         key = (str(self._dir), run.job_id)
-        if counts_in_the_window(run.to_dict(include_trace=False)):
+        try:
+            counted = counts_in_the_window(run.to_dict(include_trace=False))
+        except Exception:  # noqa: BLE001 - a run whose row cannot be read still ran
+            counted = True
+        if counted:
             at = float(run.started_at or time.time())
             with _UNWRITTEN_LOCK:
                 cutoff = time.time() - _UNWRITTEN_KEPT_SECS
