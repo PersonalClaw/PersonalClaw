@@ -2,10 +2,8 @@
 
 The weekly refresh runs only on its schedule and a dispatch, on main, from one job in the
 ``pin-refresh`` environment whose own token reads only and whose checkout keeps no credential.
-Its writes go through the pin-refresh App's token, minted from the App's client ID
-(``vars.REFRESH_APP_CLIENT_ID``), or its ID (``vars.REFRESH_APP_ID``) until the workflow moves off
-the deprecated ``app-id`` input, and ``secrets.REFRESH_APP_KEY``, which asks for workflows write
-only when a workflow file changed.
+Its writes go through the pin-refresh App's token, minted from ``vars.REFRESH_APP_CLIENT_ID``
+and ``secrets.REFRESH_APP_KEY``, which asks for workflows write only when a workflow file changed.
 The tool moves each image whose tag has moved and each action to its newest week-old release on
 its major line (or its own moved tag), every copy in the tree, and opens the edit on a branch of
 its own with the token kept off every command line. Each rule fails on a planted edit.
@@ -28,23 +26,31 @@ _WORKFLOW = REPO / ".github" / "workflows" / "pin-refresh.yml"
 _ON_MAIN = (
     "${{ github.ref == 'refs/heads/main' && github.repository == 'PersonalClaw/PersonalClaw' }}"
 )
-_APP_ID = "${{ vars.REFRESH_APP_ID }}"
 #: The App named by its client ID, which create-github-app-token takes in place of its
 #: deprecated ``app-id`` input. Not a secret: ``gh api /apps/personalclaw-refresh`` shows it.
 _CLIENT_ID = "${{ vars.REFRESH_APP_CLIENT_ID }}"
-#: A token step names the App one way or the other, never both: by its ID until the workflow
-#: moves, then by its client ID. The rail takes either now, so the workflow's own move passes
-#: main's contract.
-_NAMED = ({"app-id": _APP_ID}, {"client-id": _CLIENT_ID})
-_BY_APP_ID = "          app-id: ${{ vars.REFRESH_APP_ID }}\n"
-_BY_CLIENT_ID = "          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}\n"
 _APP_KEY = "${{ secrets.REFRESH_APP_KEY }}"
+#: What a token step holds, closed: the App, its key and what the token may do, nothing past them.
+#: create-github-app-token also takes ``github-api-url`` (the App's signed request to another
+#: host, where whoever holds it mints tokens for its life past every permission line), ``owner``,
+#: ``repositories`` and ``enterprise`` (more repositories than this one) and ``skip-token-revoke``
+#: (a token alive past the job). A step's own ``env`` reaches the action's node before it runs
+#: (``NODE_OPTIONS``), with the key among its inputs.
+_TOKEN_INPUTS = {"client-id", "private-key"}
+_TOKEN_STEP_KEYS = {"name", "id", "if", "uses", "with"}
+#: The workflow's and the job's own keys, closed: an ``env`` or ``defaults`` on either reaches every
+#: step, the token steps' action among them (``NODE_OPTIONS`` runs before it, beside the key).
+_WORKFLOW_KEYS = {"name", "on", "concurrency", "permissions", "jobs"}
+_JOB_KEYS = {"if", "runs-on", "environment", "timeout-minutes", "permissions", "steps"}
 
 
 def _problems(text: str) -> list[str]:
     data = yaml.safe_load(text)
     found: list[str] = []
     on = data.get("on", data.get(True))
+    keys = {"on" if key is True else str(key) for key in data}
+    if keys - _WORKFLOW_KEYS:
+        found.append(f"the workflow sets {sorted(keys - _WORKFLOW_KEYS)}, which reaches every step")
     if not isinstance(on, dict) or set(on) != {"schedule", "workflow_dispatch"}:
         found.append(f"runs on {on!r}, not only its schedule and a dispatch")
     if data.get("permissions") != {"contents": "read"}:
@@ -53,6 +59,8 @@ def _problems(text: str) -> list[str]:
     if set(jobs) != {"refresh"}:
         return [*found, f"has jobs {sorted(jobs)}"]
     job = jobs["refresh"]
+    if set(job) - _JOB_KEYS:
+        found.append(f"the job sets {sorted(set(job) - _JOB_KEYS)}, which reaches every step")
     if job.get("if") != _ON_MAIN:
         found.append("the job runs off main")
     if job.get("environment") != "pin-refresh":
@@ -65,11 +73,28 @@ def _problems(text: str) -> list[str]:
         given = step.get("with") or {}
         if uses.startswith("actions/checkout@") and given.get("persist-credentials") is not False:
             found.append("the checkout keeps its credentials")
+        if "GITHUB_ENV" in str(step.get("run", "")):
+            found.append(
+                f"{step.get('name') or uses} writes the job's environment ($GITHUB_ENV), which"
+                " every later step's action reads"
+            )
         if uses.startswith("actions/create-github-app-token@"):
             tokens.append(step)
-            named = {k: given[k] for k in ("app-id", "client-id") if k in given}
-            if named not in _NAMED or given.get("private-key") != _APP_KEY:
+            if given.get("client-id") != _CLIENT_ID or given.get("private-key") != _APP_KEY:
                 found.append(f"{step.get('id')} mints its token from another App or key")
+            if "app-id" in given:
+                found.append(f"{step.get('id')} names its App by the deprecated app-id too")
+            extra = sorted(
+                k
+                for k in given
+                if k not in _TOKEN_INPUTS | {"app-id"} and not k.startswith("permission-")
+            )
+            if extra:
+                found.append(f"{step.get('id')} gives the token action {extra} too")
+            if set(step) - _TOKEN_STEP_KEYS:
+                found.append(
+                    f"{step.get('id')} sets {sorted(set(step) - _TOKEN_STEP_KEYS)} on its step"
+                )
             asks = {k: v for k, v in given.items() if k.startswith("permission-")}
             wants = {"permission-contents": "write", "permission-pull-requests": "write"}
             if "workflows == 'true'" in str(step.get("if")):
@@ -90,6 +115,14 @@ def test_the_workflow_writes_only_through_the_apps_token_on_main() -> None:
 
 
 _PR_WRITE = "          permission-pull-requests: write\n"
+#: The workflow's grant before its jobs, and the job's grant before its steps.
+_TOP_GRANT = "permissions:\n  contents: read\n\njobs:\n"
+_JOB_STEPS = "    permissions:\n      contents: read\n    steps:\n"
+#: The first token step from its inputs to its key, where the plants below add to it.
+_KEY_LINE = (
+    "        with:\n          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}\n"
+    "          private-key: ${{ secrets.REFRESH_APP_KEY }}\n"
+)
 _WORKFLOWS_WRITE = "          permission-workflows: write\n"
 #: The token step that asks for workflows write, from its key to its last permission.
 _WITH_WORKFLOWS = (
@@ -119,10 +152,76 @@ _BEFORE_OPEN = _PR_WRITE + "      - name: Open"
             "another App",
         ),
         (_BEFORE_OPEN, _BEFORE_OPEN.replace(_PR_WRITE, _PR_WRITE + _WORKFLOWS_WRITE), "asks for"),
+        # Another App's client ID, or the deprecated input back beside it.
+        (
+            "          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}\n",
+            "          client-id: ${{ vars.CONTROLLER_APP_CLIENT_ID }}\n",
+            "another App",
+        ),
+        (
+            "          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}\n",
+            "          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}\n"
+            "          app-id: ${{ vars.REFRESH_APP_ID }}\n",
+            "deprecated app-id",
+        ),
+        (
+            "          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}\n",
+            "          app-id: ${{ vars.REFRESH_APP_ID }}\n",
+            "another App",
+        ),
         (
             "          RUN_ID: ${{ github.run_id }}",
             "          RUN_ID: ${{ github.run_id }}\n          KEY: ${{ secrets.REFRESH_APP_KEY }}",
             "reads a secret",
+        ),
+        # Any input past the App, its key and its permissions, and any key past a step's own.
+        *(
+            (_KEY_LINE, _KEY_LINE + f"          {line}\n", "gives the token action")
+            for line in (
+                "github-api-url: https://example.invalid/api/v3",
+                "owner: someone-else",
+                "repositories: PersonalClaw,PersonalClawApps",
+                "enterprise: an-enterprise",
+                "skip-token-revoke: true",
+            )
+        ),
+        (
+            _KEY_LINE,
+            _KEY_LINE.replace(
+                "        with:\n",
+                "        env:\n          NODE_OPTIONS: --require ./x.js\n        with:\n",
+            ),
+            "on its step",
+        ),
+        (
+            _KEY_LINE,
+            _KEY_LINE.replace(
+                "        with:\n", "        continue-on-error: true\n        with:\n"
+            ),
+            "on its step",
+        ),
+        # Or past the step: the workflow's or the job's env or defaults, or the job's environment
+        # written by an earlier step.
+        (_TOP_GRANT, "env:\n  NODE_OPTIONS: --require ./x.js\n" + _TOP_GRANT, "the workflow sets"),
+        (_TOP_GRANT, "defaults:\n  run:\n    shell: bash\n" + _TOP_GRANT, "the workflow sets"),
+        (
+            _JOB_STEPS,
+            _JOB_STEPS.replace(
+                "    steps:\n", "    env:\n      NODE_OPTIONS: --require ./x.js\n    steps:\n"
+            ),
+            "the job sets",
+        ),
+        (
+            _JOB_STEPS,
+            _JOB_STEPS.replace(
+                "    steps:\n", "    defaults:\n      run:\n        shell: bash\n    steps:\n"
+            ),
+            "the job sets",
+        ),
+        (
+            '${RUNNER_ARCH}"\n',
+            '${RUNNER_ARCH}"; echo "NODE_OPTIONS=--require ./x.js" >> "$GITHUB_ENV"\n',
+            "writes the job's environment",
         ),
     ],
 )
@@ -132,44 +231,7 @@ def test_each_rule_fails_on_a_planted_edit(old: str, new: str, says: str) -> Non
     assert any(says in p for p in _problems(text.replace(old, new, 1)))
 
 
-def _named_by(line: str) -> str:
-    """The workflow with each token step naming the App by *line*, whichever way it does now."""
-    text = _WORKFLOW.read_text(encoding="utf-8")
-    return text.replace(_BY_APP_ID, line).replace(_BY_CLIENT_ID, line)
-
-
-@pytest.mark.parametrize("line", [_BY_APP_ID, _BY_CLIENT_ID], ids=["app-id", "client-id"])
-def test_the_app_is_named_by_its_id_or_its_client_id(line: str) -> None:
-    text = _named_by(line)
-    assert text.count(line) == 2
-    assert _problems(text) == []
-
-
-@pytest.mark.parametrize(
-    "line, new",
-    [
-        (_BY_APP_ID, "          app-id: ${{ vars.CONTROLLER_APP_ID }}\n"),
-        (_BY_CLIENT_ID, "          client-id: ${{ vars.CONTROLLER_APP_CLIENT_ID }}\n"),
-        # Both ways at once: which App the token is for is the action's to pick.
-        (_BY_APP_ID, _BY_APP_ID + _BY_CLIENT_ID),
-        (_BY_CLIENT_ID, _BY_CLIENT_ID + _BY_APP_ID),
-        # Neither: the key alone names no App.
-        (_BY_CLIENT_ID, ""),
-    ],
-    ids=[
-        "another App's ID",
-        "another App's client ID",
-        "both, ID first",
-        "both, client ID first",
-        "neither",
-    ],
-)
-def test_another_app_or_both_names_fail(line: str, new: str) -> None:
-    text = _named_by(line)
-    assert any("another App" in p for p in _problems(text.replace(line, new, 1)))
-
-
-#: The pin-refresh App's ID (#4585), also the repository variable REFRESH_APP_ID; not a secret.
+#: The pin-refresh App's ID (#4585), which no ruleset may name as a bypass actor; not a secret.
 REFRESH_APP_ID = 5868116
 _RULESETS = REPO / ".github" / "rulesets"
 _RULESET_API = re.compile(r"/rulesets\b|\brulesets/")

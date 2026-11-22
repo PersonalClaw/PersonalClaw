@@ -7,7 +7,7 @@
 # to the newest release on its major line that is at least a week old (Dependabot's cooldown), or
 # to its own tag's commit when that tag has moved. Every copy of an old pin in the tree moves.
 #
-# When something moved, it mints a token from the pin-refresh App (vars.REFRESH_APP_ID,
+# When something moved, it mints a token from the pin-refresh App (vars.REFRESH_APP_CLIENT_ID,
 # secrets.REFRESH_APP_KEY, held in the pin-refresh environment, which only main may use) and
 # opens the edit as a pull request on a branch of its own, signed off by the App's bot account,
 # closing the App's older open refresh as superseded. The job's own token stays read-only: the
@@ -64,7 +64,7 @@ jobs:
         if: ${{ steps.edit.outputs.changed == 'true' && steps.edit.outputs.workflows == 'true' }}
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: ${{ vars.REFRESH_APP_ID }}
+          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}
           private-key: ${{ secrets.REFRESH_APP_KEY }}
           permission-contents: write
           permission-pull-requests: write
@@ -74,7 +74,7 @@ jobs:
         if: ${{ steps.edit.outputs.changed == 'true' && steps.edit.outputs.workflows != 'true' }}
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: ${{ vars.REFRESH_APP_ID }}
+          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}
           private-key: ${{ secrets.REFRESH_APP_KEY }}
           permission-contents: write
           permission-pull-requests: write
