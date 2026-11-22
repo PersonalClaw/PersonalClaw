@@ -339,8 +339,17 @@ def _installed_rows(
         per_instance = bool(provider_block.get("multiInstance")) and not config_schema.get(
             "properties"
         )
-        has_config = not per_instance and bool(
-            config_schema.get("properties") or provider_schema.get("properties")
+        # An automation action's settingsSchema is its form in each automation that runs it, and
+        # there is no app-level config to Configure either (see `_configured_per_automation`).
+        per_automation = (
+            provider_block.get("type") == "action"
+            and not config_schema.get("properties")
+            and not (manifest.get("settings") or {}).get("properties")
+        )
+        has_config = (
+            not per_instance
+            and not per_automation
+            and bool(config_schema.get("properties") or provider_schema.get("properties"))
         )
         # Contributed UI pages (route/label/icon) so the shell can register each as
         # a nav target under the Apps section — not just a single per-app page.
@@ -400,6 +409,7 @@ def _installed_rows(
                 "providerCapabilities": [str(c) for c in provider_block.get("capabilities") or []],
                 "hasConfig": has_config,
                 "configuredPerInstance": per_instance,
+                "configuredPerAutomation": per_automation,
                 # A provider of it runs its engine in a child process with its own Python
                 # environment, which Configure offers to install (Install engine).
                 "sidecar": _runs_a_sidecar(manifest),
@@ -475,6 +485,7 @@ def _bundled_rows(extensions: list[Any], have: set[str]) -> list[dict[str, Any]]
                 "providerType": "tool",
                 "hasConfig": False,
                 "configuredPerInstance": False,
+                "configuredPerAutomation": False,
                 # Core's own tools, not an app: there is no manifest to disclose.
                 "disclosure": None,
                 "permissions": {},
@@ -494,6 +505,8 @@ def _bundled_rows(extensions: list[Any], have: set[str]) -> list[dict[str, Any]]
             continue
         # One extension whose row cannot be read is left out, and the rest are listed.
         try:
+            # An action's form is each automation's (`_configured_per_automation`).
+            per_automation = _set_up_per_automation(ext.provider_config, ext.manifest)
             rows.append(
                 {
                     "name": ext.name,
@@ -515,8 +528,10 @@ def _bundled_rows(extensions: list[Any], have: set[str]) -> list[dict[str, Any]]
                     "isProvider": True,
                     "providerType": ext.provider_config.type,
                     "hasConfig": not ext.provider_config.multiInstance
+                    and not per_automation
                     and bool((ext.provider_config.settingsSchema or {}).get("properties")),
                     "configuredPerInstance": bool(ext.provider_config.multiInstance),
+                    "configuredPerAutomation": per_automation,
                     "disclosure": describe(ext.manifest),
                     "permissions": {},
                     "tags": [],
@@ -682,7 +697,7 @@ async def api_app_get(request: web.Request) -> web.Response:
     # The STORED form: a reference is masked whatever its field is called, and no value is read.
     masked: dict[str, Any] = {}
     secret_set: list[str] = []
-    if manifest is None or not _configured_per_instance(manifest):
+    if manifest is None or not _configured_elsewhere(manifest):
         masked, secret_set = mask_secrets(read_stored(name), schema)
     manifest_wire = manifest.to_dict() if manifest else None
     return web.json_response(
@@ -1092,14 +1107,16 @@ def _effective_config_schema(manifest) -> dict[str, Any]:
     the schema.
 
     A MULTI-INSTANCE provider's ``settingsSchema`` describes one of its INSTANCES, not
-    the app, so it never becomes app-level config — see :func:`_configured_per_instance`.
+    the app, so it never becomes app-level config — see :func:`_configured_per_instance`. An
+    automation ACTION's describes the action in each automation that runs it, so it never does
+    either — see :func:`_configured_per_automation`.
     """
     schema = manifest.settings or manifest.setup.configSchema
     if schema:
         return schema
     first = manifest.first_provider()
     if first and first.settingsSchema:
-        if first.multiInstance:
+        if first.multiInstance or first.type == "action":
             return {}
         return first.settingsSchema
     return {}
@@ -1124,6 +1141,46 @@ def _configured_per_instance(manifest) -> str | None:
     )
 
 
+def _configured_per_automation(manifest) -> str | None:
+    """The refusal for app-level config on an app whose provider is an automation action and
+    which declares no settings of the app's own.
+
+    The action's ``settingsSchema`` is its form in each automation that runs it
+    (``hooks.api_action_providers``), and each fire hands the action that automation's values.
+    🔴 Measured: Apps › A2A Agent Call › Configure offered Agent URL, Skill, Message, Inputs and
+    Headers, and saved them as the app's settings, which nothing reads (its ``create_provider``
+    drops them), so every automation that ran the action failed "A2A action is missing 'url'
+    field".
+    """
+    first = manifest.first_provider()
+    if first is None or not _set_up_per_automation(first, manifest):
+        return None
+    who = manifest.displayName or manifest.name
+    return (
+        f"{who} is set up on each automation that runs its action, not on the app. Choose it "
+        "as an automation's action on the Automations page, and fill in its fields there."
+    )
+
+
+def _set_up_per_automation(provider: Any, manifest: Any) -> bool:
+    """Whether *provider* is an automation action whose app (*manifest*) declares no settings of
+    its own (:func:`_configured_per_automation`). Read with ``getattr``: a listing builds rows from
+    whatever an extension's record carries, and one it cannot read is left out on its own."""
+    setup = getattr(manifest, "setup", None)
+    return (
+        getattr(provider, "type", "") == "action"
+        and not getattr(manifest, "settings", None)
+        and not getattr(setup, "configSchema", None)
+    )
+
+
+def _configured_elsewhere(manifest) -> str | None:
+    """Why an app has no settings of its own to read or save, or None when it has: they live on
+    its instances (:func:`_configured_per_instance`) or on its automations
+    (:func:`_configured_per_automation`)."""
+    return _configured_per_instance(manifest) or _configured_per_automation(manifest)
+
+
 async def api_app_config_get(request: web.Request) -> web.Response:
     """GET /api/apps/{name}/config — an app's settings, with its credentials masked.
 
@@ -1137,7 +1194,7 @@ async def api_app_config_get(request: web.Request) -> web.Response:
     manifest = _manifest_of(name)
     if manifest is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
-    refusal = _configured_per_instance(manifest)
+    refusal = _configured_elsewhere(manifest)
     if refusal:
         return web.json_response({"error": refusal}, status=409)
     schema = _effective_config_schema(manifest)
@@ -1173,7 +1230,7 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     manifest = _manifest_of(name)
     if manifest is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
-    refusal = _configured_per_instance(manifest)
+    refusal = _configured_elsewhere(manifest)
     if refusal:
         return web.json_response({"error": refusal}, status=409)
     try:

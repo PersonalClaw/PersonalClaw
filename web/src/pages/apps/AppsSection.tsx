@@ -75,6 +75,9 @@ export interface StoreItem extends AppCatalogEntry {
   /** A multi-instance provider: no app-level settings — its instances are managed in
    *  Settings → Providers, which is where its "Manage instances" action goes. */
   configuredPerInstance?: boolean
+  /** An automation action: no app-level settings — its fields are set on each automation that
+   *  runs it, which is where its "Set up in an automation" action goes. */
+  configuredPerAutomation?: boolean
   /** An installed app whose provider runs its engine in a Python environment of its own:
    *  Configure offers to install that engine. */
   sidecar?: boolean
@@ -103,7 +106,7 @@ function installedToStoreItem(a: AppSummary): StoreItem {
     icon: a.icon, heroUrl: a.heroUrl, author: '', source: a.source ?? '', sourceKind: 'bundled',
     isProvider: a.isProvider, providerType: a.providerType, tags: a.tags ?? [],
     installed: true, enabled: a.enabled, hasUI: a.hasUI,
-    native: !!a.native, hasConfig: a.hasConfig, configuredPerInstance: !!a.configuredPerInstance, sidecar: !!a.sidecar, origin: a.origin,
+    native: !!a.native, hasConfig: a.hasConfig, configuredPerInstance: !!a.configuredPerInstance, configuredPerAutomation: !!a.configuredPerAutomation, sidecar: !!a.sidecar, origin: a.origin,
     updateAvailable: !!a.updateAvailable, latestVersion: a.latestVersion, latestSource: a.latestSource,
     updateSource: a.updateSource,
     // Why the gateway does not run it here: the card says it where its Open or Activate would be.
@@ -205,8 +208,13 @@ type AppActionKind = 'open' | 'toggle' | 'configure' | 'update' | 'uninstall' | 
 // Carries the DISPLAY NAME as well as the slug: the slug is the API's identifier, the display
 // name is the only one a person recognises, and a dialog title is a sentence for the person.
 type DispatchAppAction = (app: {
-  name: string; displayName: string; enabled: boolean; hasUI: boolean; configuredPerInstance?: boolean; sidecar?: boolean
+  name: string; displayName: string; enabled: boolean; hasUI: boolean; configuredPerInstance?: boolean; configuredPerAutomation?: boolean; sidecar?: boolean
 } & UpdateFields, action: AppActionKind) => void
+
+/** What an app's Configure is called where it opens somewhere other than its settings. */
+function configureLabel(app: { configuredPerInstance?: boolean; configuredPerAutomation?: boolean }): string {
+  return app.configuredPerInstance ? 'Manage instances' : app.configuredPerAutomation ? 'Set up in an automation' : 'Configure'
+}
 
 /** Owns the app-action modal state + the enable/disable call, and renders the
  *  modals ONCE at the host level. Returns a `dispatch` both the cards and the
@@ -228,6 +236,8 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       // managed in Settings → Providers, and its Configure goes there instead.
       case 'configure':
         if (app.configuredPerInstance) { nav('settings/models?section=providers'); return }
+        // An automation action has none either: its fields are set on each automation that runs it.
+        if (app.configuredPerAutomation) { nav('triggers'); return }
         setConfigFor({ name: app.name, displayName: app.displayName, sidecar: app.sidecar }); return
       case 'update': setUpdateFor({ name: app.name, displayName: app.displayName, start: updateStart(app) }); return
       case 'uninstall': setRemoveFor({ name: app.name, displayName: app.displayName }); return
@@ -266,7 +276,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
  *  detail panel. Enable/disable, configure, update, open, force-uninstall; a
  *  platform provider shows only "Open page" (it has no install lifecycle). */
 function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: DispatchAppAction }) {
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, sidecar: item.sidecar, ...updateFields(item) }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, configuredPerAutomation: item.configuredPerAutomation, sidecar: item.sidecar, ...updateFields(item) }
   return (
     <Popover align="right" placement="bottom" width={200}
       // 🔴 PORTAL, or the card cuts this menu off. Measured on `#/apps` at 1440×900: the flyout is
@@ -293,8 +303,8 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
             // only when it has a settings surface (hasConfig); a config-less provider
             // (filesystem/tools) is managed from the Tools page instead.
             <>
-              {item.configuredPerInstance
-                ? <MenuRow icon={<Settings2 size={15} />} label="Manage instances" onClick={() => { onAction(app, 'configure'); close() }} />
+              {item.configuredPerInstance || item.configuredPerAutomation
+                ? <MenuRow icon={<Settings2 size={15} />} label={configureLabel(item)} onClick={() => { onAction(app, 'configure'); close() }} />
                 : item.hasConfig
                   ? <MenuRow icon={<Settings2 size={15} />} label="Configure" onClick={() => { onAction(app, 'configure'); close() }} />
                   : <div className="px-m py-2 text-on-surface-low text-[0.75rem]">Always on — manage its tools from the Tools page.</div>}
@@ -302,7 +312,7 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
             </>
           ) : (
             <>
-              {item.enabled && <MenuRow icon={<Settings2 size={15} />} label={item.configuredPerInstance ? 'Manage instances' : 'Configure'} onClick={() => { onAction(app, 'configure'); close() }} />}
+              {item.enabled && <MenuRow icon={<Settings2 size={15} />} label={configureLabel(item)} onClick={() => { onAction(app, 'configure'); close() }} />}
               <MenuRow icon={<RefreshCw size={15} />} label="Update…" onClick={() => { onAction(app, 'update'); close() }} />
               <MenuRow icon={<Power size={15} />} label={item.enabled ? 'Deactivate' : 'Activate'} onClick={() => { onAction(app, 'toggle'); close() }} />
               <div className="my-1 border-t border-outline-variant/30" />
@@ -704,7 +714,8 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     body: open ? (
       <AppDetailPanel app={open} onClose={() => setOpenName('')} onChanged={reload}
         onOpen={() => nav(`app/${encodeURIComponent(open.name)}`)}
-        onManageInstances={() => nav('settings/models?section=providers')} />
+        onManageInstances={() => nav('settings/models?section=providers')}
+        onSetUpInAnAutomation={() => nav('triggers')} />
     ) : (
       <StoreDetailPanel item={openStore!} onInstalled={noteInstalled} />
     ),
@@ -1166,7 +1177,7 @@ function AppCard({ item, onInstall, onOpen, onAction, selected = false }: {
 }) {
   const providerLabel = item.isProvider
     ? `${PROVIDER_ENTITY_LABEL[item.providerType] ?? item.providerType} provider` : ''
-  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, sidecar: item.sidecar, ...updateFields(item) }
+  const app = { name: item.name, displayName: item.displayName, enabled: item.enabled, hasUI: item.hasUI, configuredPerInstance: item.configuredPerInstance, configuredPerAutomation: item.configuredPerAutomation, sidecar: item.sidecar, ...updateFields(item) }
   // Right-click / long-press → the SAME real actions this card dispatches. A native
   // app is always-on (no install lifecycle): omit uninstall/toggle + force-uninstall,
   // and show "Configure" only when it has settings (hasConfig) — a config-less native
@@ -1178,7 +1189,7 @@ function AppCard({ item, onInstall, onOpen, onAction, selected = false }: {
     ? [
         { icon: <Blocks size={15} />, label: 'Details', onSelect: onOpen },
         ...(runs && item.hasUI && item.enabled ? [{ icon: <LayoutGrid size={15} />, label: 'Open page', onSelect: () => onAction(app, 'open') }] : []),
-        ...((runs && item.enabled && (!item.native || item.hasConfig || item.configuredPerInstance)) ? [{ icon: <Settings2 size={15} />, label: item.configuredPerInstance ? 'Manage instances' : 'Configure', onSelect: () => onAction(app, 'configure') }] : []),
+        ...((runs && item.enabled && (!item.native || item.hasConfig || item.configuredPerInstance || item.configuredPerAutomation)) ? [{ icon: <Settings2 size={15} />, label: configureLabel(item), onSelect: () => onAction(app, 'configure') }] : []),
         // A native app is locked on and updated with PersonalClaw — omit update,
         // uninstall/disable + force-uninstall.
         ...(item.native ? [] : [
@@ -1538,10 +1549,12 @@ function UpdateModal({ name, displayName, start, onClose, onUpdated }: {
 
 
 // ── Detail panel ──
-function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: {
+function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances, onSetUpInAnAutomation }: {
   app: AppSummary; onClose: () => void; onChanged: () => void; onOpen: () => void
   /** Where an app configured per instance is configured: Settings → Providers. */
   onManageInstances: () => void
+  /** Where an automation action's fields are set: each automation that runs it. */
+  onSetUpInAnAutomation: () => void
 }) {
   const [busy, setBusy] = useState(false)
   const [confirmUninstall, setConfirmUninstall] = useState(false)
@@ -1670,6 +1683,8 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
               <div className="mt-1 text-on-surface-low" data-type="label-s">
                 {app.configuredPerInstance
                   ? "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. Its settings live on each of its instances, which you add, edit, test and remove in Settings → Models & Providers → Providers."
+                  : app.configuredPerAutomation
+                    ? "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. It is an automation action: its fields are set on each automation that runs it, on the Automations page."
                   : app.hasConfig
                     ? "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. You can change its settings below."
                     : "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. Manage its individual tools from the Tools page."}
@@ -1681,7 +1696,9 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
               )}
               {app.configuredPerInstance
                 ? <Button variant="ghost" size="sm" onClick={onManageInstances}><Settings2 size={15} /> Manage instances</Button>
-                : app.hasConfig && <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>}
+                : app.configuredPerAutomation
+                  ? <Button variant="ghost" size="sm" onClick={onSetUpInAnAutomation}><Settings2 size={15} /> Set up in an automation</Button>
+                  : app.hasConfig && <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>}
             </div>
           </>
         ) : (<>
@@ -1700,7 +1717,9 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
             )}
             {!app.refused && app.enabled && (app.configuredPerInstance
               ? <Button variant="ghost" size="sm" onClick={onManageInstances}><Settings2 size={15} /> Manage instances</Button>
-              : <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>)}
+              : app.configuredPerAutomation
+                ? <Button variant="ghost" size="sm" onClick={onSetUpInAnAutomation}><Settings2 size={15} /> Set up in an automation</Button>
+                : <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>)}
             <Button variant="ghost" size="sm" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>
             {/* The middle removal rung, and a REAL control at last: the force-uninstall
                 dialog has always told users to "use Uninstall instead", and until issue
