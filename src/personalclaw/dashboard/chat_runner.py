@@ -1510,21 +1510,29 @@ def _answered_apart(session: _ChatSession, in_flight: str, depth: int) -> bool:
     return holds_a_turn_not_asked_by(before, asker)
 
 
-def _turn_history(
-    session: _ChatSession, in_flight: str, depth: int, provider_kind: str
-) -> tuple[list[dict], bool]:
-    """What *session*'s turn now being sent is built with of the conversation before it, and
-    whether it is answered apart from its runtime's history. A turn answered apart
-    (:func:`_answered_apart`, said to the turn's work: ``memory_writes.answers_apart``), on the
-    built-in runtime, is: the runtime's earlier turns hold what the channel never showed them
-    (``NativeRuntime._history_for_turn``), so it is built as a fresh runtime's turn is, from the
-    conversation as the channel showed it (``channel_view``). Any other turn, from the session's
-    own prior turns."""
+def _asks_apart(session: _ChatSession, in_flight: str, depth: int, provider_kind: str) -> bool:
+    """Whether the turn now acquiring its runtime gets one built for it alone
+    (``SessionManager.get_or_create``'s ``asked_apart``): it is answered apart
+    (:func:`_answered_apart`), and the runtime keeps its own conversation, as an agent CLI's
+    session does, which holds every earlier turn as its model read it. The built-in runtime's
+    turn is answered apart from its history where it runs (``NativeRuntime._history_for_turn``)."""
     from personalclaw.providers import model_efforts
 
-    owed = _answered_apart(session, in_flight, depth)
-    memory_writes.answers_apart(owed)
-    apart = owed and model_efforts.native_runtime(provider_kind)
+    return _answered_apart(session, in_flight, depth) and not model_efforts.native_runtime(
+        provider_kind
+    )
+
+
+def _turn_history(session: _ChatSession, in_flight: str, depth: int) -> tuple[list[dict], bool]:
+    """What *session*'s turn now being sent is built with of the conversation before it, and
+    whether it is answered apart from its runtime's history. A turn answered apart
+    (:func:`_answered_apart`, said to the turn's work: ``memory_writes.answers_apart``) is: the
+    runtime's earlier turns hold what the channel never showed them, so it is built as a fresh
+    runtime's turn is, from the conversation as the channel showed it (``channel_view``), on the
+    built-in runtime (``NativeRuntime._history_for_turn``) and on an agent CLI's session opened
+    for it alone (:func:`_asks_apart`). Any other turn, from the session's own prior turns."""
+    apart = _answered_apart(session, in_flight, depth)
+    memory_writes.answers_apart(apart)
     transcript = (channel_view if apart else prior_turns_transcript)(
         session, in_flight, nested=depth > 0
     )
@@ -2261,6 +2269,7 @@ async def run_chat(
             reasoning_effort_override=turn_effort or None,
             provider_kind=provider_kind or None,
             acp_mode=acp_mode or None,
+            asked_apart=_asks_apart(session, _in_flight_text, _prompt_depth, provider_kind),
             # Brownfield Code/Goal-Loop workers: let the native file tools also reach
             # the project files dir (engine files live outside the workspace cwd).
             extra_tool_roots=list(getattr(session, "_extra_tool_roots", []) or []) or None,
@@ -2371,9 +2380,7 @@ async def run_chat(
         # from the behaviour it names): THIS session's turns before the one being
         # sent — never the in-flight message, never another session's.
         # Built as a fresh runtime's turn when someone else asked for it (`_turn_history`).
-        _prior_transcript, _apart = _turn_history(
-            session, _in_flight_text, _prompt_depth, provider_kind
-        )
+        _prior_transcript, _apart = _turn_history(session, _in_flight_text, _prompt_depth)
         _fresh = is_new or _apart
         _restores = (
             _fresh

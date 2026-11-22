@@ -41,6 +41,9 @@ In both of those, a prompt that follows a refused one is answered without the co
     answers (:data:`LATE_ANSWER`); every later turn answers at once (:data:`NEXT_ANSWER`).
 ``answers``
     Answers every prompt at once (:data:`PLAIN_ANSWER`), asking nothing.
+``answers-in-own-sessions``
+    Answers as ``answers`` does, but the session each process opens is named for that process
+    (:func:`own_session_id`), so a test can tell whose session a ``session/load`` resumes.
 ``fills-context``
     Answers every prompt at once, :data:`FIRST_REVIEW` first and :data:`LATER_REVIEW` after, and
     reports its context as :data:`FULL_CONTEXT_PCT` full after each answer (the metadata
@@ -97,6 +100,15 @@ import sys
 import time
 
 SESSION_ID = "scripted-session-1"
+#: The scenario whose processes each name the session they open for themselves.
+OWN_SESSIONS = "answers-in-own-sessions"
+
+
+def own_session_id(pid: int) -> str:
+    """The id of the session the ``answers-in-own-sessions`` process *pid* opens."""
+    return f"scripted-session-of-{pid}"
+
+
 PERMISSION_ID = 900
 #: What ``session-refused`` prints and answers.
 REFUSAL_STDERR = "engine: refusing the argument --example-unsupported-flag"
@@ -180,6 +192,8 @@ class Agent:
         self, scenario: str, record_path: str, keys: str = "spec", target: str = ""
     ) -> None:
         self.scenario = scenario
+        #: The session it serves: the one it opened, or the one a ``session/load`` named.
+        self.session_id = SESSION_ID
         self.keys = keys
         self.target = target
         self.record = open(record_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
@@ -212,7 +226,7 @@ class Agent:
         self.send(
             {
                 "method": "session/update",
-                "params": {"sessionId": SESSION_ID, "update": update},
+                "params": {"sessionId": self.session_id, "update": update},
             }
         )
 
@@ -521,7 +535,9 @@ class Agent:
             sys.exit(64)
         elif method == "session/new":
             self.declared_servers = list(params.get("mcpServers") or [])
-            self.send({"id": req_id, "result": {"sessionId": SESSION_ID}})
+            if self.scenario == OWN_SESSIONS:
+                self.session_id = own_session_id(os.getpid())
+            self.send({"id": req_id, "result": {"sessionId": self.session_id}})
         elif method == "session/prompt" and self.scenario in _CALLS_CORE_TOOLS:
             self.note_and_wait(req_id)
         elif method == "session/cancel" and self.scenario in _CALLS_CORE_TOOLS:
@@ -554,7 +570,7 @@ class Agent:
                 self.say(LATE_ANSWER)
             self.prompts_seen += 1
             self.end_turn("end_turn")
-        elif method == "session/prompt" and self.scenario == "answers":
+        elif method == "session/prompt" and self.scenario in ("answers", OWN_SESSIONS):
             self.prompt_id = req_id
             self.say(PLAIN_ANSWER)
             self.end_turn("end_turn")
@@ -594,6 +610,7 @@ class Agent:
         elif method == "session/prompt":
             self.start_turn(req_id)
         elif method == "session/load":
+            self.session_id = str(params.get("sessionId") or SESSION_ID)
             self.send({"id": req_id, "result": {"modes": {"availableModes": []}}})
         elif method == "session/cancel":
             if self.scenario != "ignores-stop":
