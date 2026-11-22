@@ -30,6 +30,14 @@ _ON_MAIN = (
 #: deprecated ``app-id`` input. Not a secret: ``gh api /apps/personalclaw-refresh`` shows it.
 _CLIENT_ID = "${{ vars.REFRESH_APP_CLIENT_ID }}"
 _APP_KEY = "${{ secrets.REFRESH_APP_KEY }}"
+#: What a token step holds, closed: the App, its key and what the token may do, nothing past them.
+#: create-github-app-token also takes ``github-api-url`` (the App's signed request to another
+#: host, where whoever holds it mints tokens for its life past every permission line), ``owner``,
+#: ``repositories`` and ``enterprise`` (more repositories than this one) and ``skip-token-revoke``
+#: (a token alive past the job). A step's own ``env`` reaches the action's node before it runs
+#: (``NODE_OPTIONS``), with the key among its inputs.
+_TOKEN_INPUTS = {"client-id", "private-key"}
+_TOKEN_STEP_KEYS = {"name", "id", "if", "uses", "with"}
 
 
 def _problems(text: str) -> list[str]:
@@ -62,6 +70,17 @@ def _problems(text: str) -> list[str]:
                 found.append(f"{step.get('id')} mints its token from another App or key")
             if "app-id" in given:
                 found.append(f"{step.get('id')} names its App by the deprecated app-id too")
+            extra = sorted(
+                k
+                for k in given
+                if k not in _TOKEN_INPUTS | {"app-id"} and not k.startswith("permission-")
+            )
+            if extra:
+                found.append(f"{step.get('id')} gives the token action {extra} too")
+            if set(step) - _TOKEN_STEP_KEYS:
+                found.append(
+                    f"{step.get('id')} sets {sorted(set(step) - _TOKEN_STEP_KEYS)} on its step"
+                )
             asks = {k: v for k, v in given.items() if k.startswith("permission-")}
             wants = {"permission-contents": "write", "permission-pull-requests": "write"}
             if "workflows == 'true'" in str(step.get("if")):
@@ -82,6 +101,11 @@ def test_the_workflow_writes_only_through_the_apps_token_on_main() -> None:
 
 
 _PR_WRITE = "          permission-pull-requests: write\n"
+#: The first token step from its inputs to its key, where the plants below add to it.
+_KEY_LINE = (
+    "        with:\n          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}\n"
+    "          private-key: ${{ secrets.REFRESH_APP_KEY }}\n"
+)
 _WORKFLOWS_WRITE = "          permission-workflows: write\n"
 #: The token step that asks for workflows write, from its key to its last permission.
 _WITH_WORKFLOWS = (
@@ -132,6 +156,32 @@ _BEFORE_OPEN = _PR_WRITE + "      - name: Open"
             "          RUN_ID: ${{ github.run_id }}",
             "          RUN_ID: ${{ github.run_id }}\n          KEY: ${{ secrets.REFRESH_APP_KEY }}",
             "reads a secret",
+        ),
+        # Any input past the App, its key and its permissions, and any key past a step's own.
+        *(
+            (_KEY_LINE, _KEY_LINE + f"          {line}\n", "gives the token action")
+            for line in (
+                "github-api-url: https://example.invalid/api/v3",
+                "owner: someone-else",
+                "repositories: PersonalClaw,PersonalClawApps",
+                "enterprise: an-enterprise",
+                "skip-token-revoke: true",
+            )
+        ),
+        (
+            _KEY_LINE,
+            _KEY_LINE.replace(
+                "        with:\n",
+                "        env:\n          NODE_OPTIONS: --require ./x.js\n        with:\n",
+            ),
+            "on its step",
+        ),
+        (
+            _KEY_LINE,
+            _KEY_LINE.replace(
+                "        with:\n", "        continue-on-error: true\n        with:\n"
+            ),
+            "on its step",
         ),
     ],
 )
