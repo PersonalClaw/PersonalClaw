@@ -280,6 +280,14 @@ class McpServerConn:
         # the first start; the probe passes the one it read.
         self._seal: str | None = None
 
+    def _elicitation_callback(self) -> Any:
+        """This connection's elicitation callback, or ``None`` when its server isn't granted one:
+        a question it asks names the chat the connection is that chat's own for (``scope``), and
+        for a connection several chats share, it is yours alone (``mcp_elicitation``)."""
+        from personalclaw.mcp_elicitation import elicitation_callback_for
+
+        return elicitation_callback_for(self.name, session=self.scope)
+
     @property
     def error(self) -> str:
         return self._error
@@ -541,8 +549,6 @@ class McpServerConn:
 
             from mcp import ClientSession
 
-            from personalclaw.mcp_elicitation import elicitation_callback_for
-
             async with AsyncExitStack() as stack:
                 try:
                     async with deadline:
@@ -558,7 +564,7 @@ class McpServerConn:
                             ClientSession(
                                 read,
                                 write,
-                                elicitation_callback=elicitation_callback_for(self.name),
+                                elicitation_callback=self._elicitation_callback(),
                             )
                         )
                         await session.initialize()

@@ -22,7 +22,9 @@ batch's request names each task in that chat's words), so it is read as the chat
 * **You read every item:** your Inbox page, and a tool you run from your own pages.
 * **Any other caller reads its own chat's items and those about no chat.** Another chat's item is
   not there for it: not listed, and not counted.
-* **An item whose chat cannot be told is yours alone.**
+* **An item whose chat cannot be told is yours alone,** and so is one that names
+  ``refs.yours_alone`` (:data:`YOURS_ALONE`): the question an MCP server several chats share asks,
+  and the note it leaves when nobody answers.
 
 Every read of the Inbox for anyone but you asks :func:`reads`: ``inbox_list``, wherever it runs (a
 chat's agent, its subagents and workflow steps, a scheduled run, and ``POST /api/tools/invoke``,
@@ -46,6 +48,9 @@ logger = logging.getLogger(__name__)
 
 #: The refs an item names the session it was raised for under.
 _SESSION_REFS = ("session", "chat")
+#: The ref an item names when its chat cannot be told but it may be some chat's: a question an MCP
+#: server shared by several chats asks (``mcp_elicitation``). No chat's agent reads it; you do.
+YOURS_ALONE = "yours_alone"
 #: The refs an item names the run it is about under: a workflow run's id, or a loop's (a loop that
 #: is no workflow run names no run, and is yours).
 _RUN_REFS = ("workflow", "loop")
@@ -91,6 +96,8 @@ def reads(reader: Reader, item: Any) -> bool:
         refs = getattr(item, "refs", None) or {}
         if not isinstance(refs, dict):
             raise ValueError(f"refs is a {type(refs).__name__}")
+        if refs.get(YOURS_ALONE):
+            return False
         for session in _named(refs, _SESSION_REFS):
             spellings = _spellings(session)
             if spellings and not any(reader.reads(key) for key in spellings):

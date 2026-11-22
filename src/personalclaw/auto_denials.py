@@ -46,6 +46,7 @@ from typing import Any
 
 from personalclaw import notification_kinds
 from personalclaw.approval_place import place_refs
+from personalclaw.inbox_reach import YOURS_ALONE
 from personalclaw.textfmt import clip_words
 from personalclaw.workflows import ownership
 
@@ -165,6 +166,9 @@ def note_expired(state: Any, entry: dict[str, Any], *, who: str, window_secs: fl
             **_asked_in(entry),
             **place_refs(session),
             **({"chat": answerable_chat(session)} if answerable_chat(session) else {}),
+            # A question yours alone (`inbox_reach.YOURS_ALONE`) leaves a note as much yours: its
+            # argument line is the server's schema.
+            **({YOURS_ALONE: "1"} if entry.get("yours_alone") else {}),
         },
         dedup_key=f"auto_denied:{entry.get('id') or ''}",
     )
