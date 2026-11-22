@@ -22,8 +22,10 @@ Every server here is a script this test wrote under ``tmp_path``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import os
+import signal
 import sys
 import textwrap
 import time
@@ -415,3 +417,65 @@ async def test_a_program_left_to_finish_does_not_outlive(how, tmp_path, monkeypa
         assert await _gone(pid), f"it went on running after {how}"
         await _all_finished()
         assert server.pid_list() == [pid], "it was started again after it was stopped"
+
+
+@pytest.mark.asyncio
+async def test_two_starts_that_begin_together_start_one_program_that_a_stop_reaches(
+    tmp_path, monkeypatch
+) -> None:
+    """Two connections to one server that start together and both stop waiting for it before it
+    says a word.
+
+    🔴 Red before: each looked only for a start already left to finish, so both started a program
+    beside the other, and both could be left to finish. The second then replaced the first in what
+    a stop reaches, and the first ran on after its server was switched off, until its own time was
+    up."""
+    from personalclaw import sandbox
+
+    server = _Silent(tmp_path, "pair")
+    both_in = asyncio.Event()
+    entered: list[mcp_stdio.StdioRun] = []
+    # Every program a start starts, as it is started: what a stop must reach, whether or not it
+    # got as far as writing down its pid.
+    started: list[Any] = []
+    start_program = sandbox.create_subprocess_limited
+
+    async def _starting(*args: Any, **kwargs: Any) -> Any:
+        proc = await start_program(*args, **kwargs)
+        started.append(proc)
+        return proc
+
+    monkeypatch.setattr(sandbox, "create_subprocess_limited", _starting)
+
+    async def connection() -> mcp_stdio.StdioRun:
+        run = mcp_stdio.StdioRun()
+
+        async def start() -> None:
+            async with mcp_stdio.stdio_streams("pair", server.spec(), run=run):
+                run.stop_waiting()  # its connection gives up before any answer
+                entered.append(run)
+                if len(entered) == 2:
+                    both_in.set()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(both_in.wait(), 1.0)
+
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(start(), 3.0)  # the connection's own deadline
+        return run
+
+    try:
+        runs = await asyncio.gather(connection(), connection())
+        await mcp_stdio.stop_finishing(lambda name: name == "pair")
+
+        pids = [proc.pid for proc in started]
+        assert pids, "no start started its program"
+        assert all([await _gone(pid) for pid in pids]), f"a program outlived the stop: {pids}"
+        assert len(pids) == 1, f"two starts of one program ran side by side: {pids}"
+        assert [run.left_to_finish for run in runs].count(True) == 1, runs
+        assert [run.waiting for run in runs].count(True) == 1, "the other did not wait for it"
+    finally:
+        for proc in started:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+        mcp_stdio.forget_left("pair")
+        await _all_finished()
