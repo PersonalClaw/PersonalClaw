@@ -1236,6 +1236,97 @@ class _HeldHook:
     name: str
 
 
+def _finished(
+    hook: ScriptHook,
+    result: Any,
+    taken: TakenIn,
+    route: Any,
+    *,
+    enforced: bool,
+    record: Callable[[str], None],
+) -> ScriptHookResult:
+    """What *hook*'s fire answers once its action has returned *result* and what it printed was
+    *taken* back through the door (`take_in`, which :func:`run_script_hook` calls itself): the
+    status *record* writes for it, its audit row at the rung *route* gave it, and its exit code.
+    *enforced* says whether the fire gates a tool call, which decides what a block request
+    records."""
+    from personalclaw.guardrails.rungs import record_execution
+
+    withheld = ""
+    if taken.refused:
+        groups = ", ".join(taken.refused)
+        logger.warning(
+            "hook %s: the injection screen refused what it printed (%s); none of it was kept",
+            hook.id,
+            groups,
+        )
+        withheld = (
+            f"“{hook.name or hook.provider}” printed text the injection screen refused "
+            f"({groups}); none of it was kept."
+        )
+
+    if result.blocked:
+        # 🔴 REPORTED ≠ ENFORCED. `ActionResult.blocked` is a REQUEST ("PreToolUse exit_code 2
+        # is a block signal"), not evidence that anything was stopped, and only the gating seam
+        # turns it into a refusal. Writing `blocked` for any exit 2 is what let an informational
+        # fire report `blocked` beside `enforcement: enforcing` while the out-of-workspace write it
+        # claimed to stop landed on disk — measured on codex and again on claude-code, where the
+        # hook fired 3× and the file still held its content. Worse than inert: it reported success.
+        #
+        # `advisory` is deliberately the same word as `ENFORCEMENT_ADVISORY`: one vocabulary, two
+        # levels. `enforcement` says whether this hook CAN block; this says whether the last fire
+        # DID. Both are needed — a bound, enforcing hook still reaches this branch when an ACP
+        # `EVENT_TOOL_CALL` frame arrives already auto-approved.
+        _status = "blocked" if enforced else "advisory"
+    elif result.success:
+        # Honest "started ≠ succeeded": a fire-and-forget action (run-prompt/
+        # run-workflow/invoke-agent) only LAUNCHED a background turn — record
+        # "launched" so the lifecycle-trigger badge doesn't overstate it as a
+        # verified success, matching the schedule path's run-record status.
+        # `queued` is carried through for the same reason and is weaker still: under
+        # `on_overlap: queue` nothing started at all, so folding it into "ok"
+        # would report work that has not begun as work that finished.
+        _status = result.outcome if result.outcome in ("launched", "queued") else "ok"
+        if _status == "ok" and withheld:
+            # It did its work, and what it printed, the context it adds to a turn, was refused:
+            # "ok" would say its output reached the agent.
+            _status = "withheld"
+    elif result.error and "Timed out" in result.error:
+        _status = "timeout"
+    else:
+        _status = "error"
+    record(_status)
+
+    # The run's audit row at the rung it took, and at `auto_with_undo` its undo. Only for an
+    # action that succeeded — a failed action has nothing to take back.
+    if result.success:
+        record_execution(
+            route,
+            result,
+            label=hook.name or hook.provider,
+            refs={"hook": hook.id, "provider": hook.provider},
+        )
+
+    # A provider that populated the envelope on a failed result surfaces its
+    # WHAT/WHY/FIX text as the error (else the plain provider error string).
+    error_text = result.agent_error.render() if result.agent_error is not None else result.error
+    # An action that failed before it exited of its own (its command could not start, was refused
+    # its sandbox or timed out, its provider failed) gave no answer, so it has no exit code: -1, as
+    # every fire above that did not run, never the 0 its result defaults to, which reads as a hook
+    # that exited cleanly and let the call go on (`pre_tool_hooks`).
+    exited = result.success or result.blocked or (result.exit_code or 0) > 0
+    return ScriptHookResult(
+        hook_id=hook.id,
+        hook_name=hook.name,
+        event=hook.event,
+        stdout=taken.stdout,
+        stderr=taken.stderr,
+        exit_code=result.exit_code if exited and result.exit_code is not None else -1,
+        error=" ".join(text for text in (error_text, withheld) if text),
+        duration_ms=result.duration_ms,
+    )
+
+
 async def run_script_hook(
     hook: ScriptHook,
     context: str = "",
@@ -1431,7 +1522,6 @@ async def run_script_hook(
     # The route comes from the provider NAME alone — the name→type mapping lives on the
     # declaration (`ActionTypeSpec.providers`), so an app-contributed provider is routed by
     # these same lines with no branch of its own here.
-    from personalclaw.guardrails.rungs import record_execution
     from personalclaw.guardrails.rungs import route_provider_action as _route_action
 
     route = _route_action(hook.provider, session_key=_session_key)
@@ -1481,79 +1571,7 @@ async def run_script_hook(
     # screened and fenced as what went out was (`take_in`); what the screen refuses is kept as
     # nothing, and the result says so in its own sentence.
     taken = take_in(hook, result.stdout or "", result.stderr or "", blocked=bool(result.blocked))
-    withheld = ""
-    if taken.refused:
-        groups = ", ".join(taken.refused)
-        logger.warning(
-            "hook %s: the injection screen refused what it printed (%s); none of it was kept",
-            hook.id,
-            groups,
-        )
-        withheld = (
-            f"“{hook.name or hook.provider}” printed text the injection screen refused "
-            f"({groups}); none of it was kept."
-        )
-
-    if result.blocked:
-        # 🔴 REPORTED ≠ ENFORCED. `ActionResult.blocked` is a REQUEST ("PreToolUse exit_code 2
-        # is a block signal"), not evidence that anything was stopped, and only the gating seam
-        # turns it into a refusal. Writing `blocked` for any exit 2 is what let an informational
-        # fire report `blocked` beside `enforcement: enforcing` while the out-of-workspace write it
-        # claimed to stop landed on disk — measured on codex and again on claude-code, where the
-        # hook fired 3× and the file still held its content. Worse than inert: it reported success.
-        #
-        # `advisory` is deliberately the same word as `ENFORCEMENT_ADVISORY`: one vocabulary, two
-        # levels. `enforcement` says whether this hook CAN block; this says whether the last fire
-        # DID. Both are needed — a bound, enforcing hook still reaches this branch when an ACP
-        # `EVENT_TOOL_CALL` frame arrives already auto-approved.
-        _status = "blocked" if enforced else "advisory"
-    elif result.success:
-        # Honest "started ≠ succeeded": a fire-and-forget action (run-prompt/
-        # run-workflow/invoke-agent) only LAUNCHED a background turn — record
-        # "launched" so the lifecycle-trigger badge doesn't overstate it as a
-        # verified success, matching the schedule path's run-record status.
-        # `queued` is carried through for the same reason and is weaker still: under
-        # `on_overlap: queue` nothing started at all, so folding it into "ok"
-        # would report work that has not begun as work that finished.
-        _status = result.outcome if result.outcome in ("launched", "queued") else "ok"
-        if _status == "ok" and withheld:
-            # It did its work, and what it printed, the context it adds to a turn, was refused:
-            # "ok" would say its output reached the agent.
-            _status = "withheld"
-    elif result.error and "Timed out" in result.error:
-        _status = "timeout"
-    else:
-        _status = "error"
-    _record(_status)
-
-    # The run's audit row at the rung it took, and at `auto_with_undo` its undo. Only for an
-    # action that succeeded — a failed action has nothing to take back.
-    if result.success:
-        record_execution(
-            route,
-            result,
-            label=hook.name or hook.provider,
-            refs={"hook": hook.id, "provider": hook.provider},
-        )
-
-    # A provider that populated the envelope on a failed result surfaces its
-    # WHAT/WHY/FIX text as the error (else the plain provider error string).
-    error_text = result.agent_error.render() if result.agent_error is not None else result.error
-    # An action that failed before it exited of its own (its command could not start, was refused
-    # its sandbox or timed out, its provider failed) gave no answer, so it has no exit code: -1, as
-    # every fire above that did not run, never the 0 its result defaults to, which reads as a hook
-    # that exited cleanly and let the call go on (`pre_tool_hooks`).
-    answered = result.success or result.blocked or (result.exit_code or 0) > 0
-    return ScriptHookResult(
-        hook_id=hook.id,
-        hook_name=hook.name,
-        event=hook.event,
-        stdout=taken.stdout,
-        stderr=taken.stderr,
-        exit_code=result.exit_code if answered and result.exit_code is not None else -1,
-        error=" ".join(text for text in (error_text, withheld) if text),
-        duration_ms=result.duration_ms,
-    )
+    return _finished(hook, result, taken, route, enforced=enforced, record=_record)
 
 
 # ── Script Hook Store (persistence) ──
