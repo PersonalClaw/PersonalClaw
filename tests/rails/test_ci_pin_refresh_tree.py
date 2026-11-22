@@ -2,8 +2,10 @@
 
 The weekly refresh runs only on its schedule and a dispatch, on main, from one job in the
 ``pin-refresh`` environment whose own token reads only and whose checkout keeps no credential.
-Its writes go through the pin-refresh App's token, minted from ``vars.REFRESH_APP_ID`` and
-``secrets.REFRESH_APP_KEY``, which asks for workflows write only when a workflow file changed.
+Its writes go through the pin-refresh App's token, minted from the App's client ID
+(``vars.REFRESH_APP_CLIENT_ID``), or its ID (``vars.REFRESH_APP_ID``) until the workflow moves off
+the deprecated ``app-id`` input, and ``secrets.REFRESH_APP_KEY``, which asks for workflows write
+only when a workflow file changed.
 The tool moves each image whose tag has moved and each action to its newest week-old release on
 its major line (or its own moved tag), every copy in the tree, and opens the edit on a branch of
 its own with the token kept off every command line. Each rule fails on a planted edit.
@@ -27,6 +29,15 @@ _ON_MAIN = (
     "${{ github.ref == 'refs/heads/main' && github.repository == 'PersonalClaw/PersonalClaw' }}"
 )
 _APP_ID = "${{ vars.REFRESH_APP_ID }}"
+#: The App named by its client ID, which create-github-app-token takes in place of its
+#: deprecated ``app-id`` input. Not a secret: ``gh api /apps/personalclaw-refresh`` shows it.
+_CLIENT_ID = "${{ vars.REFRESH_APP_CLIENT_ID }}"
+#: A token step names the App one way or the other, never both: by its ID until the workflow
+#: moves, then by its client ID. The rail takes either now, so the workflow's own move passes
+#: main's contract.
+_NAMED = ({"app-id": _APP_ID}, {"client-id": _CLIENT_ID})
+_BY_APP_ID = "          app-id: ${{ vars.REFRESH_APP_ID }}\n"
+_BY_CLIENT_ID = "          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}\n"
 _APP_KEY = "${{ secrets.REFRESH_APP_KEY }}"
 
 
@@ -56,7 +67,8 @@ def _problems(text: str) -> list[str]:
             found.append("the checkout keeps its credentials")
         if uses.startswith("actions/create-github-app-token@"):
             tokens.append(step)
-            if given.get("app-id") != _APP_ID or given.get("private-key") != _APP_KEY:
+            named = {k: given[k] for k in ("app-id", "client-id") if k in given}
+            if named not in _NAMED or given.get("private-key") != _APP_KEY:
                 found.append(f"{step.get('id')} mints its token from another App or key")
             asks = {k: v for k, v in given.items() if k.startswith("permission-")}
             wants = {"permission-contents": "write", "permission-pull-requests": "write"}
@@ -118,6 +130,43 @@ def test_each_rule_fails_on_a_planted_edit(old: str, new: str, says: str) -> Non
     text = _WORKFLOW.read_text(encoding="utf-8")
     assert old in text, f"the plant's anchor is not in the workflow: {old!r}"
     assert any(says in p for p in _problems(text.replace(old, new, 1)))
+
+
+def _named_by(line: str) -> str:
+    """The workflow with each token step naming the App by *line*, whichever way it does now."""
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    return text.replace(_BY_APP_ID, line).replace(_BY_CLIENT_ID, line)
+
+
+@pytest.mark.parametrize("line", [_BY_APP_ID, _BY_CLIENT_ID], ids=["app-id", "client-id"])
+def test_the_app_is_named_by_its_id_or_its_client_id(line: str) -> None:
+    text = _named_by(line)
+    assert text.count(line) == 2
+    assert _problems(text) == []
+
+
+@pytest.mark.parametrize(
+    "line, new",
+    [
+        (_BY_APP_ID, "          app-id: ${{ vars.CONTROLLER_APP_ID }}\n"),
+        (_BY_CLIENT_ID, "          client-id: ${{ vars.CONTROLLER_APP_CLIENT_ID }}\n"),
+        # Both ways at once: which App the token is for is the action's to pick.
+        (_BY_APP_ID, _BY_APP_ID + _BY_CLIENT_ID),
+        (_BY_CLIENT_ID, _BY_CLIENT_ID + _BY_APP_ID),
+        # Neither: the key alone names no App.
+        (_BY_CLIENT_ID, ""),
+    ],
+    ids=[
+        "another App's ID",
+        "another App's client ID",
+        "both, ID first",
+        "both, client ID first",
+        "neither",
+    ],
+)
+def test_another_app_or_both_names_fail(line: str, new: str) -> None:
+    text = _named_by(line)
+    assert any("another App" in p for p in _problems(text.replace(line, new, 1)))
 
 
 #: The pin-refresh App's ID (#4585), also the repository variable REFRESH_APP_ID; not a secret.
