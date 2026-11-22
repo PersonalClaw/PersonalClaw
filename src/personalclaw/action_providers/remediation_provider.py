@@ -96,7 +96,11 @@ class SelfRemediationActionProvider(ActionProvider):
         # person can repair keeps the score down for good, and waking every few minutes to find
         # nothing to run would make that the most expensive state to be in.
         healthy = result.fixable_after <= 100.0 - _rem.HEALTHY_SCORE
-        rearmed = _rearm(healthy=healthy, cfg=cfg, now=now)
+        # Nor does a fix it can only wait for: a pass whose every planned job was in its cooldown
+        # ran nothing, and a pass five minutes later would find the same. It looks again when the
+        # soonest of them is due, or at the long cadence, whichever comes first.
+        waits_until = result.next_due_at if not healthy and result.ran_nothing_but_waits() else 0.0
+        rearmed = _rearm(healthy=healthy or bool(waits_until), cfg=cfg, now=now, until=waits_until)
 
         # A maintenance job that failed must not read as a quiet success — the engine owns passes
         # whose absence is invisible (prunes, index reconciliation). Carried through the FIRE's
@@ -135,8 +139,11 @@ def _cadence_secs(cfg: Any) -> tuple[int, int]:
     return healthy, degraded
 
 
-def _rearm(*, healthy: bool, cfg: Any, now: float) -> str:
+def _rearm(*, healthy: bool, cfg: Any, now: float, until: float = 0.0) -> str:
     """Write the run's health verdict onto the spec and recompute `next_fire_at`. Returns the label.
+
+    *until*, when later than *now*, is when the job the engine waits on is due: the next fire is
+    then that or the long cadence's, whichever comes first.
 
     Best-effort: a store write that fails leaves the tick's own pre-fire arm standing, which is a
     cadence that is merely stale rather than a trigger that stops firing. Returns `""` when nothing
@@ -145,6 +152,7 @@ def _rearm(*, healthy: bool, cfg: Any, now: float) -> str:
     try:
         from personalclaw.config.loader import config_dir
         from personalclaw.triggers.arm import arm as _arm
+        from personalclaw.triggers.service import to_iso
         from personalclaw.triggers.store import TriggerStore
 
         store = TriggerStore(base_dir=config_dir())
@@ -164,10 +172,13 @@ def _rearm(*, healthy: bool, cfg: Any, now: float) -> str:
         )
         trigger.spec = spec
         armed = _arm(trigger, now=now)
+        secs: float = healthy_secs if healthy else degraded_secs
+        if armed and now < until < now + secs:
+            secs = until - now
+            armed = to_iso(until)
         if armed:
             trigger.next_fire_at = armed
         store.upsert(trigger)
-        secs = healthy_secs if healthy else degraded_secs
         return f"{max(1, round(secs / 60))}m"
     except Exception:  # noqa: BLE001 - see the docstring
         logger.debug("could not re-arm the remediation trigger", exc_info=True)

@@ -572,6 +572,14 @@ def _in_cooldown(job: RemediationJob, state: dict[str, dict], *, now: float) -> 
     return isinstance(last, (int, float)) and (now - last) < job.cooldown_hours * 3600.0
 
 
+def _due_at(job: RemediationJob, state: dict[str, dict]) -> float:
+    """When *job*'s cooldown ends (epoch seconds), or 0 for a job that is not in one."""
+    last = state.get(job.id, {}).get("last_success_ts")
+    if job.cooldown_hours <= 0 or not isinstance(last, (int, float)):
+        return 0.0
+    return float(last) + job.cooldown_hours * 3600.0
+
+
 # ── The engine run ────────────────────────────────────────────────────────────
 
 
@@ -585,6 +593,14 @@ class RunResult:
     #: input. A failed check nothing automatic repairs lowers the SCORE, not this, so it does not
     #: keep the engine waking every few minutes to find it still has nothing to do.
     fixable_after: float = 0.0
+    #: When the soonest job this pass passed over for its cooldown is due again (epoch seconds),
+    #: or 0 when it passed over none. A pass that could run nothing but jobs in their cooldown has
+    #: nothing to do before then (`action_providers.remediation_provider`).
+    next_due_at: float = 0.0
+
+    def ran_nothing_but_waits(self) -> bool:
+        """Whether every job this pass planned was in its cooldown: it could run none of them."""
+        return bool(self.jobs) and all(j.get("status") == "skipped_cooldown" for j in self.jobs)
 
 
 #: The stop reason when what keeps the score under its target needs a person. One string, so the
@@ -648,7 +664,12 @@ def run_remediation(
                 result.stopped_reason = f"max_cost_usd ${max_cost_usd} reached"
                 break
         if _in_cooldown(job, state, now=now):
-            result.jobs.append({"id": job.id, "status": "skipped_cooldown", "cost": 0.0})
+            due = _due_at(job, state)
+            result.jobs.append(
+                {"id": job.id, "status": "skipped_cooldown", "cost": 0.0, "due_at": due}
+            )
+            if due and (not result.next_due_at or due < result.next_due_at):
+                result.next_due_at = due
             continue
         if dry_run:
             result.jobs.append({"id": job.id, "status": "would_run", "cost": 0.0})
