@@ -68,7 +68,10 @@ class DegradedContract:
     returns the pending-enrichment count (read-only, fail-safe). ``drain`` re-enriches
     the backlog when a provider returns; it is ``None`` for a surface whose floor is
     "feature off" or "honestly unavailable", because those have nothing to queue and a
-    drain hook there would be a control nothing can ever move.
+    drain hook there would be a control nothing can ever move. ``optional`` marks a capability
+    most setups never turn on (speech-to-text needs an app most people never install): while no
+    model is chosen for it, it is off by choice rather than waiting on one, and the header's model
+    chip leaves it out.
     """
 
     surface: str
@@ -77,6 +80,7 @@ class DegradedContract:
     floor: str
     backlog_probe: BacklogProbe = lambda: 0
     drain: Optional[DrainFn] = None
+    optional: bool = False
 
 
 # ── The module registry ──────────────────────────────────────────────────────
@@ -197,7 +201,8 @@ def _problem(
 
 def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
     """Evaluate every contract → a list of ``{surface, label, available, floor, backlog,
-    use_cases, model_chosen, problem}`` rows (the ``GET /api/resilience/degraded`` payload).
+    use_cases, model_chosen, problem, optional}`` rows (the ``GET /api/resilience/degraded``
+    payload).
 
     ``model_chosen`` is False on an unavailable surface when no model is chosen for a use case
     it needs (``provider_bridge.model_chosen``): it is waiting on a choice, not degraded, and the
@@ -231,6 +236,7 @@ def evaluate(*, notify: bool = False, state: object = None) -> list[dict]:
                 "use_cases": list(contract.use_cases),
                 "model_chosen": chosen,
                 "problem": problem,
+                "optional": contract.optional,
             }
         )
         if notify:
@@ -823,6 +829,7 @@ def _register_builtin_contracts() -> None:
             use_cases=("stt",),
             floor="Speech-to-text is simply off without a model — its pipeline nodes are skipped, "
             "not errored. Bind an STT model to turn it on.",
+            optional=True,
         )
     )
     # browse — its own surface rather than `assistant_reasoning`, because the no-model shape

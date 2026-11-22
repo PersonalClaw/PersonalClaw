@@ -402,6 +402,9 @@ export interface DegradedSurface {
   /** What an unavailable surface waits on, as one sentence — the one its notice says: that no
    *  model is chosen, or why the chosen one cannot serve. `null` on an available surface. */
   problem?: string | null
+  /** A capability most setups never turn on (Transcription needs a speech-to-text app). With no
+   *  model chosen for it, it is off by choice, not waiting on one. */
+  optional?: boolean
 }
 /** One scheduled backup job's last run + whether it's due. */
 export interface DurabilityJob {
