@@ -44,8 +44,15 @@ def _run(spec: dict | None = None) -> str:
     return run.id
 
 
+@web.middleware
+async def _as_the_owner(request: web.Request, handler):
+    """What the auth middleware sets for a signed-in session of hers: these requests are hers."""
+    request["user"] = "owner"
+    return await handler(request)
+
+
 def _app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[_as_the_owner])
     # No `state` key: `_guard` treats a missing state as unrestricted, which is the non-restricted
     # path this module is testing. The restricted path is covered in test_workflows_api.py.
     H.register_workflow_routes(app)

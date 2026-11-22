@@ -126,14 +126,23 @@ def parse_policy(spec: dict[str, Any] | None) -> DropPolicy:
     return DropPolicy(enabled=True, auto_accept_mimes=[str(m) for m in mimes if str(m).strip()])
 
 
-def approval_required(policy: DropPolicy, mime: str, *, confirmed: bool) -> tuple[bool, str]:
+def approval_required(
+    policy: DropPolicy, mime: str, *, confirmed: bool, by_app: bool = False
+) -> tuple[bool, str]:
     """Whether this file still needs a human, and what the human is being asked to accept.
 
     Ordered so an auto-accepted MIME never consults ``confirmed``: a template that declared
     ``image/*`` gets its screenshots without a prompt, and a caller cannot use ``confirm:true`` to
     widen that declaration to types the author excluded — the confirm flag ANSWERS the gate, it does
-    not bypass the policy.
+    not bypass the policy. ``confirmed`` is the owner's own confirmation, never a sender's
+    (``handlers.api_run_drop``).
+
+    🔴 A file an app hands a run (*by_app*) always waits for her, whatever the template
+    auto-accepts: a step reads what was dropped (``{{run.dropped}}``), and an app's own template
+    could auto-accept ``text/*`` and let in every file it sent without her.
     """
+    if by_app:
+        return True, "a file an app hands this run waits for you: it lands only when you drop it"
     if policy.auto_accepts(mime):
         return False, "auto-accepted by the workflow's declared MIME types"
     if confirmed:
