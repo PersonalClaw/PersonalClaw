@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Code2, Loader2, ListChecks, FolderTree, HelpCircle } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -39,8 +40,11 @@ export { StageTasks, ProjectFooter, CockpitMeta, resolveTouchedPath, missingComm
  *  Each region is a controller and its view under `cockpit/`; this page composes them around
  *  `useCodeCockpit`, the cockpit's state.
  */
-export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProject, onStartNew, navigate, query, setQuery }: {
+export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProject, onStartNew, onStatus, navigate, query, setQuery }: {
   id: string
+  /** Told the project's status whenever its read or stream brings in a new one: the section opens a
+   *  project that has not launched on its walkthrough or Plan Review, which this page is not for. */
+  onStatus?: (status: string) => void
   onBack: () => void
   onDeleted: () => void
   /** Start a NEW target reusing this project's workspace + context. Receives the
@@ -59,6 +63,10 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     runtimes, runtimesLoaded, answerOnScreen, setAnswerOnScreen, answerWanted, setAnswerWanted, answerShown,
     tasksNonce, setTasksNonce, connected, activityBySession, refetchTasks,
   } = useCodeCockpit({ id, query, setQuery })
+  const status = project && project !== 'missing' ? project.status : null
+  const onStatusRef = useRef(onStatus)
+  onStatusRef.current = onStatus
+  useEffect(() => { if (status) onStatusRef.current?.(status) }, [status])
   if (project === null) {
     return <Shell title="Project" onBack={onBack}><Centered>
       {loadErr ? (
