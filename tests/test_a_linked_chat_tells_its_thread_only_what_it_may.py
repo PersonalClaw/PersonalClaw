@@ -152,6 +152,44 @@ async def test_a_helper_its_thread_started_is_answered_in_the_thread(tmp_path, m
 
 
 @pytest.mark.asyncio
+async def test_the_turn_engine_records_the_thread_a_helpers_work_was_asked_for_on(
+    tmp_path, monkeypatch, thread
+):
+    """The turn of her message on the thread records where it came from (``run_chat`` →
+    ``memory_writes.started_on``): a helper that turn starts carries the thread's source, and the
+    reply to its report is answered in the thread. With no start recorded, the reply goes to her DM
+    instead, which costs the thread its answer."""
+    from personalclaw import memory_writes
+    from personalclaw.dashboard.state import SUBAGENT_COMPLETION_PREFIX
+    from personalclaw.subagent import SubagentInfo
+    from personalclaw.subagent_endings import report_meta
+
+    seen: dict[str, dict[str, str]] = {}
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        real = gw.agent.complete
+
+        def complete(*args, **kwargs):
+            # What a helper spawned now records (``SubagentManager.spawn``): the turn's start.
+            chat = gw.state.get_linked_session(THREAD)
+            if chat is not None and "origin" not in seen:
+                seen["origin"] = memory_writes.origin_for(chat.key)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(gw.agent, "complete", complete)
+        chat = await _a_linked_chat(gw)
+        assert seen.get("origin") == arrived_on(THREAD, OWNER, PROVIDER), seen
+        before = thread.heard()
+        helper = SubagentInfo(
+            id="h1e2l3p4", task="Find the offsite venue", started_on=seen["origin"]
+        )
+        report = f"{SUBAGENT_COMPLETION_PREFIX}\n{REPORT}"
+        await _run(gw, chat, "subagent", report, report_meta({}, [helper]))
+    posted = thread.heard()[len(before) :]
+    assert any(post.startswith("deliver_chat_mirror") for post in posted), posted
+    assert thread.replied_in() == []
+
+
+@pytest.mark.asyncio
 async def test_a_helper_started_from_the_dashboard_answers_in_her_dm(tmp_path, monkeypatch, thread):
     """🔴 Red before: the reply to work she started from the dashboard reached her nowhere off the
     dashboard. It goes to her DM, never into the shared thread."""
@@ -339,13 +377,29 @@ async def test_a_channel_that_never_says_whose_dm_it_is_holds_no_turn(
     async def _never(_owner):
         await asyncio.Event().wait()
 
+    import time
+
     thread.handle.open_dm = AsyncMock(side_effect=_never)
     monkeypatch.setattr(channel_links, "AUDIENCE_WAIT_SECS", 0.05)
+    # The check itself gives up within a small multiple of its wait, saying the thread is shared.
+    began = time.monotonic()
+    assert not await asyncio.wait_for(
+        channel_links.is_the_owners_own_dm(
+            PROVIDER, CHANNEL, thread.handle, wait=channel_links.AUDIENCE_WAIT_SECS
+        ),
+        timeout=1,
+    )
+    assert time.monotonic() - began < 20 * channel_links.AUDIENCE_WAIT_SECS
     async with _gateway(tmp_path, monkeypatch) as gw:
         chat = await _a_linked_chat(gw)
         before = thread.heard()
+        began = time.monotonic()
         await asyncio.wait_for(_run(gw, chat, "user", NOTE), timeout=20)
+        took = time.monotonic() - began
     assert thread.heard() == before
+    thread.handle.open_dm.assert_awaited()
+    # Bounded by the check's wait, not by an outer limit that ends a turn some 30 s on.
+    assert took < 5, f"her turn waited {took:.1f} s on a channel that never answered"
 
 
 #: What a compaction says of a conversation in the chat: the model's account of it.
