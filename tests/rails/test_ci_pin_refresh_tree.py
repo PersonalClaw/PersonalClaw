@@ -513,6 +513,16 @@ def test_a_tool_moves_to_its_newest_week_old_final_release_on_its_line() -> None
                 ("2.11.0", 2),  # inside the cooldown
                 ("3.0.0", 30),  # another major line
             ),
+            # A month-old release that gained a file yesterday waits: pip may pick that file.
+            "wheel": {
+                "releases": {
+                    "0.48.0": _pypi(("0.48.0", 90))["releases"]["0.48.0"],
+                    "0.48.2": [
+                        _pypi(("x", 30))["releases"]["x"][0],
+                        _pypi(("x", 1))["releases"]["x"][0],
+                    ],
+                }
+            },
             # Below 1.0 a minor is its own line.
             "uv": _pypi(("0.13.1", 90), ("0.13.4", 10), ("0.14.0", 30)),
         }
@@ -520,6 +530,13 @@ def test_a_tool_moves_to_its_newest_week_old_final_release_on_its_line() -> None
     assert pin_refresh.newest_tool(fetch, "pip-audit", "2.10.1", NOW) == ("2.10.3", "")
     assert pin_refresh.newest_tool(fetch, "pip-audit", "2.10.3", NOW) == (None, "")
     assert pin_refresh.newest_tool(fetch, "uv", "0.13.1", NOW) == ("0.13.4", "")
+    assert pin_refresh.newest_tool(fetch, "wheel", "0.48.0", NOW) == (None, "")
+    # Only ASCII digits make a version: PEP 440's, as PyPI serves them.
+    assert pin_refresh._final("2.\u0661\u0661.0") is None and pin_refresh._final("2.11.0") == (
+        2,
+        11,
+        0,
+    )
     gone = pin_refresh.newest_tool(_fetch({}), "pip-audit", "2.10.1", NOW)
     assert gone[0] is None and "unresolved" in gone[1]
 
@@ -530,12 +547,28 @@ _TOOL_FILES = [
     ("tools/ci/catalogue.toml", 'install = "uv pip install pip-audit==2.10.1"\n'),
     # An app's own dependency in a fixture is not something CI or the image installs.
     ("web/e2e/fixtures/app-catalog.json", '"pythonDependencies": ["rapidocr==1.2.3"]\n'),
+    # Nor a pin on a line that installs nothing, nor one the catalogue's argv list installs.
+    (".github/workflows/notes.yml", '    run: echo "V==1.2.3"\n'),
+    (
+        ".github/workflows/desktop.yml",
+        "    run: |\n      uv pip install --python .venv/bin/python \\\n"
+        "        pyinstaller==6.22.3\n",
+    ),
 ]
 
 
 def test_the_tools_read_are_what_ci_and_the_image_install_outside_the_lock() -> None:
     pins = pin_refresh.tool_pins(_TOOL_FILES, 'required-version = ">=0.13.1"\n', ["packaging"])
-    assert sorted(pins) == [("pip-audit", "2.10.1"), ("uv", "0.13.1"), ("wheel", "0.48.0")]
+    assert sorted(pins) == [
+        ("pip-audit", "2.10.1"),
+        ("pyinstaller", "6.22.3"),
+        ("uv", "0.13.1"),
+        ("wheel", "0.48.0"),
+    ]
+    argv = '{ argv = ["uv", "pip", "install", "--python", "x", "pip-audit==2.10.1"] }\n'
+    assert pin_refresh.tool_pins([("tools/ci/catalogue.toml", argv)], "", []) == {
+        ("pip-audit", "2.10.1"): "tools/ci/catalogue.toml"
+    }
 
 
 def test_a_tool_pypi_cannot_answer_for_is_not_resolved_and_not_moved() -> None:

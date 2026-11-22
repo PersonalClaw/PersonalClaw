@@ -12,8 +12,9 @@ edit they ask for, and opens it as one pull request that merges like any other.
   that was published at least :data:`COOLDOWN_DAYS` ago, Dependabot's own cooldown, or, when no
   newer one is, the commit its own tag names now if that tag has moved. Every copy of the old SHA
   in the tree moves, and its ``# vX.Y.Z`` comment with it;
-- each tool CI or the image installs by hand (``name==X.Y.Z`` in a workflow, a local action, a
-  Dockerfile or the catalogue, for a package uv.lock does not hold, so no lock update moves it)
+- each tool CI or the image installs by hand (``name==X.Y.Z`` on a line of a workflow, a local
+  action, a Dockerfile or the catalogue that installs it, for a package uv.lock does not hold, so
+  no lock update moves it)
   and uv's one release (``[tool.uv] required-version``): the newest final release on PyPI on the
   same line (the same major, or the same minor below 1.0) published at least
   :data:`COOLDOWN_DAYS` ago. Its copies move under :data:`TOOL_EDIT_ROOTS`; uv's in setup-uv's
@@ -66,7 +67,17 @@ _TOOL_INSTALLS = re.compile(
 #: read the pins from the tree) or CHANGELOG.md, whose entries are history.
 TOOL_EDIT_ROOTS = (".github/", "deploy/", "tools/ci/", "docs/", "pyproject.toml")
 PYPI = "https://pypi.org/pypi/{name}/json"
-_TOOL_PIN = re.compile(r"(?<![\w.-])([A-Za-z0-9][A-Za-z0-9_.-]*)==(\d+(?:\.\d+)+)(?![\w.])")
+_TOOL_PIN = re.compile(
+    r"(?<![\w.-])([A-Za-z0-9][A-Za-z0-9_.-]*)==(\d+(?:\.\d+)+)(?![\w.])", re.ASCII
+)
+#: A line that installs what it names: pip's or uv's install, uv's ``--with``, ``uvx``, as a shell
+#: line or as the catalogue's argv list. A pin on any other line (``echo V==1.2.3``) is no tool.
+_INSTALLS = re.compile(
+    r"\b(?:pip3?|pipx)[\s\",]+install\b|\buv[\s\",]+(?:pip|tool)[\s\",]+install\b"
+    r"|--with\b|\buvx\b",
+    re.ASCII,
+)
+_FINAL = re.compile(r"\d+(?:\.\d+)*", re.ASCII)
 _UV_FLOOR = re.compile(r'^required-version = ">=(\d+\.\d+\.\d+)"$', re.M)
 GH_TIMEOUT_SECONDS = 60
 _KEY = re.compile(r"<!-- pin-refresh: ([0-9a-f]{64}) -->")
@@ -199,8 +210,9 @@ def plan_actions(
 
 def _final(version: str) -> tuple[int, ...] | None:
     """*version* as numbers when it is a final release (``2.10.1``, ``2026.8``), else None."""
-    parts = version.split(".")
-    return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
+    if not _FINAL.fullmatch(version):
+        return None
+    return tuple(int(p) for p in version.split("."))
 
 
 def _line(version: tuple[int, ...]) -> tuple[int, ...]:
@@ -216,8 +228,9 @@ def newest_tool(
     fetch: action_pins.Fetch, name: str, version: str, now: dt.datetime
 ) -> tuple[str | None, str]:
     """The newest final release of *name* on PyPI on *version*'s line, newer than it and uploaded
-    at least :data:`COOLDOWN_DAYS` before *now*, or None when there is none; with the reason when
-    PyPI gave no answer to read."""
+    at least :data:`COOLDOWN_DAYS` before *now*, every file of it (a wheel added yesterday to a
+    month-old release waits too), or None when there is none; with the reason when PyPI gave no
+    answer to read."""
     pinned = _final(version)
     if pinned is None:
         return None, f"unresolved: {version} is not a final release"
@@ -240,7 +253,7 @@ def newest_tool(
                 times.append(dt.datetime.fromisoformat(stamp))
             except ValueError:
                 continue
-        if times and min(times) <= cutoff and (best is None or parsed > best[0]):
+        if times and max(times) <= cutoff and (best is None or parsed > best[0]):
             best = (parsed, str(candidate))
     return (best[1] if best else None), ""
 
@@ -255,9 +268,13 @@ def tool_pins(
     for rel, text in files:
         if not _TOOL_INSTALLS.fullmatch(rel):
             continue
-        for m in _TOOL_PIN.finditer(text):
-            if _normal(m[1]) not in held:
-                found.setdefault((m[1], m[2]), rel)
+        # A shell line continued with a backslash is one command.
+        for line in re.sub(r"\\\n", " ", text).splitlines():
+            if not _INSTALLS.search(line):
+                continue
+            for m in _TOOL_PIN.finditer(line):
+                if _normal(m[1]) not in held:
+                    found.setdefault((m[1], m[2]), rel)
     floor = _UV_FLOOR.search(pyproject)
     if floor:
         found.setdefault(("uv", floor[1]), "pyproject.toml")
