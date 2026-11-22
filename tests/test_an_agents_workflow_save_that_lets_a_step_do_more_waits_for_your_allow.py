@@ -334,7 +334,11 @@ async def test_with_nowhere_to_ask_it_is_refused_saying_why(gateway, monkeypatch
 
     def unanswered(path: str, body: dict | None = None) -> dict:
         called.append(path)
-        return {"error": f"the gateway did not answer POST {path} within 30 s", "timed_out": True}
+        return {
+            "error": f"the gateway did not answer POST {path} within 30 s",
+            "timed_out": True,
+            mcp_core.CALL_FAILED: True,
+        }
 
     monkeypatch.setattr(mcp_core, "_post", unanswered)
 

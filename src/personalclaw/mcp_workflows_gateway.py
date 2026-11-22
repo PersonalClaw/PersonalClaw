@@ -28,7 +28,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlencode
 
-from personalclaw.mcp_core import GATEWAY_READ_TIMEOUT_SECS, _delete, _get, _post
+from personalclaw.mcp_core import GATEWAY_READ_TIMEOUT_SECS, _delete, _get, _post, call_failed
 from personalclaw.mcp_workflows import (
     SUMMARIES,
     _fmt,
@@ -125,7 +125,7 @@ def _check(args: dict[str, Any]) -> str:
     """The agent's dry run of a save: the gateway checks it and writes nothing."""
     fields = definition_fields(args)
     reply = _post("/api/workflows/agent-saves", {**fields, "save": False})
-    if not reply.get("error") and reply.get("valid"):
+    if not call_failed(reply) and reply.get("valid"):
         freeze_authored_candidate(args)
     return gateway_answer(reply, doing=f"check the workflow {fields['name']!r}")
 
@@ -133,7 +133,7 @@ def _check(args: dict[str, Any]) -> str:
 def _plan(args: dict[str, Any]) -> str:
     reply = _post("/api/workflows/agent-plans", dict(args))
     plan = reply.get("plan")
-    if reply.get("error") or not isinstance(plan, dict):
+    if call_failed(reply) or not isinstance(plan, dict):
         return gateway_answer(reply, doing="plan the workflow")
     return gateway_answer(plan, doing="plan the workflow", summary=str(reply.get("summary") or ""))
 
@@ -149,7 +149,7 @@ def _start(args: dict[str, Any]) -> str:
         {**fields, "blocking_timeout": BLOCKING_START_SECS} if blocking else fields,
     )
     summary = SUMMARIES["workflow_start"]
-    if blocking and not reply.get("error") and reply.get("status") not in _STOPS_A_BLOCKING_START:
+    if blocking and not call_failed(reply) and reply.get("status") not in _STOPS_A_BLOCKING_START:
         summary = (
             f"Workflow run started. It is still running after {BLOCKING_START_SECS:g} s, so this "
             "answer is where it stands now: follow it with workflow_status or workflow_observe."
