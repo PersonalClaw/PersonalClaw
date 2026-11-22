@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_json_write, atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED, STEP_SKIPPED
@@ -272,8 +273,9 @@ def write_brief(loop_id: str, text: str) -> None:
         (d / "brief.md").write_text(text)
 
 
-#: The most steers a worker's pending file keeps; the oldest go first. A loop whose stage worker
-#: never runs (a parallel loop's shared file) is steered all the same, and its file stays bounded.
+#: The most steers a worker's pending file keeps; the oldest by the time each was sent go first
+#: (`bounded_log.newest`). A loop whose stage worker never runs (a parallel loop's shared file) is
+#: steered all the same, and its file stays bounded.
 _PENDING_KEPT = 50
 
 
@@ -281,7 +283,8 @@ def _add_pending(f: Path, text: str) -> None:
     """Add the owner's steer *text* to the worker's pending steer file *f*, after the steers
     already waiting there, with the time it was sent: two steers sent before the worker's next
     cycle both reach it, in the order they were sent (:func:`hand_over_steer`)."""
-    steers = [*_read_pending(f), {"text": text, "sent_at": time.time()}][-_PENDING_KEPT:]
+    sent = [*_read_pending(f), {"text": text, "sent_at": time.time()}]
+    steers = bounded_log.newest(sent, _PENDING_KEPT, at="sent_at")
     atomic_write(f, "".join(json.dumps(s) + "\n" for s in steers))
 
 
@@ -370,8 +373,8 @@ def seed_task_steers(loop_id: str, task_id: str) -> int:
         if isinstance(n, dict) and not n.get("task_id") and n.get("text") not in waiting
     ]
     if added:
-        steers = sorted([*_read_pending(f), *added], key=lambda s: float(s.get("sent_at") or 0))
-        atomic_write(f, "".join(json.dumps(s) + "\n" for s in steers[-_PENDING_KEPT:]))
+        steers = bounded_log.newest([*_read_pending(f), *added], _PENDING_KEPT, at="sent_at")
+        atomic_write(f, "".join(json.dumps(s) + "\n" for s in steers))
     return len(added)
 
 
