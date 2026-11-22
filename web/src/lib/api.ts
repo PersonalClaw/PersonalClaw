@@ -1157,6 +1157,9 @@ export interface AppSummary {
   /** A multi-instance provider: it has NO app-level settings — its settings live on each of its
    *  instances, which are added, edited, tested and removed in Settings → Providers. */
   configuredPerInstance?: boolean
+  /** An automation action: it has NO app-level settings — its fields are set on each automation
+   *  that runs it, in the automation's action on the Automations page. */
+  configuredPerAutomation?: boolean
   /** A provider of it runs its engine in a child process with a Python environment of its own,
    *  which Configure offers to install (Install engine). */
   sidecar?: boolean
