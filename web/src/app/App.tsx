@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
@@ -50,7 +50,7 @@ import { DialogHost } from '../ui/dialog/DialogHost'
 import { PersonalityShellElement } from './personality'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
 import { UpdatedInterfaceNotice } from './UpdatedInterfaceNotice'
-import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerminal } from '../pages/terminal/terminalBridge'
+import { runInTerminal, hasActiveTerminal } from '../pages/terminal/terminalBridge'
 import { LoadError, LoadingStatus } from '../ui/ListScaffold'
 import { useQuery } from '../lib/data'
 import { resolveAppIcon } from '../pages/apps/appIcon'
@@ -441,31 +441,23 @@ function AppInner() {
   useWidgetActionLauncher(sub ? `${route}/${sub}` : route)
   // The terminal drawer, on every page: ⌘J or ⌘`, the corner's toggle and the palette.
   const [termDrawer, setTermDrawer] = useState(false)
-  // a command queued by "Run in terminal" while no terminal was live yet — sent
-  // once a session registers (the drawer opens, its TerminalView registers).
-  const pendingRun = useRef<string | null>(null)
+  // A command "Run in terminal" asked for while no terminal could take it: the drawer opens and
+  // runs it in the session it shows, the one it opens for it when it has none, and drops it when
+  // that open is refused (`TerminalDrawer`'s `run`). It used to wait for whichever terminal
+  // registered next, anywhere, and ran there unasked after a refused open.
+  const [drawerRun, setDrawerRun] = useState<{ command: string } | null>(null)
+  const takeDrawerRun = useCallback(() => setDrawerRun(null), [])
   useEffect(() => {
-    // "Run in terminal" from a chat code block: open the drawer, queue the cmd.
+    // "Run in terminal" from a chat code block: the shown terminal takes it, else the drawer.
     const onRun = (e: Event) => {
       const cmd = (e as CustomEvent).detail?.command
       if (typeof cmd !== 'string' || !cmd) return
       if (hasActiveTerminal() && runInTerminal(cmd)) return
-      pendingRun.current = cmd
+      setDrawerRun({ command: cmd })
       setTermDrawer(true)
     }
     window.addEventListener('ne:run-in-terminal', onRun as EventListener)
-    // flush the queued command once a terminal session becomes available. The
-    // registration callback fires while the terminal's WebSocket is still
-    // CONNECTING, so a fixed-delay one-shot send raced the socket open and could
-    // silently drop the command — retry until the send actually succeeds.
-    const unsub = subscribeTerminal(() => {
-      if (pendingRun.current && hasActiveTerminal()) {
-        const cmd = pendingRun.current
-        pendingRun.current = null  // claim it NOW so a 2nd callback can't re-run it
-        runInTerminalWhenReady(cmd)
-      }
-    })
-    return () => { window.removeEventListener('ne:run-in-terminal', onRun as EventListener); unsub() }
+    return () => window.removeEventListener('ne:run-in-terminal', onRun as EventListener)
   }, [])
 
   // A deliberate re-run of first-run setup, asked for from inside the shell (Settings → Account).
@@ -1021,7 +1013,7 @@ function AppInner() {
         {/* Self-update step progression (WS `update_progress`) — shell-level so the
             modal appears from ANY page while an update pipeline runs. */}
         <UpdateProgressOverlay />
-        <TerminalDrawer open={termDrawer} onClose={() => setTermDrawer(false)}
+        <TerminalDrawer open={termDrawer} onClose={() => setTermDrawer(false)} run={drawerRun} onRunTaken={takeDrawerRun}
           onOpenFull={(session) => { setTermDrawer(false); navigate(fullTerminalRoute(session)) }} />
       </div>
     </GatewayConnectionProvider>
