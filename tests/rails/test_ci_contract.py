@@ -9204,7 +9204,7 @@ fi
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
   --tree "${TREE:?freshness named no tree}" \
   --image "ubuntu:26.04" \
-  --image-version "sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a" \
+  --image-version "sha256:0d5255be560e2d2ddcfbfda88549e9e815ef29e7cd7fc62183d5709e6e2963c6" \
   --arch "$RUNNER_ARCH" \
   --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
   --uv "$(uv --version | awk '{print $2}')" --node none \
