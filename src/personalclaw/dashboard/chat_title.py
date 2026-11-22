@@ -13,7 +13,7 @@ from personalclaw.guardrails.failure import OutputContractError
 from personalclaw.llm_helpers import failure_clause, is_model_call_failure
 from personalclaw.request_validation import require_string
 from personalclaw.sel import sel
-from personalclaw.textfmt import TAGS_LINE_RE, parse_title
+from personalclaw.textfmt import TAGS_LINE_RE, first_message, parse_title
 from personalclaw.usage_ledger import Attribution
 
 logger = logging.getLogger(__name__)
@@ -344,10 +344,7 @@ async def _title_once(state: DashboardState, session: _ChatSession) -> None:
     user_count = sum(1 for m in session.messages if m.get("role") == "user")
     if user_count < 1 or user_count > _TITLE_MAX_ATTEMPTS:
         if user_count > _TITLE_MAX_ATTEMPTS and not session._titled:
-            first_user = next(
-                (m["content"] for m in session.messages if m.get("role") == "user"), ""
-            )
-            _apply_title(state, session, first_user[:60] or session.key)
+            _apply_title(state, session, first_message(session.messages, 60) or session.key)
         return
     logger.info("Auto-title: attempting for session %s (turn %d)", session.key, user_count)
     # Piggyback tag proposal on the title call only when it can actually apply:
@@ -404,8 +401,7 @@ async def api_chat_session_generate_title(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "needs_model": _titles_need_a_model()})
     except Exception:
         logger.debug("Title generation failed for session %s", name, exc_info=True)
-        user_msgs = [m for m in session.messages if m.get("role") == "user"]
-        title = user_msgs[0].get("content", "")[:60] if user_msgs else ""
+        title = first_message(session.messages, 60)
 
     # A rename made while the title was generated is the later word: it stays, and the answer
     # says the name the chat has.

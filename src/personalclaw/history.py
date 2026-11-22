@@ -50,6 +50,7 @@ from personalclaw.security import (
 )
 from personalclaw.sel import sel
 from personalclaw.skills import AutoSkillProvenance
+from personalclaw.textfmt import plain_snippet
 from personalclaw.transcript_heads import (
     _Head,
     _listed_title,
@@ -382,7 +383,7 @@ def _prompt_of(data: object) -> str:
     if isinstance(data, dict) and data.get("role") == "user":
         content = data.get("content")
         if isinstance(content, str) and content:
-            return content[:80]
+            return plain_snippet(content, 80)
     return ""
 
 
