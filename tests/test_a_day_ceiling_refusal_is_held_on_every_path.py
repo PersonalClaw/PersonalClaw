@@ -14,6 +14,11 @@ Now the refusal's scope rides along (`Failure.budget_scope`, `ActionResult.budge
 A run's own cap still counts: nothing resets it. A result that says "budget" and not which
 ceiling still counts, as before.
 
+🔴 And only when the day's ceiling did refuse a call since the run began
+(`budgets.day_ceiling_refused_since`, noted where the guard raises every refusal): an app's action
+writes its own result, so one that said the day's ceiling with nothing refused would have put
+core's own sentence, asking you to raise your ceiling, behind an app's word. Such a run counts.
+
 Driven through the real fire recorder (`run_record.record_run`), the real workflow ending's report
 to its trigger (`run_finish.report_to_its_trigger`, `triggers.settle.settle_workflow_run`), the real
 failure taxonomy and the real best-of-n provider, in a home of the test's own.
@@ -30,6 +35,9 @@ import pytest
 import test_a_run_the_spend_ceiling_refused_waits_and_counts_nothing as _held
 
 from personalclaw.action_providers.base import ActionContext, ActionResult
+from personalclaw.guardrails import budgets
+from personalclaw.guardrails.budgets import Budget, CallCost
+from personalclaw.guardrails.failure import BudgetExceededError
 from personalclaw.schedule_history import HELD_BY_A_SPEND_CEILING
 from personalclaw.triggers import autopause
 from personalclaw.triggers.models import TriggerState
@@ -52,14 +60,52 @@ SAID = _held.SAID
 home = _held.home
 
 
-def _returned(home: Path, n: int, *, scope: str) -> None:
-    """*n* fires whose action returned a failure classed "budget", saying *scope*."""
+@pytest.fixture(autouse=True)
+def _no_refusal_yet(monkeypatch):
+    """This process's guard has refused nothing yet: each test makes its own refusals."""
+    monkeypatch.setattr(budgets, "_DAY_REFUSED_AT", 0.0)
+
+
+async def _the_guard_refuses(tmp: Path, scope: str) -> BudgetExceededError:
+    """A model call the real guard refuses (`model_call.admit_call`): the day's ceiling's refusal,
+    or a run's own cap's (*scope* "run"), each a dollar ceiling a call already spent."""
+    from personalclaw.guardrails.model_call import admit_call
+
+    meter = budgets.SpendMeter(config_dir=tmp)
+    ref = "cloud:example-large"
+    cost = CallCost(ref=ref, prompt_tokens=100, rate=(10.0, 10.0))
+    key = "run-under-test"
+    token = budgets.set_current_run_key(key)
+    try:
+        if scope == "day":
+            # One call settled against the day: its $0.40 is past a $0.10 day.
+            hold = await admit_call(meter, cost, Budget(), Budget())
+            meter.settle(
+                hold, ref=ref, tokens=300, answer_tokens=200, dollars=0.40, priced=True, run_key=""
+            )
+            day, run = Budget(max_dollars=0.10), Budget()
+        else:
+            meter.charge_run(key, 300, 0.40)
+            day, run = Budget(), Budget(max_dollars=0.10)
+        await admit_call(meter, cost, day, run, wait_secs=0)
+    except BudgetExceededError as refused:
+        assert refused.scope == scope, refused
+        return refused
+    finally:
+        budgets.reset_current_run_key(token)
+    raise AssertionError("the guard admitted a call past a spent ceiling")
+
+
+def _returned(home: Path, n: int, *, scope: str, refused: bool = True) -> None:
+    """*n* fires whose action returned a failure classed "budget", saying *scope*: each after the
+    guard refused one of its calls for that ceiling, unless *refused* is False."""
     trigger = _held._live(home)
     for _ in range(n):
+        began = time.time()
+        if refused:
+            asyncio.run(_the_guard_refuses(home, scope))
         result = ActionResult(success=False, failure_class="budget", budget_scope=scope, error=SAID)
-        asyncio.run(
-            record_run(trigger, started_at=time.time() - 1, result=result, source="schedule")
-        )
+        asyncio.run(record_run(trigger, started_at=began, result=result, source="schedule"))
         time.sleep(0.002)  # a row is named by the millisecond it was recorded
 
 
@@ -97,6 +143,30 @@ def test_five_returned_run_cap_refusals_still_pause_it(home):
     _returned(home, BUDGET, scope="run")
     assert {r["status"] for r in _held._rows(home)} == {"failure"}
     assert _held._live(home).state == TriggerState.AUTOPAUSED.value
+
+
+def test_an_action_that_says_the_day_ceiling_refused_it_when_nothing_was_refused_counts(home):
+    """🔴 An app's word alone: before, five such results left the automation on, each row saying
+    the day's ceiling stopped it and asking you to raise the ceiling."""
+    _returned(home, BUDGET, scope="day", refused=False)
+    assert {r["status"] for r in _held._rows(home)} == {"failure"}
+    assert _held._live(home).state == TriggerState.AUTOPAUSED.value
+
+
+def test_a_refusal_from_before_the_run_began_is_not_this_runs(home):
+    asyncio.run(_the_guard_refuses(home, "day"))
+    time.sleep(0.01)
+    _returned(home, 1, scope="day", refused=False)
+    assert {r["status"] for r in _held._rows(home)} == {"failure"}
+
+
+def test_the_guard_notes_the_days_refusal_and_not_a_run_caps(home):
+    began = time.time()
+    asyncio.run(_the_guard_refuses(home, "run"))
+    assert budgets.day_ceiling_refused_since(began) is False
+    asyncio.run(_the_guard_refuses(home, "day"))
+    assert budgets.day_ceiling_refused_since(began) is True
+    assert budgets.day_ceiling_refused_since(0.0) is False, "a run with no start is never held"
 
 
 # ── a workflow run a step's refusal failed ──
@@ -159,13 +229,18 @@ async def test_a_best_of_n_step_the_day_ceiling_refused_says_so(tmp_path, monkey
     assert classify_action_result(result).budget_scope == "day"
 
 
-def test_a_run_is_held_only_when_every_failed_step_is_the_day_ceiling():
-    """The controller's own reading: a run another failure also failed is that failure."""
+def test_a_run_is_held_only_when_every_failed_step_is_the_day_ceiling(tmp_path):
+    """The controller's own reading: a run another failure also failed is that failure, and one
+    the day's ceiling refused nothing for since it started is its steps' word alone."""
+    from personalclaw.instants import utc_now_iso
     from personalclaw.workflows.controller import RunController
     from personalclaw.workflows.models import InstanceState
 
+    started = utc_now_iso()
+
     def _ctl(*failures):
         ctl = object.__new__(RunController)
+        ctl.run = SimpleNamespace(started_at=started, created_at="")
         ctl.instances = {
             f"n{i}": SimpleNamespace(state=InstanceState.FAILED, failure=f)
             for i, f in enumerate(failures)
@@ -173,6 +248,8 @@ def test_a_run_is_held_only_when_every_failed_step_is_the_day_ceiling():
         return ctl
 
     day = Failure(failure_class=FailureClass.BUDGET, budget_scope="day")
+    assert _ctl(day)._held_by_the_day_ceiling() is False, "nothing was refused"
+    asyncio.run(_the_guard_refuses(tmp_path, "day"))
     run_cap = Failure(failure_class=FailureClass.BUDGET, budget_scope="run")
     other = Failure(failure_class=FailureClass.USER)
     assert _ctl(day)._held_by_the_day_ceiling() is True
@@ -214,7 +291,7 @@ async def test_a_real_run_a_steps_refusal_failed_reaches_its_automation_as_that(
     from personalclaw.workflows.watchdog import WorkflowWatchdog
 
     async def _refused(*_a, **_kw):
-        raise _held._refusal(scope)
+        raise await _the_guard_refuses(home, scope)
 
     monkeypatch.setattr(llm_helpers, "one_shot_completion", _refused)
     supervisor = WorkflowWatchdog(state=None, services=EngineServices())

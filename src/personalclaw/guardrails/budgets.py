@@ -54,6 +54,7 @@ import json
 import logging
 import math
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -737,6 +738,34 @@ def reset_current_run_key(token) -> None:
 def current_run_key() -> str:
     """The bound run scope, or "" when a call is not inside a tracked run."""
     return _CURRENT_RUN_KEY.get() or ""
+
+
+#: When the day's ceiling last refused a call (:func:`note_refusal`), on the wall clock: 0.0 until
+#: it first does in this process.
+_DAY_REFUSED_AT = 0.0
+
+
+def note_refusal(refusal: BudgetExceededError) -> None:
+    """Note a refusal the guard raises (``guardrails.model_call.admit_call``, where every ceiling's
+    refusal of a call is raised): the day's ceiling's, when it is that one.
+
+    It lets a run that only SAYS the day's ceiling refused it be told from one it refused
+    (:func:`day_ceiling_refused_since`). A run the day's ceiling refused waits for it to lift
+    rather than count toward pausing its automation, and its row says the ceiling stopped it, with
+    the fix of raising it (`triggers.run_record`, `workflows.controller`). An action's result says
+    which ceiling refused it (`ActionResult.budget_scope`), and an app's action writes its own
+    result: one that said the day's ceiling when none refused anything put core's own sentence,
+    asking you to raise your ceiling, behind an app's word.
+    """
+    global _DAY_REFUSED_AT
+    if getattr(refusal, "scope", "") == "day":
+        _DAY_REFUSED_AT = time.time()
+
+
+def day_ceiling_refused_since(at: float) -> bool:
+    """Whether the day's ceiling refused a call at or after *at* (the wall clock): what a run that
+    started at *at* and says the day's ceiling refused it must have met. False for no start."""
+    return at > 0 and _DAY_REFUSED_AT >= at
 
 
 #: The run-scope CEILING for the ambient run, when the caller who started the run knows a
