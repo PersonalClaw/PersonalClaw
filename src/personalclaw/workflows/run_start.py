@@ -16,7 +16,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from personalclaw.workflows import ownership
-from personalclaw.workflows.models import InstanceState, NodeKind, RunStatus, walk
+from personalclaw.workflows.models import InstanceState, NodeKind, RunStatus, spec_path, walk
 from personalclaw.workflows.step_arguments import authored_refusal
 from personalclaw.workflows.validator import run_identity_in_payload, run_identity_sentence
 
@@ -40,7 +40,9 @@ def requeue_lost_steps(ctl: RunController) -> list[str]:
 
     It goes back to pending at the same epoch, as a paused step does (`_withdraw_inflight`): its
     lost attempt is not charged, and an effect it may have fired goes out again under the same
-    idempotency key, the retry `effect_boundary.effect_preflight` lets through. Returns the paths.
+    idempotency key, the retry `effect_boundary.effect_preflight` lets through. A `stage`'s lost
+    attempt may have taken its no-double-execution claim before the controller recorded it, and
+    that claim is released too (:func:`_release_a_lost_attempts_claim`). Returns the paths.
     """
     lost = [
         path
@@ -49,11 +51,15 @@ def requeue_lost_steps(ctl: RunController) -> list[str]:
         and not inst.subagent_id
         and path not in ctl._inflight
     ]
+    nodes = dict(walk(ctl.root)) if lost else {}
     for path in lost:
         inst = ctl.instances[path]
         inst.state = InstanceState.PENDING
         inst.started_at = None
         inst.attempt = max(0, inst.attempt - 1)
+        node = nodes.get(spec_path(path))
+        if node is not None and node.kind is NodeKind.STAGE:
+            _release_a_lost_attempts_claim(ctl, path, node.id)
     if lost:
         logger.info(
             "run %s: re-queued %d step(s) left running by a controller that is gone: %s",
@@ -63,6 +69,34 @@ def requeue_lost_steps(ctl: RunController) -> list[str]:
         )
         ctl._persist_state()
     return lost
+
+
+def _release_a_lost_attempts_claim(ctl: RunController, path: str, node_id: str) -> bool:
+    """Release the claim a re-queued `stage`'s lost attempt took on its instance, if it took one.
+
+    🔴 `engine.dispatch_stage` takes the claim before it spawns, and the controller records who
+    holds it only when it applies the dispatch's result. A gateway that died in between left a
+    claim nothing recorded, held by an attempt that died with it, and the step's next attempt has
+    a holder of its own (`engine.claim_holder`), so the claim refused it for its whole 900 s as a
+    duplicate, and the refusal settled DEGRADED, a success, with the step never run.
+
+    Only a claim this run's own attempt at this step took: the claim's target is this instance's
+    (`engine.claim_key`), and its holder this run's for this node (`ownership.owned_key`). A
+    re-queued step had no subagent behind it, so the attempt that holds the claim is gone, and
+    one writer drives a run. A claim another run holds, and the claim of an attempt the
+    controller recorded (`stage_settlement.requeue_orphaned_stages` settles that one), are left as
+    they are.
+    """
+    from personalclaw.workflows import engine, leases
+
+    target = engine.claim_key(ctl.run.id, path)
+    held = leases.read_claim(target) if target else None
+    own = f"{ownership.owned_key(ctl.run.id, node_id or 'node')}#"
+    if held is None or not held.holder.startswith(own):
+        return False
+    engine.release_execution_claim(target, held.holder)
+    logger.info("run %s: released the claim %s's lost attempt left on it", ctl.run.id, path)
+    return True
 
 
 async def admit_step_identities(ctl: RunController) -> bool:
