@@ -302,6 +302,18 @@ def save_all_sessions_to_history(state: DashboardState) -> None:
             logger.error("Shutdown: failed to save session %s", session.key, exc_info=True)
 
 
+def _redact_version_row(row: dict) -> dict:
+    """A row a version keeps of its answer, redacted as a saved transcript row is: what is not
+    the owner's (a reply, a tool's output) has its credentials and exfiltration links masked."""
+    out = dict(row)
+    if out.get("role") not in ("user", "system") and isinstance(out.get("content"), str):
+        text, _ = redact_exfiltration_urls(out["content"])
+        out["content"], _ = redact_credentials(text)
+    if isinstance(out.get("meta"), dict):
+        out["meta"] = _redact_meta(out["meta"])
+    return out
+
+
 def _attach_variants(session: _ChatSession, m: dict) -> None:
     """Copy variant history from a persisted message onto the session's last message, with redaction."""  # noqa: E501
     if m.get("variants"):
@@ -1187,7 +1199,14 @@ def save_session_to_history(
                     vc = v.get("content", "")
                     vc, _ = redact_exfiltration_urls(vc)
                     vc, _ = redact_credentials(vc)
-                    redacted_variants.append({**v, "content": vc})
+                    kept = {**v, "content": vc}
+                    # A version's own rows (`chat_regenerate._show_version`), each redacted as
+                    # the transcript's own rows are.
+                    if isinstance(v.get("rows"), list):
+                        kept["rows"] = [
+                            _redact_version_row(r) for r in v["rows"] if isinstance(r, dict)
+                        ]
+                    redacted_variants.append(kept)
                 entry["variants"] = redacted_variants
                 entry["variant_idx"] = m.get("variant_idx", 0)
             # Rewind tails (the retained discarded messages from an edit-and-replay).
