@@ -517,7 +517,7 @@ script = [
   "tools/ci/install_smoke_staged.sh",
   "tools/ci/install_smoke_served.sh",
 ]
-container = "ubuntu:26.04@sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a"
+container = "ubuntu:26.04@sha256:0d5255be560e2d2ddcfbfda88549e9e815ef29e7cd7fc62183d5709e6e2963c6"
 
 # #3923: each suite leg's planned suite, collected on that leg's own runner and Python, and the
 # union check that holds the leg's shards to it. They collect and run no test, so they are no

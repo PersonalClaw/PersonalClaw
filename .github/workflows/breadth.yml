@@ -1179,9 +1179,9 @@ jobs:
     # running there would prove something easier than what we ship.
     # The bare-current-Ubuntu leg: ubuntu:26.04, which `ubuntu:latest` named when this was
     # pinned, as its linux/amd64 manifest (this runner's platform) of index
-    # sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944. #4585's
+    # sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db. #4585's
     # scheduled refresh keeps it on the current Ubuntu release, as a reviewed change.
-    container: ubuntu:26.04@sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a
+    container: ubuntu:26.04@sha256:0d5255be560e2d2ddcfbfda88549e9e815ef29e7cd7fc62183d5709e6e2963c6
     # Two `uv tool install`s plus a uv bootstrap. 20 covers a cold PyPI; it must not sit on a
     # runner for the default 360 when a host is black-holing packets.
     timeout-minutes: 20
@@ -1244,7 +1244,7 @@ jobs:
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
             --tree "${TREE:?freshness named no tree}" \
             --image "ubuntu:26.04" \
-            --image-version "sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a" \
+            --image-version "sha256:0d5255be560e2d2ddcfbfda88549e9e815ef29e7cd7fc62183d5709e6e2963c6" \
             --arch "$RUNNER_ARCH" \
             --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
             --uv "$(uv --version | awk '{print $2}')" --node none \
