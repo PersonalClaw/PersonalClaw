@@ -1114,6 +1114,23 @@ async def one_shot_completion(
         _EXPECTED_SHAPE.reset(shape_token)
 
 
+def one_shot_use_case(use_case: str) -> str:
+    """The use case a one-shot call asking for ``use_case`` runs on.
+
+    A caller that named a real model axis gets it; the remaining informal label
+    ("ingestion") collapses to the background axis; ``chat``, ``code_tools`` and anything
+    unrecognized collapse to reasoning (→ chat fallback either way). A workflow tier may name
+    only an axis this returns unchanged (``config.loader.WORKFLOW_TIER_USE_CASES``).
+    """
+    from personalclaw.providers.use_cases import VALID_USE_CASES
+
+    if use_case in VALID_USE_CASES and use_case not in ("chat", "code_tools"):
+        return use_case
+    if use_case == "ingestion":
+        return "background"
+    return "reasoning"
+
+
 async def _one_shot_completion(
     prompt: str,
     *,
@@ -1128,20 +1145,10 @@ async def _one_shot_completion(
 ) -> str:
     """:func:`one_shot_completion`, with whoever is waiting for it already bound."""
     from personalclaw.providers.provider_bridge import resolve_metered_model
-    from personalclaw.providers.use_cases import VALID_USE_CASES
     from personalclaw.usage_ledger import UNATTENDED, recorder
 
     who = usage or UNATTENDED
-
-    # Honor a caller that already named a real model-axis use case; the remaining
-    # informal label ("ingestion") collapses to the background axis; anything
-    # unrecognized collapses to reasoning (→ chat fallback either way).
-    if use_case in VALID_USE_CASES and use_case not in ("chat", "code_tools"):
-        resolved_uc = use_case
-    elif use_case == "ingestion":
-        resolved_uc = "background"
-    else:
-        resolved_uc = "reasoning"
+    resolved_uc = one_shot_use_case(use_case)
 
     from personalclaw.guardrails.failure import (
         EmptyCompletion,

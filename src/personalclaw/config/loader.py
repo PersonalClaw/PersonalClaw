@@ -2665,6 +2665,15 @@ class ResilienceConfig:
     )
 
 
+#: The model use cases a workflow tier may name: those a step's own model call (an `infer`
+#: step's, a judge gate's) runs on (`llm_helpers.one_shot_use_case`). Chat and Code & tools are
+#: not among them: they are the axes a person's own turns run on, and a step's call is not one,
+#: so a tier that named either ran on Reasoning. Declared here, next to the fields, and read by
+#: the edit allowlist and the load-time schema: a tier cannot be saved as a use case its steps
+#: would not run on, and one saved before reads as its tier's default, with a log line naming it.
+WORKFLOW_TIER_USE_CASES = ("reasoning", "background", "orchestration", "loops")
+
+
 @dataclass
 class WorkflowsConfig:
     """Workflow engine config.
@@ -2751,7 +2760,10 @@ class WorkflowsConfig:
         metadata=_meta(
             "Model Tier — Reasoning",
             "Which model use case a node asking for the `reasoning` tier resolves to. "
-            "Templates name an intent, never a model, so they stay portable.",
+            "Templates name an intent, never a model, so they stay portable. A tier picks the "
+            "model of a step that makes its own call (an `infer` step, a judge gate); a `stage` "
+            "step's agent runs on `orchestration`, or on the model the step names.",
+            enum=list(WORKFLOW_TIER_USE_CASES),
         ),
     )
     model_tier_standard: str = field(
@@ -2761,11 +2773,16 @@ class WorkflowsConfig:
             "Use case for the `standard` tier. Distinct from `fast` on purpose: if both "
             "collapsed to one use case the three tiers would be decorative, and a node "
             "asking for a mid-capability model would silently get the cheapest one.",
+            enum=list(WORKFLOW_TIER_USE_CASES),
         ),
     )
     model_tier_fast: str = field(
         default="background",
-        metadata=_meta("Model Tier — Fast", "Use case for the `fast` tier."),
+        metadata=_meta(
+            "Model Tier — Fast",
+            "Use case for the `fast` tier.",
+            enum=list(WORKFLOW_TIER_USE_CASES),
+        ),
     )
     # The tiered matcher's T4 embedding tie-break floor. A cosine below this is too weak
     # to unseat a deterministic keyword tie — the demotion is that a cosine number no longer decides

@@ -71,34 +71,25 @@
     - spinbutton "Task claim lifetime (seconds)": "#"
     - status
     - heading "Model tiers" [level=#]
-    - paragraph: Templates name an intent — reasoning, standard, fast — never a model, so they stay portable. This maps each intent onto one of your model use cases.
-    - text: Reasoning tier Which model use case a node asking for the reasoning tier resolves to.
-    - combobox "Reasoning tier":
-      - option "Chat"
-      - option "Code & tools"
-      - option "Reasoning" [selected]
-      - option "Background"
-      - option "Orchestration"
-      - option "Loops"
+    - paragraph: "Templates name an intent — reasoning, standard, fast — never a model, so they stay portable. This maps each intent onto one of your model use cases, for the steps that make their own model call: infer steps and judge gates. A stage step's agent runs on Orchestration, or on the model the step names, whatever its tier."
+    - text: Reasoning tier Which model use case a step asking for the reasoning tier runs on.
     - status
-    - text: "Standard tier Use case for the standard tier. Keep it distinct from Fast: if both point at one use case the three tiers are decorative, and a node asking for a mid-capability model silently gets the cheapest one."
-    - combobox "Standard tier":
-      - option "Chat"
-      - option "Code & tools"
-      - option "Reasoning"
-      - option "Background"
-      - option "Orchestration" [selected]
-      - option "Loops"
+    - 'button "Reasoning tier: Reasoning" [pressed]': Reasoning
+    - 'button "Reasoning tier: Background"': Background
+    - 'button "Reasoning tier: Orchestration"': Orchestration
+    - 'button "Reasoning tier: Loops"': Loops
+    - text: "Standard tier Use case for the standard tier. Keep it distinct from Fast: if both point at one use case the three tiers are decorative, and a step asking for a mid-capability model silently gets the cheapest one."
     - status
+    - 'button "Standard tier: Reasoning"': Reasoning
+    - 'button "Standard tier: Background"': Background
+    - 'button "Standard tier: Orchestration" [pressed]': Orchestration
+    - 'button "Standard tier: Loops"': Loops
     - text: Fast tier Use case for the fast tier.
-    - combobox "Fast tier":
-      - option "Chat"
-      - option "Code & tools"
-      - option "Reasoning"
-      - option "Background" [selected]
-      - option "Orchestration"
-      - option "Loops"
     - status
+    - 'button "Fast tier: Reasoning"': Reasoning
+    - 'button "Fast tier: Background" [pressed]': Background
+    - 'button "Fast tier: Orchestration"': Orchestration
+    - 'button "Fast tier: Loops"': Loops
     - heading "Surfacing & matching" [level=#]
     - paragraph: What a workflow may do on its own before you opt it in, and how a tie between two templates is broken.
     - text: New workflow surfacing What a NEWLY authored workflow does before you opt it in. Off never surfaces itself (running it explicitly always works); Passive injects its guidance; Suggest may propose running itself. Off is the default — auto-trigger-by-default is the mistake that let pasted content fire workflows.

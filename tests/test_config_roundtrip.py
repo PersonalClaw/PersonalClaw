@@ -328,6 +328,12 @@ _SPECIAL = {
     # Declaring a real member proves the field ROUND-TRIPS without asserting that the coercion is a
     # bug.
     ("workflows", "surface_mode_default"): "suggest",
+    # The workflow tiers are enum-constrained (WORKFLOW_TIER_USE_CASES) — a generated
+    # "reasoning-x" would (correctly) be refused by load() and fall back to the tier's default.
+    # Each takes a real non-default that proves it round-trips.
+    ("workflows", "model_tier_reasoning"): "background",
+    ("workflows", "model_tier_standard"): "loops",
+    ("workflows", "model_tier_fast"): "reasoning",
     # workflows.match_threshold is a cosine floor clamped to [0,1] by load() — the generic rule's
     # 0.62 + 1.5 = 2.12 would (correctly) come back clamped, so supply an in-range non-default.
     ("workflows", "match_threshold"): 0.75,
