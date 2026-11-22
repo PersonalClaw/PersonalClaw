@@ -1785,6 +1785,25 @@ async def get_stats(request: web.Request) -> web.Response:
 # ---------- Ingestion ----------
 
 
+async def _spool_file(suffix: str) -> Any:
+    """A new file for an upload to land in, made in a worker thread: making a file waits on the
+    disk, and on a runner whose disk other work kept busy that wait held the loop 0.12 s (run
+    45038285104)."""
+    return await asyncio.to_thread(
+        tempfile.NamedTemporaryFile, delete=False, suffix=suffix, prefix="kn_"
+    )
+
+
+def _close_and_remove(tmp: Any) -> None:
+    tmp.close()
+    Path(tmp.name).unlink(missing_ok=True)
+
+
+async def _discard(tmp: Any) -> None:
+    """An upload's spool file closed and removed, in a worker thread, as it was made."""
+    await asyncio.to_thread(_close_and_remove, tmp)
+
+
 async def ingest_file(request: web.Request) -> web.Response:
     """POST /api/knowledge/ingest -- multipart file upload. Each file becomes ONE
     logical-document typed item run through its node-graph, once the content scan
@@ -1816,7 +1835,7 @@ async def ingest_file(request: web.Request) -> web.Response:
 
     policy = check_upload(filename, upload_mime)
     _limit = policy.limit
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="kn_")
+    tmp = await _spool_file(suffix)
     try:
         total_size = 0
         spool = Spool(tmp)
@@ -1826,20 +1845,19 @@ async def ingest_file(request: web.Request) -> web.Response:
                 break
             total_size += len(chunk)
             if total_size > _limit:
-                tmp.close()
-                Path(tmp.name).unlink(missing_ok=True)
+                await _discard(tmp)
                 return web.json_response(
                     {"error": check_upload(filename, upload_mime, size=total_size).reason},
                     status=413,
                 )
             await spool.write(chunk)
         await spool.flush()
-        tmp.close()
+        await asyncio.to_thread(tmp.close)
 
         # An empty upload has nothing to store, preview, or enrich — reject it cleanly
         # rather than creating a 0-byte item.
         if total_size == 0:
-            Path(tmp.name).unlink(missing_ok=True)
+            await _discard(tmp)
             return web.json_response({"error": "uploaded file is empty"}, status=400)
 
         store = _store(request)
@@ -1850,7 +1868,7 @@ async def ingest_file(request: web.Request) -> web.Response:
         # extraction + chunking live inside the graph/embedder — never as separate
         # item rows. Model-backed nodes degrade gracefully without a model.
         if classify(filename, upload_mime) is None:
-            Path(tmp.name).unlink(missing_ok=True)
+            await _discard(tmp)
             return web.json_response({"error": f"unsupported file type: {filename}"}, status=415)
         # Before anything is made from it: the content scan every stored upload gets, and for a
         # code file, whose text is read as it is stored, the scan of that text.
@@ -1858,12 +1876,12 @@ async def ingest_file(request: web.Request) -> web.Response:
             await scan_upload(Path(tmp.name), policy.category, surface="knowledge")
             item, is_new = await store_file_item(store, tmp.name, filename, mime=upload_mime)
         except ContentRefused as exc:
-            Path(tmp.name).unlink(missing_ok=True)
+            await _discard(tmp)
             return exc.response()
         except UploadError as exc:  # a file named as code whose bytes are not text
-            Path(tmp.name).unlink(missing_ok=True)
+            await _discard(tmp)
             return web.json_response({"error": exc.message}, status=exc.status)
-        Path(tmp.name).unlink(missing_ok=True)
+        await _discard(tmp)
         if item is None:
             return web.json_response({"error": "failed to store item"}, status=500)
         if project_id and (is_new or not item.get("file_metadata", {}).get("project_id")):
@@ -1888,13 +1906,12 @@ async def ingest_file(request: web.Request) -> web.Response:
     except ConnectionError:
         # The browser went away before the whole file arrived: its upload was cancelled, or its
         # connection dropped. Nothing was stored, and the partial file goes.
-        tmp.close()
-        Path(tmp.name).unlink(missing_ok=True)
+        await _discard(tmp)
         logger.info("Knowledge upload of %s ended early (the connection closed)", filename)
         return json_error("upload_interrupted", status=400)
     except Exception:
         logger.exception("Ingestion failed for %s", filename)
-        Path(tmp.name).unlink(missing_ok=True)
+        await _discard(tmp)
         return web.json_response({"error": "internal server error"}, status=500)
 
 

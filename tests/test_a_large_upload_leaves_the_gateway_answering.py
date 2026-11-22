@@ -756,6 +756,10 @@ class _Probe:
         self.asking = asking
         self.no_cpu = no_cpu or _NoCpu()
         self.counts = _ThreadCounts()
+        #: Every step that made a blocking call on the loop (:data:`loop_held.BLOCKING`), with
+        #: what it ran and the calls: a test whose regression is such a call judges by this, which
+        #: no runner's load can make or hide.
+        self.blocking: list[tuple[str, tuple[str, ...]]] = []
         self.worst_step = 0.0
         self.worst_step_was = ""
         #: The longest step's own wall time, CPU time and time ready left out, and what the loop
@@ -898,6 +902,8 @@ class _Probe:
                 took = max(wall - waited, cpu)
                 if probe.calls is not None:
                     made = probe.calls.since(mark)
+                    if made:
+                        probe.blocking.append((_said(runs), made))
                     beside = max(0.0, time.process_time() - process - cpu)
                     step_held = loop_held.held(took, cpu, beside, made)
                     probe.excused += took - step_held
@@ -1382,13 +1388,8 @@ async def test_filing_a_large_single_request_upload_leaves_the_gateway_answering
 _SLOW_SECURITY_LOG = 0.2
 
 
-@pytest.mark.asyncio
-async def test_a_slow_security_log_write_does_not_hold_the_gateway(gateway, again, monkeypatch):
-    """🔴 Red before: the ingest wrote its security event on the event loop, so a write the disk
-    took 0.2 s for held every other request as long. On a Linux runner beside a 384 MB upload the
-    first write made the log's key with an fsync and took up to 0.343 s, failing the test above
-    in 5 runs of 30 (#5605). The write runs in a worker thread now, awaited, so the gateway
-    answers meanwhile and the event is on disk before the upload's answer."""
+async def _ingest_beside_a_slow_security_log(gateway, again, monkeypatch) -> _Probe:
+    """A knowledge ingest beside a security-log write the disk takes 0.2 s for, measured."""
     real, wrote = SecurityEventLog.log, []
 
     def slow(self, event):
@@ -1421,8 +1422,37 @@ async def test_a_slow_security_log_write_does_not_hold_the_gateway(gateway, agai
         ), f"premise: the gateway was asked meanwhile; {probe.says()}"
         return probe
 
-    probe = await _judged(measure, gateway, again, answers=False)
+    return await _judged(measure, gateway, again, answers=False)
+
+
+@pytest.mark.asyncio
+async def test_a_slow_security_log_write_does_not_hold_the_gateway(gateway, again, monkeypatch):
+    """🔴 Red before: the ingest wrote its security event on the event loop, so a write the disk
+    took 0.2 s for held every other request as long. On a Linux runner beside a 384 MB upload the
+    first write made the log's key with an fsync and took up to 0.343 s, failing the test above
+    in 5 runs of 30 (#5605). The write runs in a worker thread now, awaited, so the gateway
+    answers meanwhile and the event is on disk before the upload's answer.
+
+    No step of the loop makes a blocking call while the upload lands either: the ingest made its
+    spool file and removed it on the loop, and on a loaded runner the file's making held a step
+    0.119 s with 0.001 s of CPU (run 45038285104). Judged by the calls, that holds on any runner;
+    the bound still judges the CPU a step used."""
+    probe = await _ingest_beside_a_slow_security_log(gateway, again, monkeypatch)
+    assert not probe.blocking, f"a step of the loop made a blocking call: {probe.blocking}"
     _holds(probe, answers=False)  # kept at 0.1 s traced: its regression held the loop 0.2 s
+
+
+@pytest.mark.asyncio
+async def test_a_spool_file_made_on_the_loop_is_caught(gateway, again, monkeypatch):
+    """🔴 The regression planted: the ingest makes its spool file on the loop, as it did. The
+    calls judge it on any runner, however fast its disk."""
+
+    async def on_the_loop(suffix: str):
+        return tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="kn_")
+
+    monkeypatch.setattr(kn_handlers, "_spool_file", on_the_loop)
+    probe = await _ingest_beside_a_slow_security_log(gateway, again, monkeypatch)
+    assert any("open" in made for _, made in probe.blocking), f"unseen: {probe.blocking}"
 
 
 def _json_lines(size: int) -> bytes:
