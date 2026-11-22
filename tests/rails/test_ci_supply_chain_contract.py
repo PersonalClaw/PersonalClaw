@@ -33,6 +33,7 @@ from test_ci_contract import (
     _PREFERENCE,
     _PYTHON,
     _SETUP_ACTION,
+    _SETUP_UV_VERSION,
     _UBUNTU,
     REPO,
     Control,
@@ -54,6 +55,11 @@ from tools.ci import catalogue, supply_chain
 
 _POLICY = supply_chain.POLICY_FILE
 _BACKEND = "deploy/docker/Dockerfile.backend"
+#: The tools CI and the image pin by hand, as the tree pins them today: the run-install plants
+#: find each by it, and a refresh that moves a tool moves it in the tree but not in main's copy of
+#: this file, which main's contract runs over the refreshed tree.
+_PIP_AUDIT = _pinned(".github/workflows/breadth.yml", r"(pip-audit==\d+\.\d+\.\d+)")
+_IMAGE_WHEEL = _pinned(_BACKEND, r"(pip install wheel==\d+\.\d+\.\d+)")
 _RELEASE_YML = ".github/workflows/release.yml"
 #: Where the release builds its artifacts: release.yml calls it as its `artifacts` job.
 _ARTIFACTS_YML = ".github/workflows/release-artifacts.yml"
@@ -748,7 +754,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
         "run-install",
         ("run-install",),
         (
-            _plant("pip-audit with no version", _BREADTH, "pip-audit==2.10.1", "pip-audit"),
+            _plant("pip-audit with no version", _BREADTH, _PIP_AUDIT, "pip-audit"),
             _plant(
                 "uv run --with a package with no version",
                 _ARTIFACTS_YML,
@@ -758,7 +764,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant(
                 "the image's wheel with no version",
                 _BACKEND,
-                "pip install wheel==0.48.0",
+                _IMAGE_WHEEL,
                 "pip install --upgrade wheel",
             ),
             _run_step("npm install -g typescript"),
@@ -1495,7 +1501,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 "node-version-file: .nvmrc\n",
                 "node-version-file: .nvmrc\n        check-latest: true\n",
             ),
-            _plant("setup-uv with no version", _SETUP_ACTION, '        version: "0.13.1"\n', ""),
+            _plant("setup-uv with no version", _SETUP_ACTION, _SETUP_UV_VERSION, ""),
             _plant(
                 "setup-node with no version",
                 _SETUP_ACTION,

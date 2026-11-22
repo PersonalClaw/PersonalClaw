@@ -4302,6 +4302,13 @@ FIXED_WAITS = Row(
 _BREADTH = ".github/workflows/breadth.yml"
 #: The composite action the tier workflows' stage jobs set up their toolchain with.
 _SETUP_ACTION = ".github/actions/setup/action.yml"
+#: uv's one release as the tree names it today, in the setup action's setup-uv step, the image and
+#: ``[tool.uv] required-version``: the uv row's plants find each copy by it, and a refresh that
+#: moves uv moves them in the tree but not in main's copy of this file, which main's contract
+#: runs over the refreshed tree.
+_SETUP_UV_VERSION = _pinned(_SETUP_ACTION, r'^(        version: "\d+\.\d+\.\d+"\n)')
+_IMAGE_UV = _pinned("deploy/docker/Dockerfile.backend", r"^(ARG UV_VERSION=\d+\.\d+\.\d+)$")
+_UV_FLOOR = _pinned("pyproject.toml", r'^(required-version = ">=\d+\.\d+\.\d+")$')
 
 
 #: How many shards the merge tier's macOS suite runs in, as the tree's catalogue gives it. A
@@ -4541,7 +4548,7 @@ def _first_call_env(line: str) -> Callable[[Path], None]:
 def _setup_action_as_yaml(root: Path) -> None:
     """The setup action in ``action.yaml``, which GitHub loads as it loads ``action.yml``, with
     no uv version."""
-    old = '        version: "0.13.1"\n'
+    old = _SETUP_UV_VERSION
     text = (root / _SETUP_ACTION).read_text(encoding="utf-8")
     assert old in text, f"the plant's anchor is not in {_SETUP_ACTION}: {old!r}"
     (root / _SETUP_ACTION).unlink()
@@ -4628,7 +4635,7 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "setup-uv installs the newest uv",
                 _SETUP_ACTION,
-                '        version: "0.13.1"\n',
+                _SETUP_UV_VERSION,
                 "",
                 expect="flake-report.yml:rerun: uv (newest) is not an exact X.Y.Z",
             ),
@@ -4646,14 +4653,14 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "the image on another uv",
                 "deploy/docker/Dockerfile.backend",
-                "ARG UV_VERSION=0.13.1",
-                "ARG UV_VERSION=0.12.19",
+                _IMAGE_UV,
+                "ARG UV_VERSION=0.0.1",
             ),
             _plant(
                 "required-version not a floor",
                 "pyproject.toml",
-                'required-version = ">=0.13.1"',
-                'required-version = "==0.13.1"',
+                _UV_FLOOR,
+                _UV_FLOOR.replace(">=", "=="),
             ),
         ),
     ),
