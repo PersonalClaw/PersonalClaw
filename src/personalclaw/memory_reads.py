@@ -17,6 +17,15 @@ Two kinds of work read none of your memory, by any path:
   installed, is turned off, or whose permissions cannot be read holds nothing. The same grant is
   what lets such work change your memory (:mod:`personalclaw.memory_writes`).
 
+A third kind reads none of it either: **work someone other than you asked for.** A colleague's
+message in a shared channel thread, a correspondent's mail, a program's request through the
+OpenAI-compatible door: the turn it starts, and the work that turn starts while it runs, read none
+of your saved facts, lessons, standing instructions, earlier conversations or working memory, by
+the context it is built with or any memory tool (:func:`asked_refusal`). Who asked is read as a
+write reads it (``memory_writes.asker_of_sessions``): the mark the running turn left on its
+session, or what its lasting work records (a loop's cycle, a run's step). Nothing is shared with
+such a turn yet, so none of your memory is.
+
 An Incognito chat reads memory as any chat does, and writes nothing back
 (:mod:`personalclaw.memory_writes`).
 
@@ -56,6 +65,7 @@ commands it starts (``sandbox``).
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -140,11 +150,34 @@ def reach_of(state: Any, caller: str, *, app: str = "") -> Reach:
         tuple(keys),
         app,
         blank=blank,
-        refusal=blank or app_refusal(app),
+        refusal=blank or app_refusal(app) or _asked_refusal_of(keys),
         mode=modes[0] if modes else None,
         restricted_mode=_strictest_keeping_nothing(modes),
         job=job,
     )
+
+
+def asked_refusal(source: Mapping[str, str]) -> str:
+    """Why work someone other than you asked for reads none of your memory, as the agent is told
+    it: who asked (``turn_source.named``), and that your memory answers only your own asks."""
+    from personalclaw.turn_source import named
+
+    return (
+        f"Nothing was read from the owner's memory: {named(source)} asked for this, and nothing "
+        "says they are the owner, whose saved facts, lessons and earlier conversations are read "
+        "only for their own requests."
+    )
+
+
+def _asked_refusal_of(keys: list[str]) -> str:
+    """:func:`asked_refusal` for the work the sessions *keys* name, when someone else asked for it
+    (``memory_writes.asker_of_sessions``), ``""`` when you did or nothing says."""
+    if not keys:
+        return ""
+    from personalclaw import memory_writes
+
+    asked = memory_writes.asker_of_sessions(keys)
+    return asked_refusal(asked) if asked else ""
 
 
 def memory_read_refusal() -> str:
@@ -172,7 +205,13 @@ def memory_read_refusal() -> str:
         refused = reach_of(state, key, app=app).refusal
         if refused:
             return refused
-    return ""
+    # The turn this work is done for, as a write reads it: its own scope's word first, and for an
+    # agent CLI's tool server the gateway's, which holds the turn (`mcp_core`). A process with no
+    # scope and no tool layer has no turn to ask about, and is not made to load one.
+    if mcp_core is None and not memory_writes.source_session():
+        return ""
+    asked = memory_writes.asker()
+    return asked_refusal(asked) if asked else ""
 
 
 def keeps_nothing(state: Any, session_key: str) -> str:

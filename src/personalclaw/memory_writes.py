@@ -104,7 +104,7 @@ import contextvars
 import functools
 import logging
 import re
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -663,8 +663,6 @@ def asker() -> dict[str, str]:
     scope at all, a call the built-in agent makes for a conversation a channel runs itself, reads
     the same for the session the call names. The tool server an agent CLI runs holds no turn: it
     asks the gateway, which runs the turn (``mcp_core.asker_from_the_gateway``)."""
-    from personalclaw import lasting_work, session_restrictions
-
     scope = _SCOPE.get()
     if scope is not None and scope.asker is not None:
         return dict(scope.asker)
@@ -676,6 +674,17 @@ def asker() -> dict[str, str]:
         if mcp_core.serves_an_agent_cli():
             return mcp_core.asker_from_the_gateway()
         keys = [mcp_core.get_current_session_key()]
+    return asker_of_sessions(keys)
+
+
+def asker_of_sessions(keys: Iterable[str]) -> dict[str, str]:
+    """Who asked for the work the sessions *keys* name, the one the work is done for first and
+    then each it works for: the first that the running turn marked (``{}`` when the owner asked
+    for it) or whose lasting work records someone else (``lasting_work.asker_of``). ``{}`` when
+    none says. :func:`asker` reads it for the work running now, and ``memory_reads.reach_of``
+    for the sessions a memory read is made for."""
+    from personalclaw import lasting_work, session_restrictions
+
     for key in keys:
         for spelling in _spellings((key or "").strip()):
             if not spelling:

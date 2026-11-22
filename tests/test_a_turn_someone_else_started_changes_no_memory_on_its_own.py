@@ -759,16 +759,23 @@ async def test_an_agent_clis_own_tool_changes_no_memory_document_in_a_colleagues
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("read", sorted(_READS))
-async def test_an_agent_clis_read_of_a_memory_document_in_a_colleagues_turn_is_hers_to_answer(
+async def test_an_agent_clis_read_of_a_memory_document_in_a_colleagues_turn_is_refused(
     tmp_path, read
 ):
-    """The control: a read changes nothing, so the memory check refuses none of it. Like every
-    call of his turn it is hers to answer, since her Trust answers only what she asks for: she is
-    asked, and her Allow runs it."""
+    """His turn reads none of her memory (``memory_reads``), so the agent CLI's own read of a
+    memory document is refused where the CLI asks, as a Temporary chat's is, whatever her answer
+    would be. A call to PersonalClaw's own tool that sends a file is left to that tool, which holds
+    the file back itself (``file_scope.held_from_reads``)."""
+    from personalclaw.file_scope import MEMORY_WITHHELD
+
     title, args = _READS[read](_a_memory_document())
     client, rows, _ = await _cli_turn(tmp_path, COLLEAGUE, title, args, answer="approved")
-    client.approve_tool.assert_awaited_once_with("req-1")
-    assert rows and rows[0] == ("approved", "you"), rows
+    if read == "send":
+        client.approve_tool.assert_awaited_once_with("req-1")
+        return
+    client.reject_tool.assert_awaited_once_with("req-1")
+    client.approve_tool.assert_not_awaited()
+    assert rows == [("refused", MEMORY_WITHHELD)], rows
 
 
 @pytest.mark.asyncio
