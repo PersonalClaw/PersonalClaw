@@ -9,7 +9,8 @@ hold the split together and must never silently drift:
 2. **ACP MCP-server** — ``run_mcp_core_server`` aggregates residual core + every
    category module into ONE surface (``_aggregated_list_tools``/``_aggregated_call_tool``)
    so a CLI sees the full set. The aggregate must equal the union of all category
-   modules + residual core, with no duplicate tool names, and stay a superset of the
+   modules + residual core + the built-in agent's reads the gateway makes for a CLI
+   (``_gateway_read_tools``), with no duplicate tool names, and stay a superset of the
    in-process catalog's core-family tools.
 
 A future edit that adds a tool to a category module but forgets
@@ -144,7 +145,9 @@ def test_aggregated_modules_registered_in_root():
 
 
 def test_aggregate_equals_core_plus_all_categories():
-    expected: set[str] = set(_names(core._list_tools))
+    # Core's own tools, the built-in agent's reads the gateway makes for an agent CLI (in-process
+    # they are the built-in runtime's own), and every category's.
+    expected: set[str] = set(_names(core._list_tools)) | set(_names(core._gateway_read_tools))
     for mod_path in _CATEGORY_MODULES:
         expected |= set(_names(importlib.import_module(mod_path)._list_tools))
     assert set(_names(core._aggregated_list_tools)) == expected

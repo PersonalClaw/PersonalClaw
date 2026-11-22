@@ -85,6 +85,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat read again while its answer streams (a reload, a reconnect, a rewind) keeps that answer's paragraph whole: a tool call, approval, question, segment break or thinking the chat already shows no longer splits it in two.**
 - **A chat opened, or read again after its link came back, keeps what changed about it during the read: a queued message that started is gone from the queue, a new title stays, and a side-chat answer still being written shows what it has said so far and carries on.**
 - **A turn someone else asked for, such as a colleague's message in a shared thread, reads none of your memory, nor does the work it starts. Its context carries none of your saved facts, lessons, standing instructions or earlier conversations, `memory_recall` and the other memory tools say who asked instead of answering, and your memory documents are withheld from its file tools. Your own message in the same thread reads it as before.**
+- **An agent on an agent CLI reads the Inbox, so a Morning briefing on one says what is waiting. Its tool server offers `inbox_list`, in the built-in agent's words, and reads what the built-in agent would: its own chat's items and those about no chat, never another chat's.**
 
 ### Security
 

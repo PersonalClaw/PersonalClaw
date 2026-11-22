@@ -18,7 +18,10 @@ Two roles:
   ``personalclaw mcp-core``, the single stdio MCP server an ACP CLI (claude-code/
   codex) spawns. It aggregates this module's tools with every category module's
   (``_AGGREGATED_CATEGORY_MODULES``) so that one server exposes the FULL tool set,
-  while the native loop calls each provider's handlers in-process.
+  while the native loop calls each provider's handlers in-process. It also offers the
+  built-in agent's Inbox read, ``inbox_list`` (``_GATEWAY_READS``): in-process the built-in
+  runtime's own tool, here the same schema and words, each call made by the gateway and held
+  to what the calling chat may read (``inbox_reach``).
 
 The shared session/HTTP plumbing (``_resolve_session_key`` / ``_get`` / ``_post`` /
 ``_delete``) is owned here and imported by the category modules. Tool names are
@@ -1545,6 +1548,31 @@ MADE_ONCE = frozenset(
     {*_GATEWAY_MAKES, "automation_create", "set_onetime_task", "set_recurring_task"}
 )
 
+#: The built-in agent's reads the tool server an agent CLI runs serves as well, each made by the
+#: gateway (:func:`made_by_the_gateway`) and waited for as a read is. In-process each is the
+#: built-in runtime's own tool (``agents.native.builtin_tools``), so only the tool server lists it
+#: (:func:`_aggregated_list_tools`). ``inbox_list`` reads what the calling chat may read of the
+#: Inbox (``inbox_reach``), as the gateway holds the built-in agent's call to. A read is made each
+#: time it is asked, never answered from an earlier call (:data:`MADE_ONCE`).
+_GATEWAY_READS: dict[str, float | None] = {"inbox_list": GATEWAY_READ_TIMEOUT_SECS}
+
+
+def _gateway_read_tools() -> list[dict[str, Any]]:
+    """:data:`_GATEWAY_READS`' tools as the tool server an agent CLI offers them: the built-in
+    agent's own schema and words, so the two runtimes offer one tool."""
+    from personalclaw.agents.native.inbox_tool_defs import inbox_tool_definitions
+
+    return [
+        {
+            "name": tool.name,
+            "annotations": {"readOnlyHint": True},
+            "description": tool.description,
+            "inputSchema": tool.parameters,
+        }
+        for tool in inbox_tool_definitions("personalclaw-core", {"type": "object"})
+        if tool.name in _GATEWAY_READS
+    ]
+
 
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
     from personalclaw.mcp_shared import call_tool_with_logging
@@ -1556,7 +1584,7 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
         _answered,
         session_key="mcp_core",
         downstream_service="personalclaw-core",
-        gateway_makes=_GATEWAY_MAKES,
+        gateway_makes={**_GATEWAY_MAKES, **_GATEWAY_READS},
     )
 
 
@@ -2342,7 +2370,7 @@ def _aggregated_list_tools() -> list[dict[str, Any]]:
 
     from personalclaw.validation import offered_schema, tool_field_schema
 
-    tools = list(_list_tools())
+    tools = [*_list_tools(), *_gateway_read_tools()]
     for mod_path in _AGGREGATED_CATEGORY_MODULES:
         tools.extend(importlib.import_module(mod_path)._list_tools())
     return [
