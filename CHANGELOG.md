@@ -52,6 +52,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An auto-nudge saved before v0.3.9 without a number, which had no limit only because that was the old default, now stops after 10 cycles like a new one. A no limit you choose (Max cycles 0) is kept.**
 - **One damaged byte in an automation's run history no longer breaks it. A line that is not UTF-8 (an append a crash cut inside a character, a damaged disk block) is skipped and said once in the log. The automation's History, the run feed and each later run's record carry on, its hourly cap still counts its fires, and every rewrite of the file keeps the line as it was.**
 - **An automation's run whose text holds a character UTF-8 cannot write (a lone surrogate, as a payload's `\ud800` decodes to) is recorded in its History like any other. Its row was never written.**
+- **An automation run whose row the run history cannot write, on a full disk or in a history folder that cannot be written, still counts as one of its automation's runs, and the log says once why its runs are not being recorded, where it said nothing above debug.**
 
 ### Security
 

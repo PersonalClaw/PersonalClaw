@@ -21,6 +21,8 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import threading
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -371,6 +373,60 @@ class _Lines:
 #: every fire says it once, not on every read.
 _SAID_NOT_UTF8: set[str] = set()
 
+#: Runs whose row could not be written (a full disk, a history folder that cannot be written), by
+#: history folder and job: when each started. A run with no row was in no count of its job's runs,
+#: so :meth:`ScheduleRunStore.count_since` adds these in, for as long as they can fall in a window
+#: (:data:`_UNWRITTEN_KEPT_SECS`). In this process only: a run this process could not write is one
+#: this process ran.
+_UNWRITTEN: dict[tuple[str, str], list[float]] = {}
+_UNWRITTEN_LOCK = threading.Lock()
+_UNWRITTEN_KEPT_SECS = 2 * 3600.0
+#: Each folder and job whose runs could not be recorded, said once in the log.
+_SAID_UNWRITTEN: set[tuple[str, str]] = set()
+
+
+def counts_in_the_window(row: dict[str, Any]) -> bool:
+    """Whether a run row counts among its job's runs in a window (:meth:`ScheduleRunStore.
+    count_since`), its time aside: a run of yours does not, nor one that did no work (a
+    suppression, a refusal, a payload the injection screen stopped)."""
+    from personalclaw.triggers import run_source
+    from personalclaw.triggers.models import INERT_OUTCOMES, Outcome
+
+    # A run of YOURS is not counted (manual fires bypass the hourly cap): the cap
+    # exists to stop the machine running away on its own, and you pressing Run is not the
+    # machine running away. Counting your runs would let you lock yourself out of your own
+    # automation. Only yours: a run an agent, an app or a program asked for is the
+    # automation firing for someone nobody answers, and it counts as its clock's fires do.
+    if run_source.yours(run_source.of_row(row)):
+        return False
+    # 🔴 A SUPPRESSION IS NOT A FIRE. Since suppressed fires began persisting their
+    # typed row here (no silent drops), this window would otherwise count
+    # them — measured, 5 quiet-hours skips read as 5 fires, so a trigger held by its own
+    # quiet window would consume the hourly cap it never used and then be refused for
+    # "running away". The cap exists to bound work the machine DID.
+    #
+    # Keyed on `INERT_OUTCOMES`, the same set `history.is_inert` uses, rather than a local
+    # list of `skipped_*` strings: one definition of "this did nothing" for both surfaces.
+    if str(row.get("status") or "") in INERT_OUTCOMES:
+        return False
+    # Nor is a fire refused before its action ran, because something it needs is gone
+    # (`run_record.record_refusal`, tagged `refused`): it did no work, and counted it would
+    # hold the automation's first runs once what it needs is back.
+    if str(row.get("trigger") or "") == "refused":
+        return False
+    # Nor is a payload the injection screen stopped (`gateway._record_blocked_fire`, its
+    # status and trigger both `blocked_injection`): refused before anything ran, it did no
+    # work, and counted, enough of them would hold the automation's real fires as running
+    # away.
+    return str(row.get("status") or "") != Outcome.BLOCKED_INJECTION.value
+
+
+def _unwritten_since(folder: str, job_id: str, since: float) -> int:
+    """How many of *job_id*'s runs whose row *folder* could not write started at or after
+    *since*."""
+    with _UNWRITTEN_LOCK:
+        return sum(1 for at in _UNWRITTEN.get((folder, job_id), ()) if at >= since)
+
 
 def _say_not_utf8(path: Path, count: int) -> None:
     key = str(path)
@@ -499,36 +555,73 @@ class ScheduleRunStore:
         run.error = _redact_stored(run.error)
         run.job_name = _redact_stored(run.job_name)
         job_path = self._job_path(run.job_id)
-        with self._lock():
-            self._dir.mkdir(parents=True, exist_ok=True)
-            # The work this row names ended before the row was written: it is written as it ended.
-            early = (
-                _EARLY_ENDINGS.pop((str(self._dir), run.job_id, run.work_id), None)
-                if run.work_id and run.status in UNSETTLED_STATUSES
-                else None
+        # Whether the run's row is on its job's file, the one its count reads (`count_since`).
+        written = False
+        try:
+            with self._lock():
+                self._dir.mkdir(parents=True, exist_ok=True)
+                # The work this row names ended before the row was written: it is written as it
+                # ended.
+                early = (
+                    _EARLY_ENDINGS.pop((str(self._dir), run.job_id, run.work_id), None)
+                    if run.work_id and run.status in UNSETTLED_STATUSES
+                    else None
+                )
+                if early is not None:
+                    run.status = early["status"]
+                    run.summary, run.trace, run.error = (
+                        early["summary"],
+                        early["trace"],
+                        early["error"],
+                    )
+                    run.finished_at = max(run.started_at, early["finished_at"])
+                    run.duration_ms = int((run.finished_at - run.started_at) * 1000)
+                    run.trigger = _exit_after(run.trigger, early)
+                # Full record (with trace) on the per-job file.
+                with job_path.open("a", encoding="utf-8") as fh:
+                    fh.write(_line(run.to_dict(include_trace=True)))
+                written = True
+                try:
+                    job_path.chmod(0o600)
+                except OSError:
+                    pass
+                # Lightweight row (no trace) on the cross-job index.
+                with self._index.open("a", encoding="utf-8") as fh:
+                    fh.write(_line(run.to_dict(include_trace=False)))
+                try:
+                    self._index.chmod(0o600)
+                except OSError:
+                    pass
+                self._rotate_job_locked(run.job_id)
+                self._rotate_index_locked()
+        except Exception as exc:
+            if not written:
+                self._count_unwritten(run, exc)
+            raise
+
+    def _count_unwritten(self, run: ScheduleRun, exc: BaseException) -> None:
+        """Keep a run whose row could not be written among its job's runs for the windows it can
+        fall in (:data:`_UNWRITTEN`), and say once per job why its runs are not being recorded.
+
+        A run with no row was in no count of its job's runs: it had run, and every count read off
+        the history passed over it.
+        """
+        key = (str(self._dir), run.job_id)
+        if counts_in_the_window(run.to_dict(include_trace=False)):
+            at = float(run.started_at or time.time())
+            with _UNWRITTEN_LOCK:
+                cutoff = time.time() - _UNWRITTEN_KEPT_SECS
+                kept = [t for t in _UNWRITTEN.get(key, ()) if t >= cutoff]
+                _UNWRITTEN[key] = [*kept, at]
+        if key not in _SAID_UNWRITTEN:
+            _SAID_UNWRITTEN.add(key)
+            logger.warning(
+                "A run of %s could not be recorded in %s (%s); it still counts among its runs "
+                "in the window, and the next one tries again.",
+                run.job_id,
+                self._dir,
+                exc,
             )
-            if early is not None:
-                run.status = early["status"]
-                run.summary, run.trace, run.error = early["summary"], early["trace"], early["error"]
-                run.finished_at = max(run.started_at, early["finished_at"])
-                run.duration_ms = int((run.finished_at - run.started_at) * 1000)
-                run.trigger = _exit_after(run.trigger, early)
-            # Full record (with trace) on the per-job file.
-            with job_path.open("a", encoding="utf-8") as fh:
-                fh.write(_line(run.to_dict(include_trace=True)))
-            try:
-                job_path.chmod(0o600)
-            except OSError:
-                pass
-            # Lightweight row (no trace) on the cross-job index.
-            with self._index.open("a", encoding="utf-8") as fh:
-                fh.write(_line(run.to_dict(include_trace=False)))
-            try:
-                self._index.chmod(0o600)
-            except OSError:
-                pass
-            self._rotate_job_locked(run.job_id)
-            self._rotate_index_locked()
 
     def rewrite_sync(self, change: Callable[[dict[str, Any]], dict[str, Any]]) -> bool:
         """Pass every row of the history through *change*, under the lock, and write back each
@@ -681,9 +774,6 @@ class ScheduleRunStore:
         return await asyncio.to_thread(self._list_for_job_sync, job_id, offset, limit)
 
     def _count_since_sync(self, job_id: str, since: float) -> int:
-        from personalclaw.triggers import run_source
-        from personalclaw.triggers.models import INERT_OUTCOMES, Outcome
-
         rows = self._read_jsonl(self._job_path(job_id))
         total = 0
         for row in rows:
@@ -691,38 +781,10 @@ class ScheduleRunStore:
                 started = float(row.get("started_at") or 0.0)
             except (TypeError, ValueError):
                 continue
-            if started < since:
-                continue
-            # A run of YOURS is not counted (manual fires bypass the hourly cap): the cap
-            # exists to stop the machine running away on its own, and you pressing Run is not the
-            # machine running away. Counting your runs would let you lock yourself out of your own
-            # automation. Only yours: a run an agent, an app or a program asked for is the
-            # automation firing for someone nobody answers, and it counts as its clock's fires do.
-            if run_source.yours(run_source.of_row(row)):
-                continue
-            # 🔴 A SUPPRESSION IS NOT A FIRE. Since suppressed fires began persisting their
-            # typed row here (no silent drops), this window would otherwise count
-            # them — measured, 5 quiet-hours skips read as 5 fires, so a trigger held by its own
-            # quiet window would consume the hourly cap it never used and then be refused for
-            # "running away". The cap exists to bound work the machine DID.
-            #
-            # Keyed on `INERT_OUTCOMES`, the same set `history.is_inert` uses, rather than a local
-            # list of `skipped_*` strings: one definition of "this did nothing" for both surfaces.
-            if str(row.get("status") or "") in INERT_OUTCOMES:
-                continue
-            # Nor is a fire refused before its action ran, because something it needs is gone
-            # (`run_record.record_refusal`, tagged `refused`): it did no work, and counted it would
-            # hold the automation's first runs once what it needs is back.
-            if str(row.get("trigger") or "") == "refused":
-                continue
-            # Nor is a payload the injection screen stopped (`gateway._record_blocked_fire`, its
-            # status and trigger both `blocked_injection`): refused before anything ran, it did no
-            # work, and counted, enough of them would hold the automation's real fires as running
-            # away.
-            if str(row.get("status") or "") == Outcome.BLOCKED_INJECTION.value:
-                continue
-            total += 1
-        return total
+            if started >= since and counts_in_the_window(row):
+                total += 1
+        # With each run whose row could not be written: it ran, and has no row to count.
+        return total + _unwritten_since(str(self._dir), job_id, since)
 
     async def count_since(self, job_id: str, since: float) -> int:
         """How many runs this job recorded at or after `since` (a UTC epoch), yours left out, and
