@@ -8,6 +8,7 @@ hold to.
 from __future__ import annotations
 
 import re
+import tomllib
 
 import ci_audit_shared
 import pytest
@@ -38,6 +39,72 @@ def test_each_graph_names_the_extras_its_artifact_installs() -> None:
     }
     assert syncs == {audit.PYTHON_GRAPHS["desktop-bundle"]}, syncs
     assert audit.PYTHON_GRAPHS["wheel"] == ()
+
+
+#: A Linux runner's arch, for a desktop leg that builds on its own runner's.
+_LINUX_RUNNERS = {"ubuntu-24.04": ("Linux", "x86_64"), "ubuntu-24.04-arm": ("Linux", "aarch64")}
+_DOCKER_ARCH = {"amd64": "x86_64", "arm64": "aarch64"}
+
+
+def test_each_graph_is_read_for_the_platforms_its_artifact_installs_on() -> None:
+    """The platforms and Pythons each graph's markers are read for come from the files that
+    build its artifact, so a new desktop leg, image arch or Python cannot leave a pin it
+    installs unaudited."""
+    workflow = yaml.safe_load(
+        (REPO / ".github/workflows/release-artifacts.yml").read_text(encoding="utf-8")
+    )
+    bundle: set[tuple[str, str]] = set()
+    bundle_pythons: set[str] = set()
+    for name, job in workflow["jobs"].items():
+        steps = job.get("steps", [])
+        if not any("uv sync --locked --no-editable" in str(s.get("run", "")) for s in steps):
+            continue
+        legs = job.get("strategy", {}).get("matrix", {}).get("include", [])
+        if legs:
+            # A macOS leg names its arch as `lipo -archs` prints it.
+            assert all("macos" in leg["runner"] for leg in legs), name
+            bundle |= {("Darwin", leg["lipo"]) for leg in legs}
+        else:
+            assert job["runs-on"] in _LINUX_RUNNERS, (name, job["runs-on"])
+            bundle.add(_LINUX_RUNNERS[job["runs-on"]])
+        bundle_pythons |= {
+            str(s["with"]["python-version"])
+            for s in steps
+            if "python-version" in (s.get("with") or {})
+        }
+    assert len(bundle) >= 2 and bundle_pythons, "no leg builds the desktop bundle any more"
+    places, pythons = audit.TARGETS["desktop-bundle"]
+    assert set(places) == bundle and set(pythons) == bundle_pythons
+
+    images = workflow["jobs"]["images"]
+    built = [
+        s["with"]["platforms"]
+        for s in images["steps"]
+        if "docker/build-push-action@" in str(s.get("uses", ""))
+    ]
+    assert len(built) == 1, built
+    arches = {("Linux", _DOCKER_ARCH[p.removeprefix("linux/")]) for p in built[0].split(",")}
+    dockerfile = (REPO / "deploy/docker/Dockerfile.backend").read_text(encoding="utf-8")
+    base = re.search(r"^FROM \S*/python:(\d+\.\d+\.\d+)-slim@", dockerfile, re.M)
+    assert base, "the gateway image's python base is gone"
+    places, pythons = audit.TARGETS["gateway-image"]
+    assert set(places) == arches and pythons == (base[1],)
+
+    # The wheel installs wherever pyproject says (POSIX: Linux and macOS, on either arch), on
+    # each Python its classifiers name, read as CI's pinned release of it.
+    classifiers = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "classifiers"
+    ]
+    assert [c for c in classifiers if c.startswith("Operating System ::")] == [
+        "Operating System :: POSIX"
+    ]
+    minors = {c.rpartition(":: ")[2] for c in classifiers if re.fullmatch(r".*:: 3\.\d+", c)}
+    places, pythons = audit.TARGETS["wheel"]
+    posix = {("Linux", "x86_64"), ("Linux", "aarch64"), ("Darwin", "arm64"), ("Darwin", "x86_64")}
+    assert set(places) == posix and posix >= bundle | arches
+    assert {p.rpartition(".")[0] for p in pythons} == minors
+    assert set(pythons) <= bundle_pythons | {base[1]}
+    assert set(audit.TARGETS) == set(audit.PYTHON_GRAPHS)
 
 
 def test_every_lock_under_deploy_docker_is_an_audited_graph() -> None:

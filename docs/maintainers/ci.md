@@ -3931,7 +3931,14 @@ resolution would be clean:
   installs (`PYTHON_GRAPHS`: the wheel, the gateway image's `uv export` in
   `deploy/docker/Dockerfile.backend`, the desktop bundle's `uv sync` in `release.yml`),
   audited by `pip-audit --no-deps --disable-pip`. `tests/test_ci_audit.py` reads each graph's
-  extras from the file that installs them.
+  extras from the file that installs them. The export keeps each pin's environment marker,
+  which pip-audit would read for the Linux runner it runs on, so the audit reads it for the
+  platforms and Pythons the artifact installs on instead (`TARGETS`: the desktop bundle's
+  macOS and Linux legs, the image's two arches, the wheel's POSIX platforms), keeps each pin
+  whose marker holds on one of them, without the marker, and drops the rest. A marker on what
+  it cannot know of a platform (an OS release or build, an extra) fails the job. The job
+  summary names where each graph was read for, and `tests/rails/test_ci_audit_tree.py` holds
+  `TARGETS` to the files that build each artifact.
 - **npm:** `npm audit --package-lock-only` on the root `package-lock.json`, every workspace
   and build tool included, since build tools run in CI and shape the artifacts, and on each
   image's own lock under `deploy/docker/` (today the gateway image's agent CLIs), from its

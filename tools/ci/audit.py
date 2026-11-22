@@ -5,7 +5,9 @@ What is audited is what ships, read from core's locks and never from a fresh res
 - each Python graph is ``uv export --locked`` with the extras that artifact installs (the wheel,
   the gateway image, the desktop bundle; see ``PYTHON_GRAPHS``), audited by ``pip-audit`` with
   ``--no-deps --disable-pip``, so a lock pinned to an older vulnerable release is reported even
-  when a fresh resolution would be clean;
+  when a fresh resolution would be clean. Each pin's environment marker is read for the platforms
+  that artifact installs on (``TARGETS``), not for the runner the audit runs on, so the desktop
+  bundle's macOS-only pins are audited on a Linux runner too;
 - the npm graphs are the whole root ``package-lock.json`` (``npm audit --package-lock-only``):
   the web, desktop and mobile workspaces, build tools included, since they run in CI and shape
   the artifacts; and each image's own lock under ``deploy/docker/`` (today the gateway image's
@@ -72,6 +74,32 @@ PYTHON_GRAPHS: dict[str, tuple[str, ...]] = {
     ),
     "desktop-bundle": ("anthropic", "openai", "slack"),
 }
+
+#: Where each graph's artifact installs: its platforms, as (``platform.system()``,
+#: ``platform.machine()``), and the CPython releases it runs on. ``uv export`` keeps each pin's
+#: environment marker, and pip-audit would read it for the Linux runner it runs on, so the audit
+#: reads it for these instead (``for_targets``). The desktop bundle is each release-artifacts.yml
+#: leg that builds it (the two macOS dmgs and the Linux x86-64 AppImage and .deb) and their
+#: Python; the gateway image is both arches that workflow builds, on Dockerfile.backend's python
+#: base; the wheel is pyproject's POSIX classifier, on both arches of each, at its two Pythons
+#: (as CI's pinned releases). ``tests/rails/test_ci_audit_tree.py`` holds each to its source.
+TARGETS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = {
+    "wheel": (
+        (("Linux", "x86_64"), ("Linux", "aarch64"), ("Darwin", "arm64"), ("Darwin", "x86_64")),
+        ("3.12.15", "3.13.16"),
+    ),
+    "gateway-image": ((("Linux", "x86_64"), ("Linux", "aarch64")), ("3.13.16",)),
+    "desktop-bundle": (
+        (("Darwin", "arm64"), ("Darwin", "x86_64"), ("Linux", "x86_64")),
+        ("3.12.15",),
+    ),
+}
+_SYS_PLATFORM = {"Linux": "linux", "Darwin": "darwin"}
+_OS_NAME = {"Linux": "Linux", "Darwin": "macOS"}
+#: The words of a marker that are not variables; a marker naming any variable a target does not
+#: set (an OS build's ``platform_release`` or ``platform_version``, an ``extra``) fails the audit
+#: rather than being read for the runner.
+_MARKER_WORDS = frozenset({"and", "or", "not", "in"})
 
 #: The severities a finding fails the run at, when no live waiver covers it.
 GATING = frozenset({"high", "critical"})
@@ -340,6 +368,82 @@ def export_argv(extras: Sequence[str], out: Path) -> list[str]:
     return [*argv, "--output-file", str(out)]
 
 
+def environments(graph: str) -> list[dict[str, str]]:
+    """The marker environment of each target *graph*'s artifact installs on (PEP 508's variables,
+    all but an OS build's ``platform_release`` and ``platform_version``)."""
+    platforms, pythons = TARGETS[graph]
+    return [
+        {
+            "os_name": "posix",
+            "sys_platform": _SYS_PLATFORM[system],
+            "platform_system": system,
+            "platform_machine": machine,
+            "platform_python_implementation": "CPython",
+            "implementation_name": "cpython",
+            "implementation_version": python,
+            "python_full_version": python,
+            "python_version": python.rpartition(".")[0],
+        }
+        for system, machine in platforms
+        for python in pythons
+    ]
+
+
+def for_targets(graph: str, export: str) -> list[str]:
+    """The pins of *graph*'s ``uv export`` that install on any of its targets, each without its
+    marker, so pip-audit audits them wherever it runs, and none of the rest. They come as one
+    requirements file's text or more, as no file names a package twice: a lock can pin one package
+    at two versions, one for each platform (torch's CPU build on Linux)."""
+    # pip-audit's own dependency: the audit runs in pip-audit's venv, and every other command of
+    # `python -m tools.ci`, which imports this module, on a bare python3.
+    from packaging.markers import InvalidMarker, Marker
+
+    envs = environments(graph)
+    entries: list[list[str]] = []
+    for line in export.splitlines():
+        if line[:1].isspace() and entries:
+            entries[-1].append(line)  # a pin's hashes and its `# via` lines
+        elif line.strip() and not line.lstrip().startswith("#"):
+            entries.append([line])
+    files: list[dict[str, str]] = []
+    for head, *rest in entries:
+        continued = head.rstrip().endswith("\\")
+        pin, _, text = head.rstrip().removesuffix("\\").partition(";")
+        pin = pin.strip()
+        name = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", pin)
+        if not name:
+            raise ToolFailure(f"uv export for {graph}: a line names no package: {head!r}")
+        if text.strip():
+            try:
+                marker = Marker(text.strip())
+            except InvalidMarker as err:
+                raise ToolFailure(f"uv export for {graph}: {pin}'s marker: {err}") from None
+            unquoted = re.sub(r"'[^']*'|\"[^\"]*\"", "", str(marker))
+            unknown = set(re.findall(r"[A-Za-z_.]+", unquoted)) - _MARKER_WORDS - set(envs[0])
+            if unknown:
+                raise ToolFailure(
+                    f"uv export for {graph}: {pin}'s marker reads {', '.join(sorted(unknown))},"
+                    f" which the audit does not know for {graph}'s platforms: {marker}"
+                )
+            if not any(marker.evaluate(env) for env in envs):
+                continue
+        key = re.sub(r"[-_.]+", "-", name.group(0)).lower()
+        entry = "\n".join([f"{pin} \\" if continued else pin, *rest])
+        free = next((f for f in files if key not in f), None)
+        if free is None:
+            free = {}
+            files.append(free)
+        free[key] = entry
+    return ["\n".join(f.values()) + "\n" for f in files]
+
+
+def platforms(graph: str) -> str:
+    """Where *graph* was read for, as the summary says it."""
+    places, pythons = TARGETS[graph]
+    where = ", ".join(f"{_OS_NAME[system]} {machine}" for system, machine in places)
+    return f"{where} (Python {', '.join(pythons)})"
+
+
 def audit_python(
     pip_audit_python: str, work: Path, run: Runner, tries: Tries | None = None
 ) -> tuple[list[Finding], list[str]]:
@@ -347,30 +451,41 @@ def audit_python(
     findings: list[Finding] = []
     skipped: list[str] = []
     for graph, extras in PYTHON_GRAPHS.items():
-        req, report = work / f"{graph}.txt", work / f"{graph}.json"
-        proc = run(export_argv(extras, req))
+        export = work / f"{graph}.export.txt"
+        proc = run(export_argv(extras, export))
         if proc.returncode != 0:
             raise ToolFailure(f"uv export for {graph} failed: {_tail(proc)}")
-        argv = [pip_audit_python, "-m", "pip_audit", "-r", str(req), "--no-deps", "--disable-pip"]
-        argv += ["-f", "json", "-o", str(report)]
-
-        def once(argv: list[str] = argv, report: Path = report) -> subprocess.CompletedProcess[str]:
-            report.unlink(missing_ok=True)
-            return run(argv)
-
-        # 1 is "found something" only when the report was written; anything else is a failure.
-        def failed(proc: subprocess.CompletedProcess[str], report: Path = report) -> bool:
-            return proc.returncode not in (0, 1) or not report.is_file()
-
-        proc = tries.run(once, lambda p: failed(p) and _pip_unreached(p))
-        if failed(proc) and _pip_unreached(proc):
-            raise Unreachable("pip-audit", graph, _tail(proc))
-        if failed(proc):
-            raise ToolFailure(f"pip-audit on {graph} wrote no report: {_tail(proc)}")
-        got, skips = pip_findings(graph, report.read_text(encoding="utf-8"))
-        findings += got
-        skipped += skips
+        texts = for_targets(graph, export.read_text(encoding="utf-8"))
+        for n, text in enumerate(texts, 1):
+            part = graph if n == 1 else f"{graph}-{n}"
+            req, report = work / f"{part}.txt", work / f"{part}.json"
+            req.write_text(text, encoding="utf-8")
+            got, skips = _pip_audit(pip_audit_python, graph, req, report, run, tries)
+            findings += got
+            skipped += skips
     return findings, skipped
+
+
+def _pip_audit(
+    pip_audit_python: str, graph: str, req: Path, report: Path, run: Runner, tries: Tries
+) -> tuple[list[Finding], list[str]]:
+    argv = [pip_audit_python, "-m", "pip_audit", "-r", str(req), "--no-deps", "--disable-pip"]
+    argv += ["-f", "json", "-o", str(report)]
+
+    def once() -> subprocess.CompletedProcess[str]:
+        report.unlink(missing_ok=True)
+        return run(argv)
+
+    # 1 is "found something" only when the report was written; anything else is a failure.
+    def failed(proc: subprocess.CompletedProcess[str]) -> bool:
+        return proc.returncode not in (0, 1) or not report.is_file()
+
+    proc = tries.run(once, lambda p: failed(p) and _pip_unreached(p))
+    if failed(proc) and _pip_unreached(proc):
+        raise Unreachable("pip-audit", graph, _tail(proc))
+    if failed(proc):
+        raise ToolFailure(f"pip-audit on {graph} wrote no report: {_tail(proc)}")
+    return pip_findings(graph, report.read_text(encoding="utf-8"))
 
 
 def npm_graphs(root: Path) -> list[tuple[str, str]]:
@@ -411,6 +526,8 @@ def summary(verdict: Verdict, skipped: Sequence[str]) -> str:
         f"{len(verdict.findings)} finding(s): {len(verdict.gating)} that fail the run, "
         f"{len(verdict.waived)} under a live waiver."
     )
+    lines += ["", "Each Python graph's markers were read for where its artifact installs:"]
+    lines += [f"- {graph}: {platforms(graph)}" for graph in PYTHON_GRAPHS]
     if verdict.findings:
         lines += [
             "",
