@@ -14,6 +14,7 @@ export const INTERRUPTED_LINE = 'The gateway restarted while it ran.'
  *  where its line changes with every phase. */
 export const KIND_WORD: Record<RunningRow['kind'], string> = {
   chat: 'chat', loop: 'loop', workflow: 'workflow run', subagent: 'helper', trigger: 'automation', webhook: 'webhook',
+  maintenance: 'library upkeep',
 }
 
 /** What kind of work a row is, as a heading's words say it (sentence case): a loop by its kind. */
@@ -22,6 +23,7 @@ const LOOP_KIND_WORD: Record<LoopKind, string> = {
 }
 const WORK_KIND_WORD: Record<RunningRow['kind'], string> = {
   chat: 'Chat', loop: 'Loop', workflow: 'Workflow run', subagent: 'Helper', trigger: 'Automation', webhook: 'Webhook',
+  maintenance: 'Library upkeep',
 }
 
 /** The kind of work *row* is, in words: "Code session", "Goal loop", "Chat", "Workflow run",

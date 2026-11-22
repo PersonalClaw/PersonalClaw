@@ -733,6 +733,7 @@ are closed:
 | `trigger` | a trigger run's id (§2.1) | `trigger:run_01j9…` | `ScheduleRun.run_id` (`schedule_history.py:88`) |
 | `webhook` | the webhook turn's id | `webhook:…` | #3889 lists webhook turns as live work |
 | `job` | a background command's id (§2.1) | `job:job_01j9…` | none: background commands are new (long-running work) |
+| `maintenance` | `knowledge`: the library's own upkeep | `maintenance:knowledge` | graph maintenance, listed while it runs (`running_now`, `knowledge.maintenance.running`) |
 
 A trigger run's id is minted at dispatch, before its action runs, by `ids.new_id("run")`, and handed to
 the action (`ActionContext.run_id`) and to the run recorder, which no longer mints one; a refused or
@@ -752,7 +753,7 @@ in an id. Every producer builds through `work_ref` and reads through `parse` (or
 with a fallback, which answers no kind and no id where `parse` refuses). #3833's `work` field, #3888's
 item owner, #3889's rows, §4's run state, §5's journal, §16.1's suppressed references and §14's evidence
 all use this form. #3833 shipped the module first, so its spelling is the one: `WORK_KINDS` is this
-table's kinds, `job` among them.
+table's kinds, `job` and `maintenance` among them.
 
 ### 2.3 Times
 

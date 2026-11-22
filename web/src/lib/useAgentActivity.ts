@@ -31,9 +31,10 @@ import { phaseWorld, workPhaseOf } from './workPhase'
 // add only the background: chats that are quiet now, and loops that are not running.
 
 /** What kind of thing is working. A world may style these differently but must
- *  handle every one — the fold emits every kind it finds. A `run` is a workflow run, and a
- *  `trigger` and a `webhook` are a fire and a webhook's turn. */
-export type AgentActivityKind = 'session' | 'loop' | 'subagent' | 'run' | 'trigger' | 'webhook'
+ *  handle every one — the fold emits every kind it finds. A `run` is a workflow run, a
+ *  `trigger` and a `webhook` are a fire and a webhook's turn, and `maintenance` is the knowledge
+ *  library's own upkeep while a pass of it runs. */
+export type AgentActivityKind = 'session' | 'loop' | 'subagent' | 'run' | 'trigger' | 'webhook' | 'maintenance'
 
 /** The closed state vocabulary. Deliberately SMALL and world-facing: it answers
  *  "is it moving / does it want me / is it stuck / is it asleep", not the 12-member
@@ -146,6 +147,7 @@ function label(s: string | undefined, fallback: string): string {
 /** A row's kind as the world names it: a workflow run is a `run`, a chat a `session`. */
 const ROW_KIND: Record<RunningRow['kind'], AgentActivityKind> = {
   chat: 'session', loop: 'loop', workflow: 'run', subagent: 'subagent', trigger: 'trigger', webhook: 'webhook',
+  maintenance: 'maintenance',
 }
 
 /** A row's entity id: kind-prefixed, as every entity's is, so a chat keeps its `session:` id. */

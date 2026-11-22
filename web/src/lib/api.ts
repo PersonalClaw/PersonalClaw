@@ -1646,7 +1646,7 @@ export interface RunWait {
   evidence_source: 'approval_registry' | 'question_registry' | 'sign_in_ask' | 'subagent_registry' | 'dependency_waits' | 'jobs'
 }
 /** The kinds of live work (`workref.WORK_KINDS`). */
-export type WorkKind = 'chat' | 'loop' | 'workflow' | 'subagent' | 'trigger' | 'webhook'
+export type WorkKind = 'chat' | 'loop' | 'workflow' | 'subagent' | 'trigger' | 'webhook' | 'maintenance'
 
 /** One piece of live work in `GET /api/running` (`running_now`): the work's last `work_phase`
  *  frame, with the row's own fields beside it. A chat's row is its `run_state`, so it carries that

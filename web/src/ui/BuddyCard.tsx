@@ -25,7 +25,7 @@
  *  instant under reduced motion. */
 
 import { useId, useState, type ReactNode } from 'react'
-import { Check, CircleDot, ListChecks, MessageSquare, Repeat, SquareCheckBig, Users, Webhook, Workflow, Wrench, Zap, type LucideIcon } from 'lucide-react'
+import { Check, CircleDot, Library, ListChecks, MessageSquare, Repeat, SquareCheckBig, Users, Webhook, Workflow, Wrench, Zap, type LucideIcon } from 'lucide-react'
 import type { PendingApproval, WorkKind } from '../lib/api'
 import type { Work } from '../lib/buddy/inputs'
 import { lineOf } from '../lib/buddy/lines'
@@ -81,6 +81,7 @@ export const IN_SIGHT_SHOWN = 6
 /** Each kind of work's glyph: the card's rows, and the phone's (`pages/companion`). */
 export const KIND_GLYPH: Record<WorkKind, LucideIcon> = {
   chat: MessageSquare, loop: Repeat, workflow: Workflow, subagent: Users, trigger: Zap, webhook: Webhook,
+  maintenance: Library,
 }
 const STEP_GLYPH: Record<StepKind, LucideIcon> = { plan: ListChecks, step: CircleDot, tool: Wrench, result: SquareCheckBig }
 

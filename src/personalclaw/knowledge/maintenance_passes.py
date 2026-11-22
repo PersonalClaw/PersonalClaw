@@ -67,6 +67,16 @@ PASS_SIMILARITY_EDGES = "similarity_edges"
 PASS_DERIVED_REFRESH = "derived_refresh"
 PASS_VAULT_PROJECTION = "knowledge_vault_projection"
 
+#: Each pass as the owner is told it is running (``running_now``): what it does to the library.
+PASS_LABELS: dict[str, str] = {
+    PASS_MEMORY_LINT: "Checking the memory's health",
+    PASS_CONSOLIDATION: "Grouping items that say the same thing",
+    PASS_LINK_BACKFILL: "Linking the people and things items name",
+    PASS_SIMILARITY_EDGES: "Linking items that are alike",
+    PASS_DERIVED_REFRESH: "Refreshing summaries and search pieces",
+    PASS_VAULT_PROJECTION: "Writing the library's files",
+}
+
 
 def _memory_lint_pass(*, batch_size: int = 0) -> int:
     """Run the memory-health sweep. Returns the number of findings (a REPORT, not a backlog).

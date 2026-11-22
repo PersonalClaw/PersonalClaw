@@ -12,8 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-#: The kinds of work there are. A ``job`` is a background command, named by its ``job_`` id.
-WORK_KINDS = ("chat", "loop", "workflow", "subagent", "trigger", "webhook", "job")
+#: The kinds of work there are. A ``job`` is a background command, named by its ``job_`` id, and
+#: ``maintenance`` the knowledge library's own upkeep (graph maintenance), named
+#: ``maintenance:knowledge``.
+WORK_KINDS = ("chat", "loop", "workflow", "subagent", "trigger", "webhook", "job", "maintenance")
 
 
 @dataclass(frozen=True)

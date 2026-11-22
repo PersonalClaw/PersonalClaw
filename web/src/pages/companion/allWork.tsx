@@ -19,7 +19,7 @@ import type { BuddyState } from '../../ui/buddy/orbPoses'
 // state (density and badge) and the glyph, never by a colour each. Rows hold their orbs still: a
 // list of moving orbs on a phone is motion for its own sake.
 
-const WORK_KINDS: readonly WorkKind[] = ['chat', 'loop', 'workflow', 'subagent', 'trigger', 'webhook']
+const WORK_KINDS: readonly WorkKind[] = ['chat', 'loop', 'workflow', 'subagent', 'trigger', 'webhook', 'maintenance']
 
 /** The kind of work a `<kind>:<id>` names, or null for an item that belongs to no work. */
 export function workKindOf(work: string): WorkKind | null {

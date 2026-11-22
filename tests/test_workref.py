@@ -17,7 +17,7 @@ from table_rows import row
 from personalclaw import subagent, workref
 from personalclaw.workflows import models
 
-KINDS = ("chat", "loop", "workflow", "subagent", "trigger", "webhook", "job")
+KINDS = ("chat", "loop", "workflow", "subagent", "trigger", "webhook", "job", "maintenance")
 
 #: Names of no kind of work, each with why: no kind, an unknown kind, no id.
 REFUSED = [

@@ -256,6 +256,10 @@ NO_PHASE_OF_ITS_OWN: Mapping[str, str] = MappingProxyType(
             "Nothing starts a background command yet: the change that runs one, owned by its "
             "chat, gives it its phases or its reason here."
         ),
+        "maintenance": (
+            "The library's upkeep runs no turns: the running list says the pass it is in, from "
+            "the run itself (knowledge.maintenance.running), while it runs."
+        ),
     }
 )
 

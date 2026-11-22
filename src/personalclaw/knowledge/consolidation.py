@@ -29,12 +29,15 @@ Everything here is pure over explicit inputs. Callers own the store writes.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from itertools import chain
 from typing import Any
 
 from personalclaw.knowledge.dedup import cosine_similarity
@@ -205,38 +208,167 @@ def check_gates(
 # ── deterministic pre-dedup ──
 
 
-def normalize_for_dedup(text: str) -> str:
+#: How much of an item's text one normalizing step reads: 20,000 characters.
+#:
+#: 🔴 Consolidation's planner tokenized both items' whole texts again for every pair it compared,
+#: in `pre_dedup` and again in the token floor of `cluster_items`, each a run of regular
+#: expressions over the whole string. Every such call is one stretch of C that holds the
+#: interpreter until it ends, so on a library of large items (a watched repository's files, a long
+#: report) one graph-maintenance pass held it for minutes from its worker thread, and the
+#: gateway's event loop, waiting to take it back after every file stat and socket read, answered
+#: nothing: four stalls of 4 to 10 minutes in one evening, each about six minutes after a write
+#: dirtied the library. Now each item is tokenized once per pass (:func:`token_lookup`), and every
+#: normalizing reads its text in steps no longer than this, so the interpreter changes hands
+#: between steps and no call holds it for more than a moment. The whole text is still read, and a
+#: token a step's end cuts in two is held over to the next, so what the planner decides on is
+#: exactly the whole text's.
+TOKEN_STEP_CHARS = 20_000
+
+_NOT_KEPT = re.compile(r"[^a-z0-9\s]")
+
+#: How long a background planner works before it rests (:class:`Pace`), and how long it rests.
+#:
+#: 🔴 Reading each item once took a pass from minutes to seconds, but a planner comparing many
+#: items is still seconds of interpreter work in a gateway thread, and the event loop, taking the
+#: interpreter back after every socket read, waited behind it: on 1,500 items, 7.8 s of planning
+#: and a wake of the loop held up to 669 ms. Resting 2 ms after every 10 ms of work leaves the
+#: interpreter free whenever the loop asks in a rest: the same planning took 9.9 s, and no wake
+#: was held more than 15 ms.
+WORK_SLICE_SECS = 0.010
+REST_SECS = 0.002
+
+Rest = Callable[[], None]
+
+
+def _no_rest() -> None:
+    """A planner's rest when nobody asked it to rest: a caller on its own thread."""
+
+
+def _runs_a_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+class Pace:
+    """A background planner's rests (:data:`WORK_SLICE_SECS`): called between its steps, it
+    sleeps once the planner has worked a slice since it last rested. On a thread that runs an
+    event loop it never sleeps, because that loop would answer nothing while it did."""
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._clock, self._sleep = clock, sleep
+        self._since = clock()
+        self.rests = 0
+
+    def __call__(self) -> None:
+        if self._clock() - self._since < WORK_SLICE_SECS:
+            return
+        if not _runs_a_loop():
+            self._sleep(REST_SECS)
+            self.rests += 1
+        self._since = self._clock()
+
+
+def _normalized_words(text: str, rest: Rest = _no_rest) -> Iterator[list[str]]:
+    """The words :func:`normalize_for_dedup` keeps, one step of :data:`TOKEN_STEP_CHARS`
+    characters at a time, each word whole: one the step's end cuts in two is held over and
+    finished by the next step. Lowering is per character here (the one rule that looks at a
+    neighbour, Greek final sigma, lowers to a letter this drops), so a step lowers as the whole
+    text would."""
+    text = text or ""
+    # A word still open at a step's end, in its parts: joined once it ends, so a run of letters
+    # many steps long costs its length and not its length squared.
+    held: list[str] = []
+    for start in range(0, len(text), TOKEN_STEP_CHARS):
+        rest()
+        kept = _NOT_KEPT.sub(" ", text[start : start + TOKEN_STEP_CHARS].lower())
+        words = kept.split()
+        if held and not kept[0].isspace():
+            held.append(words[0])
+            if len(words) == 1 and not kept[-1].isspace():
+                continue
+            words[0] = "".join(held)
+        elif held:
+            words.insert(0, "".join(held))
+        held = [words.pop()] if not kept[-1].isspace() else []
+        yield words
+    if held:
+        yield ["".join(held)]
+
+
+def normalize_for_dedup(text: str, *, rest: Rest = _no_rest) -> str:
     """Collapse the differences that are not differences.
 
     Casing, punctuation and whitespace only. NOT stopword removal or stemming: those make
     genuinely different statements collide, and a wrong merge is the expensive error.
+    Read in bounded steps (:data:`TOKEN_STEP_CHARS`), resting between them on *rest*.
     """
-    lowered = (text or "").lower()
-    stripped = re.sub(r"[^a-z0-9\s]", " ", lowered)
-    return " ".join(stripped.split())
+    return " ".join(chain.from_iterable(_normalized_words(text, rest)))
 
 
-def fuzzy_hash(text: str) -> str:
+def fuzzy_hash(text: str, *, rest: Rest = _no_rest) -> str:
     """The DEDUP hash: two statements that differ only in casing/punctuation are one item.
 
     Deliberately not a chunk hash. `normalize_for_dedup` throws away exactly the characters a
     differential refresh must notice, so per-section hashing belongs to
     `semantics.chunk_hashes` and this stays what `pre_dedup` compares.
     """
-    return hashlib.sha256(normalize_for_dedup(text).encode("utf-8", "replace")).hexdigest()[:16]
+    normalized = normalize_for_dedup(text, rest=rest)
+    return hashlib.sha256(normalized.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def tokens_of(text: str, *, rest: Rest = _no_rest) -> frozenset[str]:
+    """The 3+-character tokens of *text* as :func:`normalize_for_dedup` leaves them, read in
+    bounded steps (:func:`_normalized_words`)."""
+    found: set[str] = set()
+    for words in _normalized_words(text, rest):
+        found.update(words)
+    return frozenset(word for word in found if len(word) >= 3)
+
+
+def token_overlap(a: frozenset[str], b: frozenset[str]) -> float:
+    """Jaccard overlap of two token sets (:func:`tokens_of`), the union counted rather than
+    built."""
+    if not a or not b:
+        return 0.0
+    shared = len(a & b)
+    return shared / (len(a) + len(b) - shared)
 
 
 def token_similarity(left: str, right: str) -> float:
     """Jaccard overlap on 3+-char tokens. Cheap, embedder-independent, and good enough to
     decide whether a model call is worth making."""
-    a = set(re.findall(r"[a-z0-9]{3,}", normalize_for_dedup(left)))
-    b = set(re.findall(r"[a-z0-9]{3,}", normalize_for_dedup(right)))
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
+    return token_overlap(tokens_of(left), tokens_of(right))
 
 
-def pre_dedup(items: list[Item]) -> tuple[list[Item], list[tuple[str, str]]]:
+TokenLookup = Callable[["Item"], frozenset[str]]
+
+
+def token_lookup(rest: Rest = _no_rest) -> TokenLookup:
+    """Each item's tokens (:func:`tokens_of`), made the first time it is compared and kept for
+    the pass however many pairs it is in: see :data:`TOKEN_STEP_CHARS` for what tokenizing
+    every pair cost."""
+    made: dict[str, frozenset[str]] = {}
+
+    def tokens(item: Item) -> frozenset[str]:
+        found = made.get(item.id)
+        if found is None:
+            found = made[item.id] = tokens_of(item.text, rest=rest)
+        return found
+
+    return tokens
+
+
+def pre_dedup(
+    items: list[Item], *, tokens: TokenLookup | None = None, rest: Rest = _no_rest
+) -> tuple[list[Item], list[tuple[str, str]]]:
     """Drop exact/near-exact duplicates before any model call.
 
     Returns `(survivors, merges)` where each merge is `(kept_id, dropped_id)`.
@@ -245,22 +377,21 @@ def pre_dedup(items: list[Item]) -> tuple[list[Item], list[tuple[str, str]]]:
     to keep. Otherwise the earlier item wins, so the id that other items already reference stays
     the canonical one — picking the newer would orphan every existing back-reference.
     """
+    tokens = tokens or token_lookup(rest)
     survivors: list[Item] = []
     merges: list[tuple[str, str]] = []
     by_hash: dict[str, Item] = {}
 
     for item in items:
-        digest = fuzzy_hash(item.text)
+        digest = fuzzy_hash(item.text, rest=rest)
         existing = by_hash.get(digest)
         if existing is None:
-            near = next(
-                (
-                    s
-                    for s in survivors
-                    if token_similarity(s.text, item.text) >= PREDEDUP_SIMILARITY
-                ),
-                None,
-            )
+            near = None
+            for survivor in survivors:
+                rest()
+                if token_overlap(tokens(survivor), tokens(item)) >= PREDEDUP_SIMILARITY:
+                    near = survivor
+                    break
             if near is None:
                 by_hash[digest] = item
                 survivors.append(item)
@@ -335,6 +466,8 @@ def cluster_items(
     threshold: float | None = None,
     min_size: int = MIN_CLUSTER_SIZE,
     max_clusters: int = MAX_CLUSTERS_PER_PASS,
+    tokens: TokenLookup | None = None,
+    rest: Rest = _no_rest,
 ) -> list[Cluster]:
     """Group items worth consolidating together.
 
@@ -360,6 +493,10 @@ def cluster_items(
 
     Only reflection-eligible, non-archived, unconsolidated items are considered — the filter is
     here rather than at the caller so no path can skip it.
+
+    `tokens` is the pass's token lookup (:func:`token_lookup`), so a caller that already
+    tokenized the items (`plan_consolidation`, through `pre_dedup`) does not do it again, and
+    `rest` is called before each comparison (:class:`Pace`).
     """
     if similarity is not None and vector_of is not None:
         raise TypeError("cluster_items takes a similarity metric or a vector lookup, not both")
@@ -370,7 +507,12 @@ def cluster_items(
     def by_vector(left: Item, right: Item) -> float:
         return cosine_similarity(vectors[left.id], vectors[right.id])
 
+    # The token floor's sets, made once per item for the whole pass rather than once per pair.
+    tokens = tokens or token_lookup(rest)
+
     def by_text(left: Item, right: Item) -> float:
+        if similarity is None:
+            return token_overlap(tokens(left), tokens(right))
         return float(text_metric(left.text, right.text))
 
     metric: Callable[[Item, Item], float]
@@ -382,10 +524,17 @@ def cluster_items(
         default_cut = TOKEN_CLUSTER_SIMILARITY if similarity is None else CLUSTER_SIMILARITY
     cut = threshold if threshold is not None else default_cut
 
+    def joins(group: list[Item], item: Item) -> bool:
+        for member in group:
+            rest()
+            if metric(member, item) >= cut:
+                return True
+        return False
+
     clusters: list[list[Item]] = []
     for item in pool:
         for group in clusters:
-            if any(metric(member, item) >= cut for member in group):
+            if joins(group, item):
                 group.append(item)
                 break
         else:
@@ -442,7 +591,10 @@ def plan_consolidation(items: list[Item], **kwargs: Any) -> ConsolidationPlan:
     # Protected items are excluded from CONSOLIDATION but not from the store: they stay
     # retrievable and unarchived. Excluding them here is what makes that promise true.
     candidates = [i for i in items if not i.protected]
-    survivors, merges = pre_dedup(candidates)
+    # One item's tokens serve both the dedup and the token floor, and one pace both.
+    rest = kwargs.setdefault("rest", _no_rest)
+    kwargs.setdefault("tokens", token_lookup(rest))
+    survivors, merges = pre_dedup(candidates, tokens=kwargs["tokens"], rest=rest)
     vector_of = kwargs.get("vector_of")
     sat_out: list[str] = []
     if vector_of is not None:
