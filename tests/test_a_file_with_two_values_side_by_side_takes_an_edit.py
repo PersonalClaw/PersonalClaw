@@ -23,6 +23,8 @@ import pytest
 from personalclaw import security
 from personalclaw.security import MaskConflict
 
+pytestmark = pytest.mark.security
+
 KEYS = "AKIAQQQQQQQQQQQQQQQQAKIAQQQQQQQQQQQQQQQQ"
 STORED = f'KEYS = "{KEYS}"\nname = "old"\n'
 CORPUS = Path(__file__).with_name("test_redaction_cost.py")
