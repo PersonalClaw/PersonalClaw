@@ -1,5 +1,5 @@
 import { api, type InstallKind, type UpdateApplyAnswer, type UpdateCheck } from '../lib/api'
-import { fetchKey, peekEntry } from '../lib/data/store'
+import { fetchKey, peekEntry, writeQuery } from '../lib/data/store'
 import { useQuery } from '../lib/data/useQuery'
 
 /** The update check's one cache key, which Settings › Updates reads too. */
@@ -14,6 +14,17 @@ export const UPDATED_OUTSIDE: ReadonlySet<InstallKind> = new Set(['container', '
  *  key); undefined while it loads or when it cannot be read. */
 export function useInstallKind(): InstallKind | undefined {
   return useQuery(UPDATE_CHECK_KEY, () => api.updateCheck(), { persist: true }).data?.kind
+}
+
+/** The update check Settings › Updates reads (one cache key): whether an update is known, and to
+ *  which version. Undefined while it loads or when it cannot be read. */
+export function useUpdateCheck(): UpdateCheck | undefined {
+  return useQuery(UPDATE_CHECK_KEY, () => api.updateCheck(), { persist: true }).data
+}
+
+/** Keep *answer*, a check the owner just ran, as the update check every reader of it sees. */
+export function keepUpdateCheck(answer: UpdateCheck): void {
+  writeQuery(UPDATE_CHECK_KEY, answer, true)
 }
 
 /** How this PersonalClaw was installed, read when an update is asked for on a surface that does not
