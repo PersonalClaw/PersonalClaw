@@ -62,6 +62,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow step after a fan-out that reads a step inside it is refused when you save, and the refusal names the read that means every item.** Each item of a `foreach` runs the same steps, so `{{nodes.<step>.output}}` from after the fan-out named no item and quietly read whichever item finished last: a step meant to combine the fan-out's results worked from one of them. It now names `{{nodes.<foreach>.output}}`, the list of what each item produced, in item order. A workflow saved before runs as it did until its next save.
 - **A workflow branch can be the case of another branch, the body of a fan-out or the body of a loop, and a branch inside a fan-out can route on its item.** Each of these ran the branch, then stopped the run with "run deadlocked: no runnable nodes and none in flight", because a branch that had routed read as finished before its case ran. Wrapping the branch in a sequence was the only way round, and it is no longer needed.
 - **A workflow's judge gate that can't rule without you asks you.**
+- **Rewind and Run from on a step inside a loop or foreach run it again, and a loop or foreach rewound starts again from its first cycle or item.**
 
 ### Security
 

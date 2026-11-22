@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -45,6 +46,7 @@ from personalclaw.workflows.models import (
     NodeInstance,
     NodeKind,
     skipped_on_ask,
+    spec_path,
     walk,
 )
 
@@ -304,6 +306,142 @@ def binding_closure(root: Node, seeds: set[str]) -> set[str]:
     return seen
 
 
+#: A loop cycle's marker in an instance path: `<loop>.body@<n>` (`tick._visit_loop`).
+_CYCLE = re.compile(r"\.body@(\d+)")
+
+
+@dataclass
+class ReEntry:
+    """What re-running a set of steps does to a run's instances (:func:`reentry_plan`).
+
+    `reset` is every instance that goes back to pending, `dropped` every instance a loop sent
+    back to an earlier cycle no longer has (the cycles after it, which run again as the loop
+    reaches them), and `cycles` the cycle each such loop instance resumes from. `affected` is,
+    for each step id, the instances of it that `reset` or `dropped` holds."""
+
+    reset: list[str] = field(default_factory=list)
+    dropped: list[str] = field(default_factory=list)
+    cycles: dict[str, int] = field(default_factory=dict)
+    affected: dict[str, list[str]] = field(default_factory=dict)
+
+
+def _latest_cycles(paths: list[str]) -> list[str]:
+    """The *paths* in the latest cycle of every loop they are in, at every depth, each fan-out
+    item kept: a step re-run inside a loop is re-run in the last cycle that ran it."""
+    out = [p for p in paths if not _CYCLE.search(p)]
+    grouped: dict[str, list[tuple[int, str]]] = {}
+    for path in paths:
+        found = _CYCLE.search(path)
+        if found:
+            grouped.setdefault(path[: found.start()], []).append((int(found.group(1)), path))
+    for loop_path, cycles in grouped.items():
+        top = max(n for n, _ in cycles)
+        prefix = f"{loop_path}.body@{top}"
+        rest = [p[len(prefix) :] for n, p in cycles if n == top]
+        out += [prefix + r for r in _latest_cycles(rest)]
+    return out
+
+
+def _cycles_of(path: str) -> list[tuple[str, int]]:
+    """Each loop instance *path* is in, outermost first, with the cycle it is in."""
+    return [(path[: m.start()], int(m.group(1))) for m in _CYCLE.finditer(path)]
+
+
+def reentry_plan(
+    root: Node,
+    instances: dict[str, NodeInstance],
+    ids: set[str],
+    *,
+    seeds: set[str] | None = None,
+) -> ReEntry:
+    """Which instances re-running the steps *ids* resets, *seeds* the ones asked for and the
+    rest the steps that read them. Pure.
+
+    A step outside every loop and foreach runs at its definition path. One inside them runs
+    under the paths each cycle and item opens (`<loop>.body@<n>`, `<foreach>.body#<i>`), never
+    at its definition path, so its instances are read from the run: every item's, in the latest
+    cycle of each loop that ran the step asked for. That loop goes back to that cycle, and a step
+    reading it is re-run in the same cycle; the cycles after it are dropped, to run again as the
+    loop reaches them. A loop or foreach re-run itself starts again from its first cycle or item:
+    everything under its body is dropped."""
+    seeds = set(ids if seeds is None else seeds)
+    bodies = _fan_out_bodies(root)
+    steps: list[tuple[str, Node, list[str] | None]] = []
+    plan = ReEntry()
+    for path, node in walk(root):
+        if not node.id or node.id not in ids | seeds:
+            continue
+        inside = any(path == b or path.startswith(f"{b}.") for b in bodies)
+        ran = [k for k in instances if spec_path(k) == path] if inside else None
+        # A seed sends each loop it ran in back to its latest cycle, re-run or not: a run-from
+        # re-runs only its readers, in the cycle the step they read last ran in.
+        for at in _latest_cycles(ran) if ran is not None and node.id in seeds else []:
+            for loop_path, cycle in _cycles_of(at):
+                plan.cycles[loop_path] = min(cycle, plan.cycles.get(loop_path, cycle))
+        if node.id in ids:
+            steps.append((path, node, ran))
+    restarted: set[str] = set()
+    for path, node, ran in steps:
+        if ran is None:
+            chosen = [path]
+        else:
+            in_cycle = [
+                k for k in ran if all(plan.cycles.get(lp, n) == n for lp, n in _cycles_of(k))
+            ]
+            chosen = _latest_cycles(in_cycle)
+            if node.id not in seeds:
+                restarted.update(_first_undecided_loop(at, plan.cycles) for at in chosen)
+        plan.affected.setdefault(node.id, []).extend(p for p in chosen if p in instances)
+        plan.reset.extend(chosen)
+        if node.kind in (NodeKind.LOOP, NodeKind.FOREACH) and node.body is not None:
+            for at in chosen:
+                under = _under(at, instances)
+                plan.dropped.extend(under)
+                plan.affected[node.id].extend(under)
+                if node.kind == NodeKind.LOOP:
+                    plan.cycles[at] = 0
+    # A step that reads, from inside a loop, what changed outside it read it in every cycle: that
+    # loop runs again from its first cycle, or the step's reset instance would wait in a cycle the
+    # loop, finished, never reopens.
+    for loop_path in sorted(restarted - {""}):
+        plan.dropped.extend(_under(loop_path, instances))
+        plan.cycles[loop_path] = 0
+    for loop_path, cycle in plan.cycles.items():
+        plan.reset.append(loop_path)
+        plan.dropped.extend(
+            k for k in instances for at, n in _cycles_of(k) if at == loop_path and n > cycle
+        )
+    plan.dropped = list(dict.fromkeys(plan.dropped))
+    gone = set(plan.dropped)
+    plan.reset = [p for p in dict.fromkeys(plan.reset) if p not in gone]
+    return plan
+
+
+def _first_undecided_loop(at: str, cycles: dict[str, int]) -> str:
+    """The outermost loop instance *at* is in that no step asked for has sent back to a cycle,
+    or "" when every loop it is in has one."""
+    return next((lp for lp, _n in _cycles_of(at) if lp not in cycles), "")
+
+
+def _under(at: str, instances: dict[str, NodeInstance]) -> list[str]:
+    """Every instance under the body of the loop or foreach instance *at*."""
+    return [
+        k
+        for k in instances
+        if k == f"{at}.body" or k.startswith((f"{at}.body@", f"{at}.body#", f"{at}.body."))
+    ]
+
+
+def _fan_out_bodies(root: Node) -> list[str]:
+    """The definition path of every loop's and foreach's body: what runs under it runs per cycle
+    or per item."""
+    return [
+        f"{path}.body"
+        for path, node in walk(root)
+        if node.kind in (NodeKind.LOOP, NodeKind.FOREACH) and node.body is not None
+    ]
+
+
 def cascade_preview(
     root: Node,
     instances: dict[str, NodeInstance],
@@ -312,16 +450,18 @@ def cascade_preview(
     effects: dict[str, Any] | None = None,
 ) -> CascadePreview:
     """What editing `seeds` implies. Pure — safe to call for a preview and again for the
-    TOCTOU re-verify."""
+    TOCTOU re-verify.
+
+    A step's instances are the ones a re-entry would reset (:func:`reentry_plan`): for a step
+    inside a loop or foreach, the ones its cycles and items ran under. Read only at its
+    definition path, such a step was never in `rerun` and never asked about, so a rewind of it
+    answered as applied and changed nothing."""
     preview = CascadePreview()
     closure = binding_closure(root, seeds)
-    id_to_paths: dict[str, list[str]] = {}
-    for path, node in walk(root):
-        if node.id:
-            id_to_paths.setdefault(node.id, []).append(path)
+    plan = reentry_plan(root, instances, closure, seeds=seeds)
 
     for node_id in sorted(closure):
-        states = [instances[p].state for p in id_to_paths.get(node_id, []) if p in instances]
+        states = [instances[p].state for p in plan.affected.get(node_id, []) if p in instances]
         if any(st in TERMINAL_STATES for st in states):
             preview.rerun.append(node_id)
             if states and all(st == InstanceState.SKIPPED for st in states):
@@ -332,18 +472,51 @@ def cascade_preview(
     # Completed work in the cascade is what a user must knowingly accept.
     preview.needs_confirmation = any(
         instances[p].state in TERMINAL_STATES
-        for node_id in closure
-        for p in id_to_paths.get(node_id, [])
+        for p in [*plan.reset, *plan.dropped]
         if p in instances
     )
 
     for node_id in sorted(closure):
-        for path in id_to_paths.get(node_id, []):
+        for path in plan.affected.get(node_id, []):
             records = (effects or {}).get(path) or []
             if _has_committed(records):
                 preview.committed_effects.append(node_id)
                 break
     return preview
+
+
+def _reentries_that_reset_nothing(
+    ops: list[Op], preview: CascadePreview, root: Node
+) -> list[Issue]:
+    """A rewind or a run-from that would reset nothing, refused in words: answered as applied,
+    it changed nothing, and nothing said so.
+
+    A rewind of a step a skip asked for, or of one inside a group a skip asked for, does
+    something whether or not it ran: it takes the step's own skip off (`_unskip_reset`), or says
+    the group's stays (`_rewound_under_a_skip`). So does a batch that skips something."""
+    if any(o.kind == OpKind.SKIP for o in ops):
+        return []
+    skipped = [path for path, node in walk(root) if skipped_on_ask(node)]
+    under_a_skip = {
+        node.id
+        for path, node in walk(root)
+        if node.id
+        and any(path == s or path.startswith((f"{s}.", f"{s}#", f"{s}@")) for s in skipped)
+    }
+    rerun = set(preview.rerun)
+    issues: list[Issue] = []
+    for op in ops:
+        if op.kind == OpKind.REWIND and op.node_id not in rerun | under_a_skip:
+            said = f"{op.node_id!r} has not run in this run yet, so there is nothing to rewind"
+        elif op.kind == OpKind.RUN_FROM and not rerun - {op.node_id}:
+            said = (
+                f"no step that reads {op.node_id!r} has run in this run yet, so there is "
+                "nothing to run again from it"
+            )
+        else:
+            continue
+        issues.append(Issue(code="WF_MUT_NOTHING_TO_RERUN", message=said, node_id=op.node_id))
+    return issues
 
 
 def _has_committed(records: list[Any]) -> bool:
@@ -838,6 +1011,10 @@ def prepare_batch(
         # from the whole graph rather than from one node.
         seeds |= {n.id for _p, n in walk(root) if n.id}
     result.preview = cascade_preview(root, instances, seeds, effects=effects)
+    result.issues.extend(_reentries_that_reset_nothing(ops, result.preview, root))
+    if result.issues:
+        result.ok = False
+        return result
 
     candidate, apply_issues = apply_batch(ops, spec, instances)
     result.issues.extend(apply_issues)
