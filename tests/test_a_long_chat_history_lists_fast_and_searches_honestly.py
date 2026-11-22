@@ -462,13 +462,7 @@ def test_the_indexer_catches_a_whole_history_up_without_waiting_for_a_heartbeat(
 
     _history(marked=60)
     assert session_search.INDEXER.start()
-    deadline = time.monotonic() + 60
-    progress = None
-    while time.monotonic() < deadline:
-        progress = session_search.INDEXER.progress()
-        if progress is not None and not progress["building"]:
-            break
-        time.sleep(0.05)
+    progress = _caught_up()
     assert progress == {"indexed": CHATS, "of": CHATS, "building": False}
     assert session_search.stats()["sessions"] == CHATS
 
