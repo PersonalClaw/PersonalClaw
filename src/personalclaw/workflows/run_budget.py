@@ -40,6 +40,25 @@ MAX_DEPTH = 8
 #: The caps a budget holds, by the names a definition declares them and a resume raises them by.
 CAPS: tuple[str, ...] = ("max_tokens", "max_cost")
 
+#: Why a resumed run with a token budget pauses before its first new step: its earlier steps did
+#: not record the tokens they used (steps run before a restart, on a runtime that reports no
+#: usage), so what it has spent cannot be counted against its cap. It goes on with no token
+#: budget, which only its owner may set as she resumes it (:func:`resume_refusal`).
+TOKENS_UNRECORDED = (
+    "Its earlier steps didn't record the tokens they used, so its token budget can't be checked. "
+    "Resume it with no token budget to go on."
+)
+#: The same pause's words before they were these, which a run paused then still carries.
+_TOKENS_UNRECORDED_BEFORE = "token spend unrecorded; cannot pre-charge token budget"
+
+
+def tokens_unrecorded(run: WorkflowRun) -> bool:
+    """Whether *run* is paused because its earlier token use went unrecorded."""
+    return run.status == RunStatus.PAUSED and run.error_message in (
+        TOKENS_UNRECORDED,
+        _TOKENS_UNRECORDED_BEFORE,
+    )
+
 
 def cap_problem(key: str, value: Any) -> str:
     """Why *value* cannot be the cap *key* (one of :data:`CAPS`), or ``""`` when it can: a cap is
@@ -180,6 +199,9 @@ def shown(run: WorkflowRun) -> dict[str, Any]:
             "unpriced_steps": so_far.unpriced,
         },
         "at_budget": run.status == RunStatus.PAUSED and check_budget(run.budget, so_far).over,
+        # Paused because its earlier token use was not recorded: its Resume goes on with no token
+        # budget, the one resume that does not pause it again (:func:`resume_refusal`).
+        "tokens_unrecorded": tokens_unrecorded(run),
     }
 
 
@@ -224,6 +246,16 @@ def resume_refusal(run: WorkflowRun, *, by: Principal, budget: Any) -> dict[str,
         )
         if refused:
             return {"ok": False, "code": "WF_RESUME_NOT_OWNER", "message": refused}
+    if tokens_unrecorded(run) and caps.max_tokens > 0:
+        # A token cap still set would pause it again before its first new step.
+        return {
+            "ok": False,
+            "code": "WF_RUN_AT_BUDGET",
+            "message": "Its earlier steps didn't record the tokens they used, so its token budget "
+            "can't be checked. Resume it with no token budget (0) to go on.",
+            "budget": caps.to_dict(),
+            "spend": {"tokens": so_far.tokens, "dollars": so_far.dollars},
+        }
     going_on = check_budget(caps, replace(so_far, unpriced_allowed=so_far.unpriced))
     if going_on.over:
         return {

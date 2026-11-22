@@ -27,7 +27,7 @@ import pytest
 import workflows_controller_shared
 
 from personalclaw.workflows import journal as J
-from personalclaw.workflows import node_bindings, store
+from personalclaw.workflows import node_bindings, run_budget, store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.journal import CacheKey, Journal, inputs_hash, spec_region_hash
 from personalclaw.workflows.models import (
@@ -700,7 +700,7 @@ class TestBudget:
         assert completion.calls == [], "unknown inherited spend must pause before scheduling"
         saved = store.get(run.id)
         assert saved is not None
-        assert saved.error_message == "token spend unrecorded; cannot pre-charge token budget"
+        assert saved.error_message == run_budget.TOKENS_UNRECORDED
         totals = J.run_totals(run.id)
         assert totals["tokens"] is None
         assert totals["tokens_recorded"] is False

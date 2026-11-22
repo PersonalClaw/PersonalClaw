@@ -144,6 +144,18 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // one whose dollar budget could not count a step that had no price goes on past that step.
   const resume = useCallback(async () => {
     if (!run) return
+    // Paused because its earlier token use was not recorded: it goes on only with no token budget,
+    // which its owner sets here (the server refuses a plain resume, which would only pause it
+    // again).
+    if (run.tokens_unrecorded) {
+      const yes = await confirm({
+        title: 'Resume with no token budget?',
+        body: `${run.error ? `${run.error} ` : ''}Its dollar budget, if it has one, still counts.`,
+        confirmLabel: 'Resume with no token budget',
+      })
+      if (yes) await act('Resume', () => api.resumeWorkflowRun(runId, { budget: { max_tokens: 0 } }))
+      return
+    }
     const hit = capsReached(run)
     if (!hit.tokens && !hit.dollars) {
       await act('Resume', () => api.resumeWorkflowRun(runId, {}))
@@ -605,7 +617,9 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 {run.status === 'paused' ? (
                   <HeaderControl icon={Play} label="Resume" priority="primary"
                     onClick={resume}
-                    title={run.at_budget
+                    title={run.tokens_unrecorded
+                      ? 'Resume — with no token budget, since its earlier token use was not recorded'
+                      : run.at_budget
                       ? (reached.tokens || reached.dollars
                         ? 'Resume — raise the budget it reached, and it goes on'
                         : 'Resume — it goes on without counting the step that had no price')
@@ -656,7 +670,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 ("Stopped because its loop … was stopped."), nor one whose loop waits for you after
                 your Deny. */}
             {run.error && (
-              <p data-type="body-s" className={run.status === 'declined' || run.status === 'cancelled' || atBudget || run.at_budget || run.declined_wait ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
+              <p data-type="body-s" className={run.status === 'declined' || run.status === 'cancelled' || atBudget || run.at_budget || run.tokens_unrecorded || run.declined_wait ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
             )}
 
             {/* What you declined in the run, in one list: each loop cycle that ended at your Deny
