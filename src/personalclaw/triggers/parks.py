@@ -104,6 +104,13 @@ class TriggerPark:
     payload: dict[str, Any] = field(default_factory=dict)
     #: How many fires it held since it asked: Approve runs the newest one's payload.
     fires: int = 0
+    #: What else the held fire handed its action, kept beside its payload for Approve: its
+    #: `$CONTEXT` line (fenced), its account of what started it (`fire_facts`, which an agent's
+    #: action is told so it does not read the fire's words as a request to it), and the files it is
+    #: about, which the run may read (`fire_files`). Approve runs this fire, so it carries them.
+    context: str = ""
+    fire_facts: str = ""
+    fire_files: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,11 +122,14 @@ class TriggerPark:
             "held": self.held,
             "payload": dict(self.payload),
             "fires": self.fires,
+            "context": self.context,
+            "fire_facts": self.fire_facts,
+            "fire_files": list(self.fire_files),
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TriggerPark:
-        card, payload = d.get("card"), d.get("payload")
+        card, payload, files = d.get("card"), d.get("payload"), d.get("fire_files")
         return cls(
             token=str(d.get("token") or ""),
             trigger_id=str(d.get("trigger_id") or ""),
@@ -129,6 +139,9 @@ class TriggerPark:
             held=str(d.get("held") or ""),
             payload=dict(payload) if isinstance(payload, dict) else {},
             fires=int(d.get("fires") or 0),
+            context=str(d.get("context") or ""),
+            fire_facts=str(d.get("fire_facts") or ""),
+            fire_files=[str(f) for f in files] if isinstance(files, list) else [],
         )
 
 
@@ -254,6 +267,8 @@ def hold_fire(
     provider: str,
     reason: str,
     label: str = "",
+    context: str = "",
+    facts: Any = None,
     refs: dict[str, Any] | None = None,
     state: Any = None,
 ) -> TriggerPark | None:
@@ -269,7 +284,8 @@ def hold_fire(
     One question per trigger, however many fires it holds: a later fire before anyone answers
     keeps the token and the row, and its payload is the one Approve runs (:attr:`TriggerPark.
     fires` counts them). *payload* is the fire's as the injection screen and the fence left it,
-    never the raw request; *refs* are added to the row (the action type and its rung, which the
+    never the raw request, with its *context* line and its *facts* (`fire_facts.FireFacts`) as
+    the same door left them; *refs* are added to the row (the action type and its rung, which the
     ladder reads). Never raises: the fire is already held, and recorded.
     """
     trigger_id = str(getattr(trigger, "id", "") or "")
@@ -292,6 +308,9 @@ def hold_fire(
                 held=provider,
             )
         park.payload, park.fires = dict(payload or {}), park.fires + 1
+        park.context = str(context or "")
+        park.fire_facts = str(getattr(facts, "text", "") or "")
+        park.fire_files = [str(f) for f in (getattr(facts, "files", ()) or ())]
         _write(park)
         _raise_row(trigger, park, state=state, refs=refs)
         return park
