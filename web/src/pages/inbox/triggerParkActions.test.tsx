@@ -85,3 +85,35 @@ describe('answering a trigger that stopped for you', () => {
     expect(screen.getByText('Approve').closest('button')).toBeInTheDocument()
   })
 })
+
+describe('answering a fire held because its action asks first', () => {
+  function heldRow(): InboxItem {
+    const row = parkRow()
+    const question = 'Run New mail relay? Its acme-do-thing action asks you first: it asks before each run.'
+    row.message = question
+    row.refs = {
+      ...row.refs, trigger_held: 'acme-do-thing',
+      needs_input: { ...(row.refs?.needs_input as Record<string, unknown>), blocker: question, attempted: [] },
+    }
+    return row
+  }
+
+  it('says Approve runs this fire once, not that it runs again', () => {
+    render(<TriggerParkActions item={heldRow()} onChanged={vi.fn()} />)
+    expect(screen.getByText('Approve runs this fire once, now, as your run. Deny leaves it unrun.')).toBeInTheDocument()
+    expect(screen.queryByText(/runs it again/)).toBeNull()
+  })
+
+  it('Approve says it ran, and Deny that the fire did not', async () => {
+    answerTriggerPark.mockResolvedValueOnce({ ok: true, approved: true, waiting: false })
+    const first = render(<TriggerParkActions item={heldRow()} onChanged={vi.fn()} />)
+    fireEvent.click(screen.getByText('Approve').closest('button')!)
+    expect(await screen.findByText('Ran it — see its history for what it did.')).toBeInTheDocument()
+    first.unmount()
+
+    answerTriggerPark.mockResolvedValueOnce({ ok: true, approved: false, result: 'declined' })
+    render(<TriggerParkActions item={heldRow()} onChanged={vi.fn()} />)
+    fireEvent.click(screen.getByText('Deny').closest('button')!)
+    expect(await screen.findByText('Declined. That fire did not run.')).toBeInTheDocument()
+  })
+})

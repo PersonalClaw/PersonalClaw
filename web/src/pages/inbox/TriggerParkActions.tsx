@@ -15,6 +15,9 @@ export function TriggerParkActions({ item, onChanged }: { item: InboxItem; onCha
   const refs = (item.refs ?? {}) as Record<string, unknown>
   const card = (refs.needs_input && typeof refs.needs_input === 'object' ? refs.needs_input : {}) as Record<string, unknown>
   const triggerId = String(refs.trigger ?? refs.trigger_park ?? '')
+  // A fire held before its action ran, because the action asks first (`parks.hold_fire`): Approve
+  // runs it once, with the fire's own payload; it has not run, so nothing runs "again".
+  const held = typeof refs.trigger_held === 'string' && refs.trigger_held !== ''
   const token = String(card.resume_token ?? refs.resume_token ?? '')
   const attempted = Array.isArray(card.attempted) ? card.attempted.map((a) => String(a)) : []
   const continuation: WorkflowContinuation = {
@@ -41,7 +44,13 @@ export function TriggerParkActions({ item, onChanged }: { item: InboxItem; onCha
         return
       }
       setDone(
-        !approved
+        held
+          ? !approved
+            ? 'Declined. That fire did not run.'
+            : res.ok
+              ? 'Ran it — see its history for what it did.'
+              : `Ran it, and it ${res.result ?? 'did not finish'}.`
+          : !approved
           ? 'Declined. It asks again the next time it stops.'
           : res.waiting
             ? 'Ran it again, and it stopped for you again — its new question is in your Inbox.'
@@ -65,7 +74,9 @@ export function TriggerParkActions({ item, onChanged }: { item: InboxItem; onCha
         runId=""
         busy={busy}
         onAnswer={answer}
-        rerunCaption="Approve runs it again now. Deny leaves it until it next runs."
+        rerunCaption={held
+          ? 'Approve runs this fire once, now, as your run. Deny leaves it unrun.'
+          : 'Approve runs it again now. Deny leaves it until it next runs.'}
       />
       {err && <FieldError>{err}</FieldError>}
     </div>
