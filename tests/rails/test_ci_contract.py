@@ -7510,10 +7510,14 @@ ROWS = (*ROWS, NOTHING_IS_MASKED_UNSEEN)
 # its orders, leak reports and file list whatever it concluded. How the two outcomes make the
 # shard's is the masking row's (tests/ci_masking.py).
 
+#: upload-artifact as breadth.yml pins it today: the plants below find the step by it, and a
+#: refresh or a Dependabot bump moves it in the tree but not in main's copy of this file, which
+#: main's contract runs over the moved tree.
+_BREADTH_UPLOAD_ARTIFACT = _pinned(_BREADTH, r"(actions/upload-artifact@[0-9a-f]{40} # v[0-9.]+)")
 _RANDOM_ORDER_UPLOAD = (
     "      - name: Upload the orders and snapshots (random-order · shard ${{ matrix.shard }})\n"
     "        if: always()\n"
-    "        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n"
+    f"        uses: {_BREADTH_UPLOAD_ARTIFACT}\n"
     "        with:\n"
     "          name: random-order-${{ matrix.shard }}\n"
     "          path: reports/random-order/\n"
@@ -16164,10 +16168,15 @@ _RECORD_FIRST = (
     "      - name: Upload the entry's record\n        id: record\n        if: ${{ always() }}\n"
     "        continue-on-error: true\n"
 )
+#: upload-artifact as the tier workflows pin it today: the retry uploads with the same action
+#: as the first try, so it follows the tree's pin.
+_TIER_UPLOAD_ARTIFACT = _pinned(
+    ".github/workflows/pr.yml", r"(actions/upload-artifact@[0-9a-f]{40} # v[0-9.]+)"
+)
 _RECORD_RETRY = (
     "      - name: Upload the entry's record, again\n"
     f"        if: {_RECORD_RETRY_IF}\n"
-    "        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n"
+    f"        uses: {_TIER_UPLOAD_ARTIFACT}\n"
     "        with:\n"
     "          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}\n"
     f"          path: {_RECORDS_PATH}\n"
