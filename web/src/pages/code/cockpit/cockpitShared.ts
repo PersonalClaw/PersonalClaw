@@ -1,6 +1,7 @@
 import { type CodeStage } from '../../../lib/api'
 import { ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
 import { phaseKey } from '../../loops/loopPhases'
+import { workspaceRelative } from './workspacePath'
 
 // ── What the cockpit's regions share ───────────────────────────────────────────────────────────
 //
@@ -57,10 +58,9 @@ export function resolveTouchedPath(raw: string, root: string): { abs: string; re
     // skipped it, and the OutcomeBanner tally under-counted. Recover via the workspace's
     // last segment (same marker approach as ChangesPanel/canonPath); re-root under `root`
     // so downstream open/canon paths stay consistent. Still null if truly outside.
-    const wsBase = root.split('/').pop() || ''
-    const marker = `/${wsBase}/`
-    const mi = wsBase ? p.lastIndexOf(marker) : -1
-    if (mi >= 0) { const rel = p.slice(mi + marker.length); return { abs: `${root}/${rel}`, rel } }
+    // Read through the one helper (`workspacePath`): the root as a prefix, in its resolved forms.
+    const rel = workspaceRelative(root, p)
+    if (rel) return { abs: `${root}/${rel}`, rel }
     return null  // absolute but genuinely OUTSIDE the workspace
   }
   return { abs: `${root}/${p.replace(/^\.?\//, '')}`, rel: p }  // bare relative → under root

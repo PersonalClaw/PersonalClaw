@@ -1,3 +1,5 @@
+import { workspaceRelative } from './workspacePath'
+
 // ── What a code cockpit keeps in its address ──────────────────────────────────────────────────
 //
 // The cockpit's address (`#/code/<id>?…`) holds the state a person sets by clicking, so a reload,
@@ -19,8 +21,9 @@ const UNSAFE_PATH = /[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/
 /** A commit, by its hash: 7 to 40 lowercase hex characters, so no ref name, range or revision syntax. */
 const COMMIT = /^[0-9a-f]{7,40}$/
 
-/** Whether the address can hold a commit by `hash`. Git's short hash can be 4 to 6 characters
- *  where a repository abbreviates that far; such a commit is shown, and the address names none. */
+/** Whether the address can hold a commit by `hash`. The commit list carries full hashes
+ *  (`/api/file-git-log`'s `%H`), so a commit from it always can, in a repository that abbreviates
+ *  to 4 characters too; a short hash typed by hand below 7 characters is shown, and named by none. */
 export function isReviewCommit(hash: string): boolean {
   return COMMIT.test(hash)
 }
@@ -40,15 +43,7 @@ const trimSlash = (ws: string) => ws.replace(/\/$/, '')
  *  its last segment, as the Changes panel does. */
 export function toReviewPath(ws: string, abs: string): string | null {
   if (!ws || !abs) return null
-  const root = trimSlash(ws)
-  let rel: string | null = null
-  if (abs.startsWith(`${root}/`)) rel = abs.slice(root.length + 1)
-  else {
-    const base = root.split('/').pop() || ''
-    const marker = `/${base}/`
-    const i = base ? abs.lastIndexOf(marker) : -1
-    if (i >= 0) rel = abs.slice(i + marker.length)
-  }
+  const rel = workspaceRelative(ws, abs)
   return rel && isReviewPath(rel) ? rel : null
 }
 
