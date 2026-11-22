@@ -38,12 +38,19 @@ _APP_KEY = "${{ secrets.REFRESH_APP_KEY }}"
 #: (``NODE_OPTIONS``), with the key among its inputs.
 _TOKEN_INPUTS = {"client-id", "private-key"}
 _TOKEN_STEP_KEYS = {"name", "id", "if", "uses", "with"}
+#: The workflow's and the job's own keys, closed: an ``env`` or ``defaults`` on either reaches every
+#: step, the token steps' action among them (``NODE_OPTIONS`` runs before it, beside the key).
+_WORKFLOW_KEYS = {"name", "on", "concurrency", "permissions", "jobs"}
+_JOB_KEYS = {"if", "runs-on", "environment", "timeout-minutes", "permissions", "steps"}
 
 
 def _problems(text: str) -> list[str]:
     data = yaml.safe_load(text)
     found: list[str] = []
     on = data.get("on", data.get(True))
+    keys = {"on" if key is True else str(key) for key in data}
+    if keys - _WORKFLOW_KEYS:
+        found.append(f"the workflow sets {sorted(keys - _WORKFLOW_KEYS)}, which reaches every step")
     if not isinstance(on, dict) or set(on) != {"schedule", "workflow_dispatch"}:
         found.append(f"runs on {on!r}, not only its schedule and a dispatch")
     if data.get("permissions") != {"contents": "read"}:
@@ -52,6 +59,8 @@ def _problems(text: str) -> list[str]:
     if set(jobs) != {"refresh"}:
         return [*found, f"has jobs {sorted(jobs)}"]
     job = jobs["refresh"]
+    if set(job) - _JOB_KEYS:
+        found.append(f"the job sets {sorted(set(job) - _JOB_KEYS)}, which reaches every step")
     if job.get("if") != _ON_MAIN:
         found.append("the job runs off main")
     if job.get("environment") != "pin-refresh":
@@ -64,6 +73,11 @@ def _problems(text: str) -> list[str]:
         given = step.get("with") or {}
         if uses.startswith("actions/checkout@") and given.get("persist-credentials") is not False:
             found.append("the checkout keeps its credentials")
+        if "GITHUB_ENV" in str(step.get("run", "")):
+            found.append(
+                f"{step.get('name') or uses} writes the job's environment ($GITHUB_ENV), which"
+                " every later step's action reads"
+            )
         if uses.startswith("actions/create-github-app-token@"):
             tokens.append(step)
             if given.get("client-id") != _CLIENT_ID or given.get("private-key") != _APP_KEY:
@@ -101,6 +115,9 @@ def test_the_workflow_writes_only_through_the_apps_token_on_main() -> None:
 
 
 _PR_WRITE = "          permission-pull-requests: write\n"
+#: The workflow's grant before its jobs, and the job's grant before its steps.
+_TOP_GRANT = "permissions:\n  contents: read\n\njobs:\n"
+_JOB_STEPS = "    permissions:\n      contents: read\n    steps:\n"
 #: The first token step from its inputs to its key, where the plants below add to it.
 _KEY_LINE = (
     "        with:\n          client-id: ${{ vars.REFRESH_APP_CLIENT_ID }}\n"
@@ -182,6 +199,29 @@ _BEFORE_OPEN = _PR_WRITE + "      - name: Open"
                 "        with:\n", "        continue-on-error: true\n        with:\n"
             ),
             "on its step",
+        ),
+        # Or past the step: the workflow's or the job's env or defaults, or the job's environment
+        # written by an earlier step.
+        (_TOP_GRANT, "env:\n  NODE_OPTIONS: --require ./x.js\n" + _TOP_GRANT, "the workflow sets"),
+        (_TOP_GRANT, "defaults:\n  run:\n    shell: bash\n" + _TOP_GRANT, "the workflow sets"),
+        (
+            _JOB_STEPS,
+            _JOB_STEPS.replace(
+                "    steps:\n", "    env:\n      NODE_OPTIONS: --require ./x.js\n    steps:\n"
+            ),
+            "the job sets",
+        ),
+        (
+            _JOB_STEPS,
+            _JOB_STEPS.replace(
+                "    steps:\n", "    defaults:\n      run:\n        shell: bash\n    steps:\n"
+            ),
+            "the job sets",
+        ),
+        (
+            '${RUNNER_ARCH}"\n',
+            '${RUNNER_ARCH}"; echo "NODE_OPTIONS=--require ./x.js" >> "$GITHUB_ENV"\n',
+            "writes the job's environment",
         ),
     ],
 )
