@@ -94,12 +94,27 @@ def test_the_resolution_classifier_on_a_planted_call(snippet: str, expected: str
         ('await sessions.get_or_create("cron:digest")', ""),
         ('await sessions.get_or_create("cron:digest", model_axis="chat")', ""),
         ('await sessions.get_or_create("cron:digest", model_axis="orchestration")', "guarded"),
+        ('again = functools.partial(sessions.get_or_create, "cron:digest")', ""),
+        ('again = partial(sessions.get_or_create, "cron:digest", **asked)', ""),
+        (
+            'again = functools.partial(sessions.get_or_create, "cron:digest", '
+            'model_axis="orchestration")',
+            "guarded",
+        ),
     ],
-    ids=["no axis", "the chat axis", "a guarded axis"],
+    ids=[
+        "no axis",
+        "the chat axis",
+        "a guarded axis",
+        "bound for later, no axis",
+        "bound for later, replaying what it was asked",
+        "bound for later, a guarded axis",
+    ],
 )
 def test_the_classifier_on_a_planted_call(snippet: str, expected: str):
     """The rail's teeth, on code that is not in the tree: an unnamed axis and the chat axis are
-    both unmetered, and only a guarded one passes."""
+    both unmetered, and only a guarded one passes. An acquisition bound for a later call
+    (``functools.partial``) is one, read by what the bind holds: binding it hides no axis."""
     tree = ast.parse(f"async def run_the_nightly_digest(sessions):\n    {snippet}\n")
     (site,) = census(tree, "planted.py")
     assert verdict(site, guarded_axes()) == expected
@@ -624,6 +639,41 @@ async def test_the_session_manager_hands_an_agent_cli_the_axis_it_was_acquired_o
     await sessions.get_or_create("hook:axis", model_axis="orchestration")
     await sessions.get_or_create("dashboard:axis")
     assert [p.spend_axis for p in built] == ["orchestration", ""]
+
+
+@pytest.mark.asyncio
+async def test_a_runtime_rebuilt_for_a_turn_apart_keeps_the_axis_it_was_asked_on(tmp_path):
+    """A turn someone other than the owner asked for, on an agent CLI, gets a runtime built for it
+    alone (``get_or_create``'s ``asked_apart``), and the turn after it a rebuilt one: each is
+    built from the request its caller made, axis included, so the turn apart is charged to the
+    meter as any turn on that axis is."""
+    from personalclaw.config import AppConfig
+    from personalclaw.guardrails.budgets import get_meter
+    from personalclaw.session import SessionManager
+
+    built: list[Any] = []
+
+    def factory(_key: Any = None, **_kw: Any):
+        provider = _agent_cli(_CliClient())
+        provider.start = AsyncMock()
+        provider.shutdown = AsyncMock()
+        provider.is_process_alive = lambda: True
+        built.append(provider)
+        return provider
+
+    sessions = SessionManager(AppConfig(), provider_factory=factory)
+    await sessions.get_or_create("hook:axis", model_axis="orchestration")
+    sessions.release("hook:axis")
+    apart, _new, _resumed = await sessions.get_or_create(
+        "hook:axis", model_axis="orchestration", asked_apart=True
+    )
+    await _cli_turn(apart)
+    sessions.release("hook:axis")
+    await sessions.get_or_create("hook:axis", model_axis="orchestration")
+    assert len(built) == 3, "the control: the turn apart and the one after each got a runtime"
+    assert apart is built[1]
+    assert [p.spend_axis for p in built] == ["orchestration"] * 3
+    assert get_meter().day_totals().dollars == pytest.approx(_price(CLI_MODEL))
 
 
 # ── a webhook's agent turn ─────────────────────────────────────────────────────────────────

@@ -19,7 +19,9 @@ Three halves.
   where a client keeps its turns misses the one that keeps them elsewhere.
 * Every chore named in :data:`CHORES` reaches its model through the chore helper.
 
-What the census cannot see: a session acquired through a name other than ``get_or_create``.
+An acquisition bound for a later call (``functools.partial(….get_or_create, …)``) counts where it
+is bound. What the census cannot see: a session acquired through a name other than
+``get_or_create``.
 """
 
 from __future__ import annotations
@@ -187,6 +189,22 @@ def test_the_census_fails_a_chore_that_takes_a_session():
     planted = (
         "async def title_the_chat(state, prompt):\n"
         "    client, _new, _resumed = await state.sessions.get_or_create('chores')\n"
+        "    async for event in client.stream(prompt):\n"
+        "        pass\n"
+    )
+    (site,) = [("planted.py", q) for q in acquisitions(planted)]
+    assert site == ("planted.py", "title_the_chat")
+    assert not _accounted(site)
+
+
+def test_the_census_fails_a_chore_that_binds_a_session_for_later():
+    """A session bound for a later call (``functools.partial(….get_or_create, …)``) is acquired
+    where it is bound: a chore that takes one that way is caught as one that calls it is."""
+    planted = (
+        "import functools\n"
+        "async def title_the_chat(state, prompt):\n"
+        "    again = functools.partial(state.sessions.get_or_create, 'chores')\n"
+        "    client, _new, _resumed = await again()\n"
         "    async for event in client.stream(prompt):\n"
         "        pass\n"
     )
