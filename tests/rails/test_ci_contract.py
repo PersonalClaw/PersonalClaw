@@ -906,6 +906,9 @@ _FROM = r"^FROM (?:--platform=\$BUILDPLATFORM )?"
 _UBUNTU = _pinned(
     ".github/workflows/breadth.yml", "container: " + _DIGEST_REF.format(name="ubuntu")
 )
+#: Its digest alone, which install-smoke's evidence names as its image's version: the two move
+#: together, so a refresh that moves the container moves this too.
+_UBUNTU_DIGEST = _UBUNTU.rsplit(":", 1)[1]
 _NGINX = _pinned("deploy/docker/Dockerfile.web", _FROM + _DIGEST_REF.format(name="nginx"))
 _PYTHON = _pinned("deploy/docker/Dockerfile.backend", _FROM + _DIGEST_REF.format(name="python"))
 _NODE_BASE = _pinned("deploy/docker/Dockerfile.web", _FROM + _DIGEST_REF.format(name="node"))
@@ -9204,7 +9207,7 @@ fi
 "$(uv python find "$PY")" tools/ci/breadth_evidence.py inputs --out "$RUNNER_TEMP/inputs.json" \
   --tree "${TREE:?freshness named no tree}" \
   --image "ubuntu:26.04" \
-  --image-version "sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a" \
+  --image-version "sha256:@UBUNTU_DIGEST@" \
   --arch "$RUNNER_ARCH" \
   --python "$("$(uv python find "$PY")" -c 'import platform; print(platform.python_version())')" \
   --uv "$(uv --version | awk '{print $2}')" --node none \
@@ -9222,6 +9225,10 @@ fi
 """,  # noqa: E501
 }
 
+#: install-smoke's evidence names its container's digest as its image's version (``@UBUNTU_DIGEST@``
+#: above), as breadth.yml pins it today: a refresh moves both, and main's contract reads this file
+#: over the refreshed tree, so a literal here would go stale.
+_NOT_COMMANDS = {k: v.replace("@UBUNTU_DIGEST@", _UBUNTU_DIGEST) for k, v in _NOT_COMMANDS.items()}
 
 _NOT_COMMAND_LINES = frozenset(
     tuple(words) for text in _NOT_COMMANDS.values() for _, words in _run_lines(text) if words

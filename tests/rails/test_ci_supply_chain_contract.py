@@ -61,11 +61,31 @@ _TOOLING = ".github/workflows/release-image-tooling.yml"
 _SETUP_NODE = "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0"
 _LOGIN = "docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0"
 _CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"
-_QEMU_AMD64 = "465d3fdd28d0f2b871ba4b4ec98bd183292e96167f00d9fd40bd249f8632d705"
-_QEMU_INDEX = "400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
-_UBUNTU_INDEX = "c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944"
-_BUILDKIT_AMD64 = "3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8"
-_BUILDKIT_INDEX = "b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c"
+#: The platform manifests and indexes the image-digest plants edit, as the tree names them today,
+#: the way ``_pinned`` reads a pin: each manifest from the step that pins it, and each index from
+#: the comment just above that pin. A pin moved by hand or by a refresh then moves its plants too,
+#: so none pins an index the tree no longer names.
+_QEMU_IMAGE = _pinned(
+    _ARTIFACTS_YML, r"^\s*image: docker\.io/tonistiigi/(binfmt:[\w.-]+@sha256:[0-9a-f]{64})$"
+)
+_QEMU_AMD64 = _QEMU_IMAGE.rsplit(":", 1)[1]
+_QEMU_INDEX = _pinned(
+    _ARTIFACTS_YML,
+    r"# tonistiigi/binfmt:[\w.-]+, the linux/amd64 manifest[^\n]*\n"
+    r"\s*# of index sha256:([0-9a-f]{64})\.\n\s*image: docker\.io/tonistiigi/binfmt:",
+)
+_UBUNTU_INDEX = _pinned(
+    _BREADTH,
+    r"of index\n\s*# sha256:([0-9a-f]{64})\.[^\n]*\n(?:\s*#[^\n]*\n)*\s*container: ubuntu:",
+)
+_BUILDKIT_AMD64 = _pinned(
+    _ARTIFACTS_YML, r"^\s*driver-opts: image=moby/buildkit:[\w.-]+@sha256:([0-9a-f]{64})$"
+)
+_BUILDKIT_INDEX = _pinned(
+    _ARTIFACTS_YML,
+    r"# moby/buildkit:[\w.-]+, the linux/amd64 manifest[^\n]* of index\n"
+    r"\s*# sha256:([0-9a-f]{64})\.\n\s*driver-opts: image=moby/buildkit:",
+)
 _WEB = "deploy/docker/Dockerfile.web"
 _AGENT_CLIS = "deploy/docker/agent-clis"
 _AGENT_MANIFEST = f"{_AGENT_CLIS}/package.json"
@@ -1486,7 +1506,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant(
                 "setup-qemu's image by tag",
                 _ARTIFACTS_YML,
-                f"binfmt:qemu-v10.2.3-68@sha256:{_QEMU_AMD64}",
+                _QEMU_IMAGE,
                 "binfmt:latest",
             ),
             _plant("buildx's latest", _ARTIFACTS_YML, "version: v0.38.0", "version: latest"),
