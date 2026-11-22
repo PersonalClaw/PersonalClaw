@@ -9,7 +9,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { api } from '../../lib/api'
 import { InlineError } from '../../ui/InlineError'
 import { TerminalView } from './TerminalView'
-import { runInTerminalWhenReady, showTerminal } from './terminalBridge'
+import { hideTerminal, runInTerminalWhenReady, showTerminal } from './terminalBridge'
 import { openRefusal, standing, type OpenRefusal } from './openRefusal'
 import type { TermTab } from './TerminalPage'
 import { tabListKeys } from '../../lib/tabListKeys'
@@ -61,9 +61,12 @@ export function TerminalDrawer({ open, onClose, onOpenFull, run, onRunTaken }: {
   const { width: height, onHandleDown, onHandleKey, min, max } = useResizablePanel(
     'terminal-drawer', { storageKey: HEIGHT_KEY, def: DEF_H, min: MIN_H, max: () => window.innerHeight * MAX_FRAC, side: 'bottom' })
 
-  // The session it shows is the one "Run in terminal" goes to (`terminalBridge.showTerminal`).
+  // The session it shows is the one "Run in terminal" goes to (`terminalBridge.showTerminal`),
+  // until it shows another or closes.
   useEffect(() => {
-    if (open && active) showTerminal(active)
+    if (!open || !active) return
+    showTerminal(active)
+    return () => hideTerminal(active)
   }, [open, active])
 
   // A command left for it runs in the session it shows, bound to that session, or goes with the

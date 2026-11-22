@@ -26,6 +26,8 @@ const pty = vi.hoisted(() => ({
   live: [] as Array<{ session_id: string; cwd: string; shell: string; alive: boolean }>,
   /** Refuse every create, as the gateway does at its session limit. */
   refuse: false,
+  /** How long a session's socket takes to open, in ms. */
+  openAfter: 40,
 }))
 
 vi.mock('../pages/terminal/TerminalView', async () => {
@@ -35,7 +37,7 @@ vi.mock('../pages/terminal/TerminalView', async () => {
     TerminalView: ({ tab }: { tab: { id: string; label: string } }) => {
       useEffect(() => {
         let open = false
-        const opening = setTimeout(() => { open = true }, 40)
+        const opening = setTimeout(() => { open = true }, pty.openAfter)
         registerTerminal(tab.id, (text) => {
           if (!open) return false
           pty.sent.push([tab.id, text])
@@ -112,6 +114,7 @@ const { ThemeProvider } = await import('./theme')
 const { AppearanceProvider } = await import('./appearance')
 const { PersonalityProvider } = await import('./personality')
 await Promise.all([import('../pages/ChatPage'), import('../pages/terminal/TerminalPage')])
+const { registerTerminal, showTerminal, unregisterTerminal } = await import('../pages/terminal/terminalBridge')
 
 
 
@@ -141,6 +144,7 @@ beforeEach(() => {
   pty.created.length = 0
   pty.live.length = 0
   pty.refuse = false
+  pty.openAfter = 40
   localStorage.clear()
   sessionStorage.clear()
   vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket)
@@ -222,5 +226,78 @@ describe('Run goes to the session shown', () => {
     askToRun('pwd')
     await waitFor(() => expect(runsOf('pwd')).toHaveLength(2))
     expect(runsOf('pwd').map(([id]) => id)).toEqual(['pty-left', 'pty-right'])
+  })
+})
+
+describe('a session nobody can see takes nothing', () => {
+  /** A split Terminal page with a third session in the background, the right pane worked in. */
+  async function workInTheRightPane() {
+    pty.live.push(
+      { session_id: 'pty-left', cwd: '/home/ada', shell: '/bin/zsh', alive: true },
+      { session_id: 'pty-right', cwd: '/home/ada', shell: '/bin/zsh', alive: true },
+      { session_id: 'pty-background', cwd: '/home/ada', shell: '/bin/zsh', alive: true },
+    )
+    location.hash = '#/terminal?active=pty-left&split=pty-right'
+    render(<StrictMode><ThemeProvider><AppearanceProvider><PersonalityProvider><App /></PersonalityProvider></AppearanceProvider></ThemeProvider></StrictMode>)
+    // The background session is mounted too, hidden (`display: none`), as the page keeps every one.
+    await waitFor(() => expect(screen.getAllByRole('group', { name: /PTY/, hidden: true })).toHaveLength(3))
+    await settle()
+    const right = screen.getAllByRole('group', { name: /PTY/ }).find((p) => p.closest('[style*="order: 2"]'))
+    fireEvent.pointerDown(right!)
+    askToRun('pwd')
+    await waitFor(() => expect(runsOf('pwd')).toEqual([['pty-right', 'pwd\n']]))
+  }
+
+  it('🔴 Close split after working in the right pane sends Run to the left one, not the hidden right one', async () => {
+    await workInTheRightPane()
+    fireEvent.click(screen.getByRole('button', { name: 'Close split' }))
+    await settle()
+
+    askToRun('pwd')
+    await waitFor(() => expect(runsOf('pwd')).toHaveLength(2))
+    expect(runsOf('pwd').map(([id]) => id)).toEqual(['pty-right', 'pty-left'])
+  })
+
+  it("🔴 closing the right pane's session after working in it sends Run to the left one, not a background session", async () => {
+    await workInTheRightPane()
+    fireEvent.click(screen.getByRole('button', { name: 'Close Session 2' }))
+    await waitFor(() => expect(screen.getAllByRole('group', { name: /PTY/, hidden: true })).toHaveLength(2))
+    await settle()
+
+    askToRun('pwd')
+    await waitFor(() => expect(runsOf('pwd')).toHaveLength(2))
+    expect(runsOf('pwd').map(([id]) => id)).toEqual(['pty-right', 'pty-left'])
+  })
+
+  it('🔴 a session that registers where nothing shows it takes nothing: Run opens the drawer and runs there', async () => {
+    const stray: string[] = []
+    registerTerminal('pty-stray', (text) => { stray.push(text); return true })
+    try {
+      await openChat(SESSION, /RUN THIS ONE/)
+      run()
+      await waitFor(() => expect(runsOf(COMMAND)).toEqual([['pty-1', `${COMMAND}\n`]]), { timeout: 4000 })
+      expect(stray).toEqual([])
+    } finally {
+      unregisterTerminal('pty-stray')
+    }
+  })
+
+  // Last in the file: the session it shows is the bridge's for the rest of the file.
+  it("the drawer's command goes to the session it opened, though another is shown while it opens", async () => {
+    pty.openAfter = 400
+    const other: string[] = []
+    await openChat(SESSION, /RUN THIS ONE/)
+    run()
+    await screen.findByRole('group', { name: /PTY/ })
+    act(() => {
+      showTerminal('pty-other')
+      registerTerminal('pty-other', (text) => { other.push(text); return true })
+    })
+    try {
+      await waitFor(() => expect(runsOf(COMMAND)).toEqual([['pty-1', `${COMMAND}\n`]]), { timeout: 4000 })
+      expect(other).toEqual([])
+    } finally {
+      unregisterTerminal('pty-other')
+    }
   })
 })
