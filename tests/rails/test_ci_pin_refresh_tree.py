@@ -247,6 +247,46 @@ def test_a_moved_image_and_a_newer_action_move_every_copy_in_the_tree(tmp_path: 
     ).read_text() == f'digest = "{_NEW_DIGEST}"\nsha = "{NEWER}"\n'
 
 
+def _hex(digest: str) -> str:
+    return digest.removeprefix("sha256:")
+
+
+def test_a_bare_copy_of_a_moved_digest_moves_too(tmp_path: Path) -> None:
+    """🔴 Red before: a digest kept without its ``sha256:`` prefix (a rail's control constant)
+    stayed on the old index, so the first refresh's own rails planted against a pin the tree no
+    longer held (#6383)."""
+    image = pin_refresh.ImageUpdate(
+        "ubuntu", "26.04", "linux/amd64", _INDEX, _DIGEST, _NEW_INDEX, _NEW_DIGEST
+    )
+    (tmp_path / "test_rail.py").write_text(f'_UBUNTU_INDEX = "{_hex(_INDEX)}"\n')
+    (tmp_path / "longer.txt").write_text(f"{_hex(_INDEX)}0\n{'f' + _hex(_DIGEST)}\n")
+    changed = pin_refresh.apply(tmp_path, ["test_rail.py", "longer.txt"], [], [image])
+    assert changed == ["test_rail.py"]
+    assert (tmp_path / "test_rail.py").read_text() == f'_UBUNTU_INDEX = "{_hex(_NEW_INDEX)}"\n'
+    assert (
+        tmp_path / "longer.txt"
+    ).read_text() == f"{_hex(_INDEX)}0\n{'f' + _hex(_DIGEST)}\n", (
+        "a longer run of hex that only holds the digest is another value"
+    )
+
+
+def test_a_rails_bare_index_and_platform_manifest_constants_move_together(tmp_path: Path) -> None:
+    """🔴 Red before: the shape the release images' controls keep (``_QEMU_AMD64`` and
+    ``_QEMU_INDEX``, ``_BUILDKIT_AMD64`` and ``_BUILDKIT_INDEX``: the platform manifest and the
+    index, each as bare hex) would have stayed behind on those images' first refresh."""
+    image = pin_refresh.ImageUpdate(
+        "tonistiigi/binfmt", "qemu", "linux/amd64", _INDEX, _DIGEST, _NEW_INDEX, _NEW_DIGEST
+    )
+    rail = f'_QEMU_AMD64 = "{_hex(_DIGEST)}"\n_QEMU_INDEX = "{_hex(_INDEX)}"\n'
+    (tmp_path / "test_supply_chain.py").write_text(rail)
+    assert pin_refresh.apply(tmp_path, ["test_supply_chain.py"], [], [image]) == [
+        "test_supply_chain.py"
+    ]
+    assert (tmp_path / "test_supply_chain.py").read_text() == (
+        f'_QEMU_AMD64 = "{_hex(_NEW_DIGEST)}"\n_QEMU_INDEX = "{_hex(_NEW_INDEX)}"\n'
+    )
+
+
 def test_the_body_names_each_update_its_release_notes_and_its_key() -> None:
     action = pin_refresh.ActionUpdate("o/new", OLD, "v1.0.0", NEWER, "v1.1.0", "https://x/v1.1.0")
     image = pin_refresh.ImageUpdate(
