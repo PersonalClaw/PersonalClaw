@@ -131,7 +131,9 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
   const projectName = (projects ?? []).find((p) => p.id === query.project)?.name ?? ''
   const collection = (collections ?? []).find((c) => c.id === query.collection)
   const wordsOnly = !!stats && !stats.embeddings?.enabled
-  const line = data ? countLine({
+  // A library with nothing in it yet draws no count line: "0 items" above "Your library is empty" says
+  // the empty state's words again. A search or a filter that narrows it to nothing keeps its line.
+  const line = data && !firstRun ? countLine({
     query, data, projectName,
     collection: collection ? { name: collection.name, smart: collection.kind === 'smart' ? collection.query ?? '' : null } : query.collection ? { name: query.collection, smart: null } : undefined,
     wordsOnly,
@@ -346,10 +348,10 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
               onClear={() => { setBulk(false); setChecked(new Set()) }} />
           )}
           <div className="px-l pb-s">
-            {line && (
-              <ListStatus results={{ count: data?.total ?? 0, noun: 'items', active: narrowed }} stale={stale}
-                lead={line.lead} line={powerOn && !narrowed && stats ? [line.line, ...detailParts(stats, data?.facets?.state)].filter(Boolean).join(' · ') : line.line}
-                actions={line.actions.map((a) => ({ label: a.label, onSelect: lineAction(a.key) }))} />
+            {data && (
+              <ListStatus results={{ count: data.total, noun: 'items', active: narrowed }} stale={stale}
+                lead={line?.lead} line={line ? (powerOn && !narrowed && stats ? [line.line, ...detailParts(stats, data.facets?.state)].filter(Boolean).join(' · ') : line.line) : undefined}
+                actions={line?.actions.map((a) => ({ label: a.label, onSelect: lineAction(a.key) }))} />
             )}
             {failed && (
               <p data-type="body-s" className="mt-s text-on-surface-var">{failed} <TextLink onClick={refresh}>Try again</TextLink></p>

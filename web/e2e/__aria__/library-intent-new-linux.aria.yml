@@ -33,7 +33,6 @@
   - button "More actions"
   - button "Add"
   - region "Library items":
-    - paragraph: # items
     - status
     - heading "Your library is empty" [level=#]
     - paragraph: Files, links and notes you add show up here. So do the pages and documents your chats make.
