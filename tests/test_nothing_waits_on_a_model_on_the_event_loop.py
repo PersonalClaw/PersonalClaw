@@ -35,6 +35,12 @@ from personalclaw.vector_memory import VectorMemoryStore
 # ── one route, driven: teaching a lesson while the model is slow ─────────────────────────────
 
 
+# The bound is generous on purpose: a shared CI runner can pause the loop for a moment, and the
+# failure this test guards against is a wait of the whole embed (0.8 s here), not a few ms.
+# 0.5 s was too tight: a loaded macOS runner once took 0.63 s for the health check alone.
+HEALTH_BOUND = 0.7
+
+
 def _bag(text: str) -> list[float]:
     vec = [0.0] * 32
     for word in re.findall(r"\w+", text.lower()):
@@ -106,7 +112,7 @@ async def test_the_gateway_answers_while_a_lesson_is_embedded(slow_store):
             )
 
     assert health == 200
-    assert took < 0.5, f"/api/healthz took {took:.2f}s while a lesson was embedded"
+    assert took < HEALTH_BOUND, f"/api/healthz took {took:.2f}s while a lesson was embedded"
     assert still_writing, "premise: the lesson was still being embedded"
     assert status == 200
     assert [r["key"] for r in store.get_lessons()], "and the lesson was saved"
@@ -128,7 +134,7 @@ async def test_the_gateway_answers_while_a_fact_is_embedded(slow_store):
             )
 
     assert health == 200
-    assert took < 0.5, f"/api/healthz took {took:.2f}s while a fact was embedded"
+    assert took < HEALTH_BOUND, f"/api/healthz took {took:.2f}s while a fact was embedded"
     assert still_writing, "premise: the fact was still being embedded"
     assert status == 200
     assert store.get_semantic("pref.editor") is not None
