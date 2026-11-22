@@ -9,6 +9,8 @@ export interface TitleableSession {
   title?: string
   /** First-user-message / prompt preview, when the summary carries one. */
   prompt_preview?: string
+  /** The chat's first message of the owner's, plain: what names it before it has a title. */
+  first_message?: string
   /** Most-recent conversational line (already redacted, ~80 chars) — the
    *  fallback content snippet when there is no prompt preview. */
   last_message?: string
@@ -67,7 +69,7 @@ function relStamp(secs?: number): string {
 export function sessionTitle(s: TitleableSession): string {
   const human = (s.title ?? '').trim()
   if (!isRawSessionId(human, s.key)) return human
-  const snippet = (s.prompt_preview ?? '').trim() || (s.last_message ?? '').trim()
+  const snippet = (s.prompt_preview ?? '').trim() || (s.first_message ?? '').trim() || (s.last_message ?? '').trim()
   if (snippet) return toSnippet(snippet)
   const when = relStamp(sessionActivitySeconds(s))
   return when ? `Untitled chat · ${when}` : 'Untitled chat'

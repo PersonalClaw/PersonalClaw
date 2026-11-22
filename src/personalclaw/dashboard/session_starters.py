@@ -25,6 +25,7 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
 from personalclaw.request_validation import json_object_body
 from personalclaw.sel import sel
+from personalclaw.textfmt import first_message
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,14 @@ def _read_transcript(
     return key, title, meta, messages, None
 
 
+def export_title(title: str, key: str, messages: list) -> str:
+    """The name an exported chat is downloaded under: its title, else, for a chat that has none
+    yet (its title is its key), its first message, plain."""
+    if title and title != key:
+        return title
+    return first_message(messages, 60) or title
+
+
 async def api_session_export(request: web.Request) -> web.Response:
     """GET /api/chat/sessions/{session}/export?format=md|json — download a transcript.
 
@@ -154,7 +163,7 @@ async def api_session_export(request: web.Request) -> web.Response:
     text, content_type = session_export.render(
         fmt, title=title, key=key, meta=meta, messages=messages
     )
-    filename = session_export.export_filename(title, name, fmt)
+    filename = session_export.export_filename(export_title(title, name, messages), name, fmt)
 
     sel().log_api_access(
         caller="dashboard",
