@@ -196,3 +196,38 @@ describe('a regenerated answer that calls a tool', () => {
     expectEachSentenceOnce()
   })
 })
+
+describe('switching an answer to a version that called a tool', () => {
+  // The gateway swaps the turn's rows for the version's (`chat_regenerate._show_version`) and says
+  // so (`whole`): the page used to collapse the answer to the version's text, so a version's tool
+  // call showed only after a reload, and read the chat again to show it as written.
+  it('🔴 reads the chat again and shows the version whole, its tool call included', async () => {
+    const versions = [{ content: 'Let me look.\n\nThey read fine.' }, { content: 'Probably fine.' }]
+    const chat = (messages: unknown[]) => ({
+      key: SESSION, title: 'Notes', queue: [], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
+      messages, run_state: runState({ session: SESSION }), stream_seq: 100,
+    })
+    render(
+      <AppearanceProvider>
+        <ChatPage sub={SESSION} navigate={() => {}} query={{}} setQuery={() => {}} />
+      </AppearanceProvider>,
+    )
+    await waitFor(() => expect(h.detailCalls.length).toBe(1))
+    await act(async () => {
+      h.detailCalls[0].resolve(chat([QUESTION, { role: 'assistant', content: 'Probably fine.', ts: 't-n', variants: versions, variant_idx: 1 }]))
+    })
+    await screen.findByText('Probably fine.')
+
+    deliver([['chat_variant_switch', { index: 0, count: 2, content: versions[0].content, whole: true }]])
+
+    await waitFor(() => expect(h.detailCalls.length, 'the chat was not read again').toBe(2))
+    await act(async () => {
+      h.detailCalls[1].resolve(chat([QUESTION, { ...OLD[0], variants: versions, variant_idx: 0 }, OLD[1], OLD[2]]))
+    })
+    paintFrames()
+    // Its call, folded as a finished turn's steps are, then the words after it.
+    expect(await screen.findByText(/Worked through 1 step/)).toBeTruthy()
+    expect(screen.getByText('They read fine.')).toBeTruthy()
+    expect(screen.queryByText('Probably fine.')).toBeNull()
+  })
+})

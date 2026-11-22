@@ -75,6 +75,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A dialog no longer takes the key that opened it as its answer: Enter on New collection's name now shows its search step instead of making the collection at once.**
 - **A Library search or filter that leaves the open item out of the list keeps it in its pane and says the search hides it, rather than saying nothing in your library has its address.**
 - **A Projects address with `?peek=` opens the project it names: the value is one part of the address, so one carrying path characters no longer lands on another page.**
+- **Switching an answer that used a tool to another version shows that version whole, its tool calls included, and a reload shows the same. It used to keep the other version's tool calls and text around the one you picked.**
 
 ### Security
 

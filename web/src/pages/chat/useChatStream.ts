@@ -936,6 +936,9 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
             variantCount: count ?? next[i].variantCount }
           return next
         })
+        // The gateway swapped the turn's rows for the version's (`whole`): a tool-using version
+        // is more than its text, so the chat is read again to show it as it was written.
+        if (d.whole) resync()
         break
       }
       // What the runtime reported a model call of this chat's turn used. Counted for the turn that
