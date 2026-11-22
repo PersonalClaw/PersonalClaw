@@ -271,6 +271,7 @@ def hold_fire(
     facts: Any = None,
     refs: dict[str, Any] | None = None,
     state: Any = None,
+    hook: bool = False,
 ) -> TriggerPark | None:
     """Ask once whether to run a fire held because its action asks first (the `one_tap` rung).
 
@@ -286,10 +287,19 @@ def hold_fire(
     fires` counts them). *payload* is the fire's as the injection screen and the fence left it,
     never the raw request, with its *context* line and its *facts* (`fire_facts.FireFacts`) as
     the same door left them; *refs* are added to the row (the action type and its rung, which the
-    ladder reads). Never raises: the fire is already held, and recorded.
+    ladder reads). *hook* says *trigger* is a lifecycle trigger (``hooks._withhold``), the one
+    kind whose id is ``lifecycle:<id>``. Never raises: the fire is already held, and recorded.
     """
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+
     trigger_id = str(getattr(trigger, "id", "") or "")
     if not trigger_id:
+        return None
+    if trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX) != hook:
+        # A lifecycle trigger's id (``lifecycle:<id>``) is a hook's alone (*hook*): its question
+        # is answered by running that hook, so another trigger that carried one, such as a row an
+        # app serves, is not asked under it, and a hook's question is asked under nothing else.
+        logger.warning("trigger %s: its held fire is not asked: its id is not its own", trigger_id)
         return None
     try:
         park = load(trigger_id)

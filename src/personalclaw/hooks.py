@@ -1205,6 +1205,7 @@ def _withhold(
             label=label,
             context=handed.context,
             refs={"action_type": route.key, "rung": route.rung, **refs},
+            hook=True,
         )
         return
     if route.route == ROUTE_ASK:
