@@ -23,6 +23,7 @@ import { SearchField } from '../../ui/SearchField'
 import { TextInput } from '../../ui/forms'
 import { StatusPill } from '../../ui/StatusPill'
 import { useQuery, invalidateKeys } from '../../lib/data'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import type { Rebase, Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { useEmbeddingReindex } from '../../lib/useEmbeddingReindex'
@@ -413,6 +414,11 @@ export function ModelsPanel() {
   // A binding mutation invalidates the cached catalog so the next read revalidates
   // against the changed state instead of a stale snapshot.
   const reloadActive = () => { invalidateKeys('settings:models'); refresh() }
+  // The gateway says when a binding or a provider instance changed, whoever changed it (the
+  // Providers section above adding or removing an instance, another tab): a `refresh` frame
+  // naming `models`. The catalog and chains are read again on it, and when the socket comes back,
+  // since a frame sent while it was down is lost.
+  useChatSocket((m: WsMessage) => { if (refreshKinds(m).includes('models')) reloadActive() }, reloadActive)
 
   if (!allModels && modelsErr) return <LoadError what="models" error={modelsErr} onRetry={refresh} />
   if (!allModels) return <ListSkeleton rows={6} what="models" />
