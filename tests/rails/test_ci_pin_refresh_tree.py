@@ -275,7 +275,7 @@ class _Recorder:
         return ""
 
 
-_TOKEN = "ghs_the-app-token"
+_TOKEN = "fake-app-token"
 _TEXT = "The weekly pin refresh moves these.\n\n<!-- pin-refresh: " + "f" * 64 + " -->\n"
 
 
