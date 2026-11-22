@@ -2438,7 +2438,8 @@ def _to_destination(*, valued: str, long_valued: str, moves: bool = False) -> _R
                 effects = effects | _target_of(word)
         elif len(scan.operands) >= 2:
             effects = effects | _target_of(scan.operands[-1])
-            effects = effects | _into(scan.operands[-1:], scan.operands[:-1], folder=False)
+            # The last operand, as a list of one: it names where every other one lands.
+            effects = effects | _into([scan.operands[-1]], scan.operands[:-1], folder=False)
         elif len(scan.operands) == 1 and not moves:
             effects = effects | _writes_to(".")  # `ln -s target` links it here
         else:
