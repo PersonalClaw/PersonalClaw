@@ -11,7 +11,14 @@ edit they ask for, and opens it as one pull request that merges like any other.
 - each action pinned by commit SHA (``action_pins.pins``): the newest release on its major line
   that was published at least :data:`COOLDOWN_DAYS` ago, Dependabot's own cooldown, or, when no
   newer one is, the commit its own tag names now if that tag has moved. Every copy of the old SHA
-  in the tree moves, and its ``# vX.Y.Z`` comment with it.
+  in the tree moves, and its ``# vX.Y.Z`` comment with it;
+- each tool CI or the image installs by hand (``name==X.Y.Z`` in a workflow, a local action, a
+  Dockerfile or the catalogue, for a package uv.lock does not hold, so no lock update moves it)
+  and uv's one release (``[tool.uv] required-version``): the newest final release on PyPI on the
+  same line (the same major, or the same minor below 1.0) published at least
+  :data:`COOLDOWN_DAYS` ago. Its copies move under :data:`TOOL_EDIT_ROOTS`; uv's in setup-uv's
+  ``version:``, the image's ``ARG UV_VERSION`` and the floor too. A package uv.lock holds is
+  Dependabot's: its pin is held equal to the lock and moves with it.
 
 With ``--write`` it edits the tracked files in place, writes the pull request's body (each update's
 old and new identity, and its release notes), and writes ``changed`` and ``workflows`` (whether a
@@ -37,6 +44,9 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
+import urllib.error
+import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +56,18 @@ from . import action_pins, image_pins
 #: Dependabot's cooldown for actions (.github/dependabot.yml): a release this new waits a week.
 COOLDOWN_DAYS = 7
 BRANCH_PREFIX = "pin-refresh/"
-TITLE = "Refresh pinned actions and images"
+TITLE = "Refresh pinned actions, images and tools"
+#: Where a tool's pin is read from: what installs it in CI or the image.
+_TOOL_INSTALLS = re.compile(
+    r"\.github/workflows/[^/]+\.ya?ml|\.github/actions/.+/action\.ya?ml"
+    r"|deploy/(?:.+/)?Dockerfile[^/]*|tools/ci/catalogue\.toml"
+)
+#: Where a tool's copies move: its installs, their docs, and uv's floor. Never tests/ (the rails
+#: read the pins from the tree) or CHANGELOG.md, whose entries are history.
+TOOL_EDIT_ROOTS = (".github/", "deploy/", "tools/ci/", "docs/", "pyproject.toml")
+PYPI = "https://pypi.org/pypi/{name}/json"
+_TOOL_PIN = re.compile(r"(?<![\w.-])([A-Za-z0-9][A-Za-z0-9_.-]*)==(\d+(?:\.\d+)+)(?![\w.])")
+_UV_FLOOR = re.compile(r'^required-version = ">=(\d+\.\d+\.\d+)"$', re.M)
 GH_TIMEOUT_SECONDS = 60
 _KEY = re.compile(r"<!-- pin-refresh: ([0-9a-f]{64}) -->")
 _VERSION = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
@@ -97,6 +118,20 @@ class ImageUpdate:
             f"`{self.new_index}`, manifest `{self.old_digest}` → `{self.new_digest}`. "
             f"Release notes: {self.notes}"
         )
+
+
+@dataclass(frozen=True)
+class ToolUpdate:
+    name: str
+    old: str
+    new: str
+
+    @property
+    def notes(self) -> str:
+        return f"https://pypi.org/project/{self.name}/{self.new}/"
+
+    def line(self) -> str:
+        return f"`{self.name}` {self.old} → {self.new}. Release notes: {self.notes}"
 
 
 def _version(tag: str) -> tuple[int, int, int] | None:
@@ -162,6 +197,92 @@ def plan_actions(
     return list(updates.values()), problems
 
 
+def _final(version: str) -> tuple[int, ...] | None:
+    """*version* as numbers when it is a final release (``2.10.1``, ``2026.8``), else None."""
+    parts = version.split(".")
+    return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
+
+
+def _line(version: tuple[int, ...]) -> tuple[int, ...]:
+    """The line a release stays on: its major, or its minor below 1.0 (where a minor breaks)."""
+    return version[:1] if version[0] else version[:2]
+
+
+def _normal(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name.lower())
+
+
+def newest_tool(
+    fetch: action_pins.Fetch, name: str, version: str, now: dt.datetime
+) -> tuple[str | None, str]:
+    """The newest final release of *name* on PyPI on *version*'s line, newer than it and uploaded
+    at least :data:`COOLDOWN_DAYS` before *now*, or None when there is none; with the reason when
+    PyPI gave no answer to read."""
+    pinned = _final(version)
+    if pinned is None:
+        return None, f"unresolved: {version} is not a final release"
+    status, body = fetch(PYPI.format(name=name))
+    releases = body.get("releases") if isinstance(body, dict) else None
+    if status != 200 or not isinstance(releases, dict):
+        return None, f"unresolved: PyPI answered {status}"
+    cutoff = now - dt.timedelta(days=COOLDOWN_DAYS)
+    best: tuple[tuple[int, ...], str] | None = None
+    for candidate, files in releases.items():
+        parsed = _final(str(candidate))
+        if parsed is None or parsed <= pinned or _line(parsed) != _line(pinned):
+            continue
+        times = []
+        for f in files if isinstance(files, list) else []:
+            if not isinstance(f, dict) or f.get("yanked"):
+                continue
+            try:
+                stamp = str(f.get("upload_time_iso_8601", "")).replace("Z", "+00:00")
+                times.append(dt.datetime.fromisoformat(stamp))
+            except ValueError:
+                continue
+        if times and min(times) <= cutoff and (best is None or parsed > best[0]):
+            best = (parsed, str(candidate))
+    return (best[1] if best else None), ""
+
+
+def tool_pins(
+    files: Iterable[tuple[str, str]], pyproject: str, locked: Iterable[str]
+) -> dict[tuple[str, str], str]:
+    """Each (tool, version) installed by hand in *files* that uv.lock (*locked*) does not hold,
+    and uv's release from *pyproject*'s floor, with where it was first read."""
+    held = {_normal(n) for n in locked}
+    found: dict[tuple[str, str], str] = {}
+    for rel, text in files:
+        if not _TOOL_INSTALLS.fullmatch(rel):
+            continue
+        for m in _TOOL_PIN.finditer(text):
+            if _normal(m[1]) not in held:
+                found.setdefault((m[1], m[2]), rel)
+    floor = _UV_FLOOR.search(pyproject)
+    if floor:
+        found.setdefault(("uv", floor[1]), "pyproject.toml")
+    return found
+
+
+def plan_tools(
+    files: Iterable[tuple[str, str]],
+    pyproject: str,
+    locked: Iterable[str],
+    fetch: action_pins.Fetch,
+    now: dt.datetime,
+) -> tuple[list[ToolUpdate], list[str]]:
+    """The tool updates *files* call for, and every pin that could not be resolved."""
+    updates: list[ToolUpdate] = []
+    problems: list[str] = []
+    for (name, version), where in sorted(tool_pins(files, pyproject, locked).items()):
+        newer, why = newest_tool(fetch, name, version, now)
+        if why:
+            problems.append(f"{where}: {name} {version}: {why}")
+        elif newer:
+            updates.append(ToolUpdate(name, version, newer))
+    return updates, problems
+
+
 def plan_images(
     files: Iterable[tuple[str, str]], get: image_pins.Get
 ) -> tuple[list[ImageUpdate], list[str]]:
@@ -195,6 +316,28 @@ def _hex_run(value: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![0-9a-f]){re.escape(value)}(?![0-9a-f])")
 
 
+def edit_tools(text: str, tools: Sequence[ToolUpdate]) -> str:
+    """*text* with each tool's ``name==old`` moved, and uv's release in its own copies too:
+    setup-uv's ``version:``, the image's ``ARG UV_VERSION`` and the ``required-version`` floor."""
+    for t in tools:
+        text = re.sub(
+            rf"(?<![\w.-]){re.escape(t.name)}=={re.escape(t.old)}(?![\w.])",
+            f"{t.name}=={t.new}",
+            text,
+        )
+        if t.name != "uv":
+            continue
+        text = re.sub(
+            r"(uses:\s*astral-sh/setup-uv@[^\n]*\n(?:(?![ \t]*-\s)[^\n]*\n)*?[ \t]+version:\s*)"
+            rf'"{re.escape(t.old)}"',
+            rf'\g<1>"{t.new}"',
+            text,
+        )
+        text = text.replace(f"ARG UV_VERSION={t.old}\n", f"ARG UV_VERSION={t.new}\n")
+        text = text.replace(f'required-version = ">={t.old}"', f'required-version = ">={t.new}"')
+    return text
+
+
 def edit(text: str, actions: Sequence[ActionUpdate], images: Sequence[ImageUpdate]) -> str:
     """*text* with every copy of each old pin moved: an action's SHA, and the release comment
     beside it; an image's index and its platform manifest, with its ``sha256:`` or as bare hex."""
@@ -214,30 +357,42 @@ def apply(
     tracked: Iterable[str],
     actions: Sequence[ActionUpdate],
     images: Sequence[ImageUpdate],
+    tools: Sequence[ToolUpdate] = (),
 ) -> list[str]:
-    """Edit every tracked file under *root* that holds an old pin; the paths changed, in order."""
+    """Edit every tracked file under *root* that holds an old pin, a tool's only under
+    :data:`TOOL_EDIT_ROOTS`; the paths changed, in order."""
     olds = [a.old_sha for a in actions] + [
         _bare(x) for i in images for x in (i.old_index, i.old_digest)
     ]
     changed: list[str] = []
     for rel in tracked:
         path = root / rel
+        moves_tools = bool(tools) and (rel.startswith(TOOL_EDIT_ROOTS) or rel in TOOL_EDIT_ROOTS)
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if not any(old in text for old in olds):
+        if not any(old in text for old in olds) and not (
+            moves_tools and any(t.old in text for t in tools)
+        ):
             continue
         new = edit(text, actions, images)
+        if moves_tools:
+            new = edit_tools(new, tools)
         if new != text:
             path.write_text(new, encoding="utf-8")
             changed.append(rel)
     return changed
 
 
-def key(actions: Sequence[ActionUpdate], images: Sequence[ImageUpdate]) -> str:
+def key(
+    actions: Sequence[ActionUpdate],
+    images: Sequence[ImageUpdate],
+    tools: Sequence[ToolUpdate] = (),
+) -> str:
     """What the updates are, so an open refresh pull request with the same ones is left alone."""
     lines = sorted([a.line() for a in actions] + [i.line() for i in images])
+    lines += sorted(t.line() for t in tools)
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
@@ -247,6 +402,7 @@ def body(
     problems: Sequence[str],
     changed: Sequence[str],
     run_url: str,
+    tools: Sequence[ToolUpdate] = (),
 ) -> str:
     lines = [
         "The weekly pin refresh (#4585) moves these pins to what their tags and releases name "
@@ -257,12 +413,25 @@ def body(
         lines += ["### Actions", "", *[f"- {a.line()}" for a in actions], ""]
     if images:
         lines += ["### Images", "", *[f"- {i.line()}" for i in images], ""]
+    if tools:
+        lines += ["### Tools", "", *[f"- {t.line()}" for t in tools], ""]
     if changed:
         lines += ["### Files", "", *[f"- `{c}`" for c in changed], ""]
     if problems:
         lines += ["### Not resolved, so not moved", "", *[f"- {p}" for p in problems], ""]
-    lines += [f"From {run_url}.", "", f"<!-- pin-refresh: {key(actions, images)} -->"]
+    lines += [f"From {run_url}.", "", f"<!-- pin-refresh: {key(actions, images, tools)} -->"]
     return "\n".join(lines) + "\n"
+
+
+def pypi_fetch(url: str) -> tuple[int, object]:
+    """PyPI's JSON for *url*: (status, body), or (0, the reason) when no answer came."""
+    try:
+        with urllib.request.urlopen(url, timeout=GH_TIMEOUT_SECONDS) as answer:  # noqa: S310
+            return answer.status, json.loads(answer.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
+    except (OSError, ValueError) as exc:
+        return 0, str(exc)
 
 
 def run_command(args: Sequence[str], env: Mapping[str, str] | None = None) -> str:
@@ -292,9 +461,18 @@ def plan_main(args: argparse.Namespace) -> int:
     fetch = action_pins.github_fetch(os.environ.get("GH_TOKEN") or None)
     actions, action_problems = plan_actions(files, fetch, now)
     images, image_problems = plan_images(files, image_pins.http_get)
-    problems = action_problems + image_problems
-    changed = apply(root, tracked_files(root), actions, images) if args.write else []
-    text = body(actions, images, problems, changed, args.run_url)
+    tracked = tracked_files(root)
+    installs = [
+        (rel, (root / rel).read_text(encoding="utf-8"))
+        for rel in tracked
+        if _TOOL_INSTALLS.fullmatch(rel)
+    ]
+    locked = [str(p["name"]) for p in tomllib.loads((root / "uv.lock").read_text())["package"]]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    tools, tool_problems = plan_tools(installs, pyproject, locked, pypi_fetch, now)
+    problems = action_problems + image_problems + tool_problems
+    changed = apply(root, tracked, actions, images, tools) if args.write else []
+    text = body(actions, images, problems, changed, args.run_url, tools)
     print(text, end="")
     if args.body:
         Path(args.body).write_text(text, encoding="utf-8")
