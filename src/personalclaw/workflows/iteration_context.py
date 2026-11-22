@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 #: its counter moved on. A loop that ends with such a cycle writes the word it ends with instead.
 DECLINED_CYCLE = "declined"
 
+#: The outcome an `iteration` row carries where a rewind sent its loop back to a cycle
+#: (`mid_flight._back_to_cycles`): its `iteration` is the cycle the loop runs again from, and the
+#: counter is that, whatever ran before it.
+REWOUND = "rewound"
+
 
 def consume_steering(ctl: RunController, parent_path: str, node: Node, iteration: int) -> None:
     """Consume mid-run steering at the loop boundary.
@@ -279,6 +284,9 @@ def rehydrate_loop_progress(ctl: RunController) -> None:
     for rec in rows:
         path = str(rec.get("instance_path", "") or "")
         iteration = rec.get("iteration")
+        if path and isinstance(iteration, int) and rec.get("outcome") == REWOUND:
+            ctl._iterations[path] = iteration  # in order: the cycles after it are undone
+            continue
         went_on = rec.get("outcome") in ("continue", DECLINED_CYCLE)
         if not path or not isinstance(iteration, int) or not went_on:
             continue

@@ -511,6 +511,10 @@ WF_ERROR_CODES: dict[str, str] = {
     "WF_MUT_INSERT_NO_NODE": "An `insert` op carries no `node` payload.",
     "WF_MUT_INSERT_BAD_NODE": "An `insert` op's `node` payload is not a valid node spec.",
     "WF_MUT_EMPTY_UPDATE": "An `update_node` op names no fields to change.",
+    "WF_MUT_NOTHING_TO_RERUN": (
+        "A `rewind` or `run_from` would reset nothing: the step, or every step that reads it, "
+        "has not run in this run yet."
+    ),
     "WF_MUT_FROZEN_NODE": (
         "The target node's state does not permit editing; rewind it first to change it."
     ),
