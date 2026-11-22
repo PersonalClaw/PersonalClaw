@@ -74,6 +74,10 @@ const EXEMPT: Record<string, string> = {
   // install that restarts: the safe answer, so no caller decides what an unknown kind means. The
   // Updates panel reads the same key and says a failed read itself.
   'app/applyUpdate.ts:useInstallKind': 'an unread kind is undefined — the update then asks first, the safe answer',
+  // The same read, for whether an update is known and to which version. Unread or failed, none is
+  // known, so the System popover offers Check for Updates, which runs a check of its own and says
+  // what it found where it was pressed; the Updates panel says a failed read itself.
+  'app/applyUpdate.ts:useUpdateCheck': 'an unread check knows no update — the card offers Check for Updates, which says what it finds',
   // An item page's back control names the project it returns to from the shell's projects read.
   // Unread or failed, it says "Project" and still goes back there; `ui/loadErrorCensus.test.ts`
   // budgets the read as a keep.
