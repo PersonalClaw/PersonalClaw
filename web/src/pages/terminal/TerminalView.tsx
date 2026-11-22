@@ -108,11 +108,16 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
     // forever. Capturing the bound id makes register/unregister symmetric per effect run.
     // Declared before connect() because the 'exited' handler unregisters it.
     const boundSession = sessionIdRef.current
-    registerTerminal(boundSession, (text: string) => {
+    // After a Restart its PTY has a new id, and it answers to its tab's as well: the drawer and the
+    // Terminal page show a tab by its id, and "Run in terminal" goes to the one they show.
+    const asTab = boundSession !== tab.id
+    const send = (text: string) => {
       const ws = wsRef.current
       if (ws && ws.readyState === WebSocket.OPEN) { ws.send(new TextEncoder().encode(text)); return true }
       return false
-    })
+    }
+    registerTerminal(boundSession, send)
+    if (asTab) registerTerminal(tab.id, send)
 
     const connect = () => {
       if (disposed) return
@@ -138,7 +143,7 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
             // hasActiveTerminal() true, so a queued "Run in terminal" command was
             // claimed by the flush and burned against a pane already showing
             // "Process exited" (issue 598). Restart re-registers via [restartKey].
-            if (m.type === 'exited') { setExitCode(typeof m.code === 'number' ? m.code : null); setStatus('exited'); unregisterTerminal(boundSession); onExited() }
+            if (m.type === 'exited') { setExitCode(typeof m.code === 'number' ? m.code : null); setStatus('exited'); unregisterTerminal(boundSession); if (asTab) unregisterTerminal(tab.id); onExited() }
             else if (m.type === 'error') { setErrorText(typeof m.message === 'string' ? m.message : ''); setStatus('error') }
           } catch { /* pong / noise */ }
           return
@@ -175,6 +180,7 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
       disposed = true
       clearTimeout(reconnectTimer)
       unregisterTerminal(boundSession)
+      if (asTab) unregisterTerminal(tab.id)
       const ws = wsRef.current
       try { (ws as any)?._onData?.dispose?.() } catch { /* noop */ }
       ro.disconnect(); ws?.close(); term.dispose()
