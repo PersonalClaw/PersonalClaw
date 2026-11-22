@@ -321,19 +321,18 @@ class BusEvent:
 
 
 def _truncate_fenced(value: str, limit: int) -> str:
-    """Truncate text that is ALREADY fenced, keeping the fence closed.
+    """Truncate text that is ALREADY fenced to *limit* characters of its words, every fence closed.
 
-    Cutting a fenced span can remove its closing marker, and an UNTERMINATED fence is worse than a
-    truncated one: everything the model reads after it falls outside the fence. So the close is
-    re-appended when the cut ends inside a span (``outside_text.ends_inside_a_fence``). Text that
-    is several fences holds a close of an earlier one, so finding a close in the cut was not
-    enough: a cut inside the last one left it open.
+    The limit counts the words, not the markers (``security.cut_fenced_words``). Counting the open
+    marker, whose provenance an app's fence writes at length, cut a short text's close marker in
+    two, and a notification showed the half ("</untrusted_") after its words; a longer text kept
+    only what the marker left of the limit. A cut that took a span's close puts one back, since an
+    UNTERMINATED fence is worse than a truncated one: everything the model reads after it falls
+    outside the fence.
     """
-    from personalclaw.outside_text import ends_inside_a_fence
-    from personalclaw.security import UNTRUSTED_CLOSE
+    from personalclaw.security import cut_fenced_words
 
-    cut = value[:limit]
-    return f"{cut}\n{UNTRUSTED_CLOSE}" if ends_inside_a_fence(cut) else cut
+    return cut_fenced_words(value, limit)
 
 
 def fire_payload(trigger_id: str, event: BusEvent) -> tuple[dict[str, Any], str]:
