@@ -9,6 +9,7 @@ import { api } from '../../lib/api'
 import { persistAvailableFrom, persistToggleCopy } from '../../lib/persistClaim'
 import { panesAfterClose, type PaneSelection } from './paneState'
 import { TerminalView } from './TerminalView'
+import { showTerminal } from './terminalBridge'
 import { openRefusal, standing, type OpenRefusal } from './openRefusal'
 import { PageTitle } from '../../ui/PageTitle'
 import { tabListKeys } from '../../lib/tabListKeys'
@@ -44,6 +45,9 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   // half-updated pair — so Back would land the user on exactly the collapsed
   // ?active=X&split=X state the close is resolving.
   const setPanes = (p: PaneSelection) => setQuery({ active: p.active || null, split: p.split || null })
+  // The session it shows on the left, or the pane she last worked in, is the one "Run in
+  // terminal" goes to (`terminalBridge.showTerminal`).
+  useEffect(() => { if (active) showTerminal(active) }, [active])
   const [busy, setBusy] = useState(false)
   // A refused create (e.g. the gateway's session limit) must be visible on the page, not only in
   // devtools — same contract as the drawer. Cleared on the next attempt.
@@ -255,6 +259,8 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
               const pane = t.id === active ? 'left' : t.id === split ? 'right' : null
               return (
                 <div key={t.id} className="min-w-0 flex-1"
+                  // The pane she works in is the one "Run in terminal" goes to.
+                  onPointerDownCapture={() => showTerminal(t.id)} onFocusCapture={() => showTerminal(t.id)}
                   style={{ display: visible ? 'block' : 'none', order: pane === 'right' ? 2 : 1 }}>
                   <TerminalView tab={t} onExited={onExited} onClose={() => closeSession(t.id)} />
                 </div>

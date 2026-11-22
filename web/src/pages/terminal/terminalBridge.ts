@@ -1,8 +1,10 @@
 /** Bridge between "run in terminal" affordances (a shell block in a chat reply, a
  *  provider's login command) and live PTY sockets. A module-level singleton because the
  *  sender lives deep in the chat tree while the terminal lives on another page — they can't
- *  pass props. Each mounted TerminalView registers a send(text) for its session;
- *  the most-recently-registered live one is the "active" target. */
+ *  pass props. Each mounted TerminalView registers a send(text) for its session. The "active"
+ *  target is the session the owner can see: the drawer's shown tab, the Terminal page's shown or
+ *  focused pane (`showTerminal`). A session that registers becomes it only when there is none, so a
+ *  hidden tab or a restored session never takes a command meant for the one shown. */
 
 import { notify } from '../../app/appSdk'
 
@@ -14,6 +16,15 @@ const listeners = new Set<() => void>()
 
 export function registerTerminal(id: string, send: Sender): void {
   senders.set(id, send)
+  if (activeId == null) activeId = id
+  listeners.forEach((l) => l())
+}
+
+/** Make *id* the session "Run in terminal" goes to: the one shown or focused, as the drawer and
+ *  the Terminal page say when they show one. It need not have registered yet: until it does,
+ *  nothing is the target (`hasActiveTerminal`). */
+export function showTerminal(id: string): void {
+  if (!id || activeId === id) return
   activeId = id
   listeners.forEach((l) => l())
 }
