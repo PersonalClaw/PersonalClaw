@@ -138,6 +138,19 @@ def inbox_item_text(n: int, item: Any) -> str:
     return f"{n}. {head}\n{fenced}"
 
 
+def inbox_asked_refusal(asked: dict[str, str]) -> str:
+    """What a read of the Inbox answers for work someone other than you asked for, which reads none
+    of it (``inbox_reach.readable``), as it reads none of your memory
+    (``memory_reads.asked_refusal``): who asked, and that your Inbox is read only for your own
+    requests."""
+    from personalclaw.turn_source import named
+
+    return (
+        f"Nothing was read from the owner's Inbox: {named(asked)} asked for this, and nothing says "
+        "they are the owner, whose Inbox is read only for their own requests."
+    )
+
+
 def inbox_list_text(items: list[Any], limit: int, *, everyone: bool) -> str:
     """What ``inbox_list`` answers: *items* (open, newest first), the first *limit* of them listed.
 

@@ -519,6 +519,35 @@ async def test_nothing_says_another_chats_request_is_there(gateway, path):
     assert not _COUNT.match(said) and not gateway.shown(said), said
 
 
+# ── a turn someone else asked for reads none of your Inbox ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chat", [B, T])
+@pytest.mark.parametrize("path", PATHS)
+async def test_a_turn_someone_else_asked_for_reads_none_of_the_owners_inbox(gateway, path, chat):
+    """A colleague's message in a chat's shared thread starts a turn there, marked as his
+    (``session_restrictions.mark_asked_by``, as the channel's turn marks it). It reads none of your
+    memory, and none of your Inbox either, whose items about no chat (your mail, what your own runs
+    wait on) are yours: it is told who asked, in the memory refusal's words. 🔴 Red before: it read
+    what your own turn there reads, your mail and your run's question with it."""
+    from personalclaw import session_restrictions
+    from personalclaw.turn_source import arrived_on
+
+    colleague = arrived_on("1790800000.000100", "U0JONAS", "slack")
+    token = session_restrictions.mark_asked_by(KEY[chat], colleague)
+    try:
+        said = await getattr(gateway, path)(KEY[chat])
+    finally:
+        session_restrictions.unmark_asked_by(KEY[chat], token)
+
+    assert gateway.shown(said) == set(), said
+    assert not any(item in said for item in gateway.ids.values()), said
+    assert said.startswith("Nothing was read from the owner's Inbox: ") and "U0JONAS" in said, said
+    # Your own turn there, once his is over, reads as before.
+    assert gateway.shown(await gateway.read(path, KEY[chat])) == READS[KEY[chat]]
+
+
 # ── an item whose chat cannot be told is yours alone ──────────────────────────────────────────
 
 
