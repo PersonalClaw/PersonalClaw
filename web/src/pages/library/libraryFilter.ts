@@ -77,9 +77,12 @@ export function librarySections(inp: FilterInputs): FilterSectionDef[] {
   ]
   const collectionCounts = facet('collection')
   const byId = new Map(inp.collections.map((c) => [c.id, c]))
+  // The picked collection is an option whatever it holds: an empty one has no count, and without an
+  // option the Filter named it by its id.
+  const collectionKeys = [...new Set([...Object.keys(collectionCounts), ...(query.collection ? [query.collection] : [])])]
   const collectionOptions = [
     { key: '', label: 'Any collection' },
-    ...Object.keys(collectionCounts).filter((k) => (collectionCounts[k] ?? 0) > 0 || query.collection === k).map((k) => {
+    ...collectionKeys.filter((k) => (collectionCounts[k] ?? 0) > 0 || query.collection === k).map((k) => {
       const c = byId.get(k)
       return { key: k, label: c ? (c.kind === 'smart' ? `${c.name} · Smart` : c.name) : k, count: collectionCounts[k] ?? 0 }
     }),

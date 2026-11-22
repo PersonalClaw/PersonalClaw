@@ -71,6 +71,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Find in conversation opens a long message when the match it steps to sits below the message's fold, and scrolls to the match itself; a long message without a match stays folded.**
 - **Library › New collection makes a collection you fill by hand again: leaving its search empty, as the dialog says, creates it instead of answering "Required".**
 - **Settings › Models follows the models it shows: adding or removing an instance in the Providers section above it, or binding a model in another tab, updates each use case's models and chain at once instead of after a reload.**
+- **The Library's Filter names a picked collection by its name when the collection holds nothing yet, as the count line beside it does, rather than by its id.**
 
 ### Security
 
