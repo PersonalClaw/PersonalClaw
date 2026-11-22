@@ -7,7 +7,7 @@ import { Toaster } from './Toaster'
 // A toast's text broke only at spaces and hyphens, so a word wider than the card ran past its right
 // edge, where the card cut it off. Measured on a twin: Resume all's toast for a file automation whose
 // folder is not on this machine names the folder's path, and 152 px of it (310 px of box, 462 px of
-// text) were hidden, "PersonalClaw-" among them. The box now breaks such a word (`break-words`,
+// text) were hidden. The box now breaks such a word (`break-words`,
 // `overflow-wrap: break-word`). jsdom lays nothing out, so this holds the rule the browser needs;
 // the measurement above is what it buys.
 
@@ -20,7 +20,7 @@ beforeEach(() => { cleanup() })
 describe("a toast's text", () => {
   it('breaks a word wider than the card, such as a path, instead of running past its edge', () => {
     render(<Toaster />)
-    const path = '/Users/someone-else/PersonalProjects/PersonalClaw/lanes/PersonalClaw-g/notes'
+    const path = '/Users/ada/Documents/QuarterlyPlanningMeetingNotes/2026-Drafts/notes'
     act(() => {
       window.dispatchEvent(new CustomEvent('ne:toast', {
         detail: { level: 'error', message: `New notes is on. It watches ${path}, which is not on this machine.` },

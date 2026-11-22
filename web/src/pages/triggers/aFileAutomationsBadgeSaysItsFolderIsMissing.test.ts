@@ -16,7 +16,7 @@ function row(store: Partial<WireTrigger>): Pick<Trigger, 'store'> {
 
 describe("a row's warning badge", () => {
   it('says a file automation watches a folder that is not here', () => {
-    expect(advisoryBadge(row({ store_kind: 'file', folders_not_here: ['/Users/someone-else/notes'] }))).toBe('folder missing')
+    expect(advisoryBadge(row({ store_kind: 'file', folders_not_here: ['/Users/ada/notes'] }))).toBe('folder missing')
     expect(advisoryBadge(row({ store_kind: 'file', folders_not_here: ['/a', '/b'] }))).toBe('folders missing')
   })
 

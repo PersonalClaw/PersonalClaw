@@ -64,7 +64,7 @@ def _warned(home: Path, monkeypatch: pytest.MonkeyPatch, tid: str) -> list[str]:
 
 def test_a_watch_whose_folder_is_not_here_says_so_on_its_row(home, tmp_path, monkeypatch):
     """🔴 Before: no warning, the row read as healthy, and it never fired."""
-    gone = tmp_path / "Users" / "someone-else" / "notes"
+    gone = tmp_path / "Users" / "ada" / "notes"
     _watching(home, "file:notes", [f"{gone}/**/*.md"])
     (warning,) = _warned(home, monkeypatch, "file:notes")
     assert str(gone) in warning and "so it never fires" in warning, warning
@@ -125,7 +125,7 @@ def test_another_kinds_stray_paths_key_is_not_a_watch(home, monkeypatch):
             id="clock:brief",
             name="Brief",
             kind="clock",
-            spec={"kind": "cron", "expr": "0 9 * * *", "paths": ["/Users/someone-else/notes/*.md"]},
+            spec={"kind": "cron", "expr": "0 9 * * *", "paths": ["/Users/ada/notes/*.md"]},
             workflow={"inline": {"provider": "notify", "config": {"title_template": "Brief"}}},
         )
     )
