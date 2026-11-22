@@ -1264,6 +1264,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         session.context_usage = usage
         self.broadcast_ws("context_usage", {"session": session.key, **usage})
 
+    def idle_run_state(self, key: str) -> dict[str, Any]:
+        """The run state of the chat *key* when nothing runs and no turn of it is on record here,
+        as a chat kept only on disk is served (``chat_phase.idle_payload``)."""
+        return chat_phase.idle_payload(key)
+
     def say_run_state(self, session: _ChatSession) -> None:
         """Something a chat's run state carries beside its phase changed (a message joined its
         queue): said to every page of the chat when it did (``chat_phase``)."""

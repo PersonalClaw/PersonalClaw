@@ -11,6 +11,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.durability.home_paths import LinkInTheWay
+from personalclaw.history import RECORDED_KEY
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.record_ids import UnsafeRecordId
@@ -641,6 +642,12 @@ async def api_projects_linked(request: web.Request) -> web.Response:
             )
     except Exception:
         pass
+    # And the ones kept only on disk: every chat, after a restart with `restore_sessions` off. At
+    # rest, as the chat list serves them (`DashboardState.idle_run_state`).
+    state = request.app.get("state")
+    at_rest = getattr(state, "idle_run_state", None)
+    for chat in await asyncio.to_thread(_project_chats_on_disk, state, pid):
+        chats.append({**chat, "run_state": at_rest(chat["key"]) if callable(at_rest) else None})
 
     return web.json_response(
         {
@@ -1083,6 +1090,35 @@ def _bound_chat_sessions(state, pid: str) -> list:
     return out
 
 
+def _project_chats_on_disk(state, pid: str) -> list[dict]:
+    """The project's chats kept only on disk, ``{key, title}`` each, as the chat list reads them:
+    each record whose meta names *pid*, of a chat of the owner's (a worker's or an app's has an
+    origin tag and is not a chat of the project's, as a held one is not), neither closed nor
+    temporary, and not one the gateway holds, which is read live. Call off the event loop: it
+    lists every record. Best-effort; [] on any failure."""
+    log = getattr(state, "conversation_log", None) if state is not None else None
+    if log is None or not pid:
+        return []
+    held = set(getattr(state, "_sessions", {}) or {})
+    try:
+        listed = log.list_sessions_with_metadata()
+    except Exception:
+        logger.warning("project %s: the chats on disk could not be listed", pid, exc_info=True)
+        return []
+    out: list[dict] = []
+    for entry, meta in listed:
+        if meta.get("project_id") != pid or meta.get("app") or meta.get("closed"):
+            continue
+        if meta.get("memory_mode") in ("incognito", "temporary"):
+            continue
+        key = str(meta.get(RECORDED_KEY) or entry.get("key") or "")
+        name = next((key[len(p) :] for p in ("dashboard:", "dashboard_") if key.startswith(p)), "")
+        if name and name not in held:
+            held.add(name)
+            out.append({"key": name, "title": entry.get("title") or name})
+    return out
+
+
 def _unbind_bound_chats(state, pid: str) -> int:
     """Detach project-bound chats from a project being force-deleted: clear their
     project_id so they don't dangle (preamble/context-dir grant would resolve a gone
@@ -1188,6 +1224,7 @@ async def api_projects_delete(request: web.Request) -> web.Response:
     if not force:
         loops, code = _bound_work_counts(pid)
         chats = len(_bound_chat_sessions(state, pid))
+        chats += len(await asyncio.to_thread(_project_chats_on_disk, state, pid))
         if loops or code or chats:
             # Chats are first-class project work (surfaced in /linked), so deleting a
             # project with active project-bound chats must warn too — else they silently

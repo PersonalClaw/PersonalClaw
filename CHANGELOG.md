@@ -45,6 +45,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Every steer you send a loop reaches its worker. Two steers sent before its next cycle both arrive, oldest first, each with when you sent it, and the worker is told to follow the later one where they disagree; before, the second replaced the first. A steer to a whole parallel Code loop also reaches the tasks that start after it, not only the ones running when you sent it.**
 - **An Attended Code loop no longer pauses right after merging a task you approved to ask you to commit that work again under your name. A task whose branch its own merge removed is settled, and a branch that's gone no longer reads as a commit by someone else.**
 - **A Code loop with no stage plan, as a chat's agent makes one, completes as done on the cycle its check first passes, or on its first finding when it has no check. It used to work on finished code until its cycle budget ran out and then read "Ended early". A check that could not run or ran out of time holds completion, and each check's result shows on the loop.**
+- **A project's chats are listed, and counted before a delete, with the chats kept only on disk: after a restart with `restore_sessions` off, a project listed none of its chats until each was opened again, and a plain delete went through as if it had none.**
 
 ### Security
 
