@@ -318,6 +318,36 @@ def _resent(repeat: chat_intake.Receipt | chat_intake.Refusal) -> web.Response:
     return web.json_response({"ok": True, "rewound": 0, **repeat.answer()})
 
 
+#: What a message carries that its text does not say, kept when she edits it: the files she
+#: attached, the knowledge items and artifacts she @-mentioned (each read by the turn off her row:
+#: ``chat_runner._turn_attachments``, ``referenced_content``), and how she said it.
+_CARRIED = ("files", "knowledge", "artifacts", "input_origin")
+#: What the chat writes of a message as it takes it in, which the new row gets of its own.
+_TAKEN_IN = (chat_intake.MESSAGE_ID, chat_intake.RECEIPT)
+
+
+def _in_its_place(
+    stored: dict, same: bool, text: str, pastes: list, from_a_widget: bool
+) -> tuple[str, list, dict]:
+    """What is sent in a stored row's place: its words, its pasted blocks, and its row's meta.
+
+    Sent again as it is (*same*), her message is sent as its row was stored: its own words (a
+    widget's payload, an optimized message's text, which her bubble does not show) and all it
+    carried, its pasted blocks among them. Edited, it is *text* and *pastes*, and keeps only what
+    it carries that its text does not say (:data:`_CARRIED`): the widget's label, the words before
+    an optimize and ``own_words`` describe the old text. A widget's message keeps its marker."""
+    meta = stored.get("meta")
+    kept = {k: v for k, v in (meta if isinstance(meta, dict) else {}).items() if k not in _TAKEN_IN}
+    if same:
+        own = str(stored.get("content") or text)
+        text, pastes = redact_credentials(redact_exfiltration_urls(own)[0])[0], []
+    else:
+        kept = {k: kept[k] for k in _CARRIED if k in kept}
+    if from_a_widget:
+        kept[WIDGET_ACTION] = True
+    return text, pastes, kept
+
+
 def _resend_taken(
     state: DashboardState,
     session: _ChatSession,
@@ -325,17 +355,14 @@ def _resend_taken(
     message_id: str,
     digest: str,
     pastes: list,
-    *,
-    from_a_widget: bool = False,
+    carried: dict,
 ) -> chat_intake.Receipt:
     """Take the message a resend sends in the edited one's place in, the one way a message enters
     a chat, as a new message: its row's time is when the chat took it in, which its receipt says.
     Checked for a repeat just before, under the chat's lock, with the chat idle, so it starts the
-    turn the caller starts. *from_a_widget*: the edited message came from a widget, and its new
-    row keeps the marker (``own_words.WIDGET_ACTION``)."""
-    meta: dict = _redact_meta({PASTES: pastes}) if pastes else {}
-    if from_a_widget:
-        meta[WIDGET_ACTION] = True
+    turn the caller starts. *carried* is what its row keeps of the one it replaces
+    (:func:`_in_its_place`), a widget's marker among it (``own_words.WIDGET_ACTION``)."""
+    meta: dict = {**carried, **(_redact_meta({PASTES: pastes}) if pastes else {})}
     taken = chat_intake.take_in(
         state,
         session,
@@ -490,12 +517,12 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         # A widget's message sent again (as it is, edited, or by Rewind's genui label) stays one:
         # none of its links become the user's, and the new row keeps the marker.
         from_a_widget = came_from_a_widget(msgs[index].get("meta")) or page_says_widget
+        # Sent again as it is, her message is sent as its row was stored (`_in_its_place`).
+        _bc, pastes, carried = _in_its_place(msgs[index], same, _bc, pastes, from_a_widget)
         del session.messages[index:]
         session._dirty = True
 
-        taken = _resend_taken(
-            state, session, _bc, message_id, digest, pastes, from_a_widget=from_a_widget
-        )
+        taken = _resend_taken(state, session, _bc, message_id, digest, pastes, carried)
         if not from_a_widget:
             take_in_the_users_links(request.get("app", ""), session.key, _bc)
         if rewind and carried_rewound:
