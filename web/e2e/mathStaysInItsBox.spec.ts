@@ -75,7 +75,7 @@ async function stubTheMessages(page: Page, reply = REPLY, fetched?: string, mess
   // Opening the item marks it seen and opened: answered here, so the shared gateway is written nothing.
   await page.route('**/api/inbox/seen', (route) => route.fulfill(json({ ok: true, seen: 1 })))
   await page.route('**/api/inbox/*/open', (route) => route.fulfill(json({ ok: true })))
-  await page.route(`**/api/chat/sessions/${KEY}`, (route) =>
+  await page.route(`**/api/chat/sessions/${KEY}?all=1`, (route) =>
     route.request().method() === 'GET'
       ? route.fulfill(json({
         key: KEY, title: 'Math', run_state: idleRunState(KEY), queue: [], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',

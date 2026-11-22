@@ -1657,6 +1657,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "tags_missing": "Every tag the report reads was deleted, so it did not run.",
     # a reported security-log row (handlers/security_audit.py `api_security_log_reported`)
     "security_row_refused": "The body is not a security-log row, so nothing was written.",
+    # 400: a chat's name another kind of session has (dashboard/chat_handlers.py
+    # `api_chat_session_create`, `session_keys.chat_name_refusal`)
+    "chat_name_refused": "That name is another kind of session's, so no chat was made.",
 }
 
 

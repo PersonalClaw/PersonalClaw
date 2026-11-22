@@ -52,7 +52,7 @@ from personalclaw.dashboard.chat_runner import (
     run_chat,
     started_by_app,
 )
-from personalclaw.dashboard.chat_title import title_needs_model
+from personalclaw.dashboard.chat_title import own_title, title_needs_model
 from personalclaw.dashboard.chat_utils import (
     STEER_ACTIVITY_KIND,
     _build_stream_chunk,
@@ -1014,14 +1014,62 @@ async def api_chat_session_model_reach(request: web.Request) -> web.Response:
     )
 
 
+#: How many messages a read of a chat serves when it asks for no page, or names ``before`` alone:
+#: its newest, or those before that index. ``?all=1`` serves the whole history.
+PAGE = 200
+#: The most messages a page holds, however many its ``limit`` asks for.
+PAGE_MAX = 500
+
+
+def _page_of(all_msgs: list[dict], query: Mapping[str, str]) -> tuple[list[dict], bool]:
+    """The messages a read of a chat serves out of its whole transcript *all_msgs*, and whether
+    older ones are left: every one for ``all`` with neither ``limit`` nor ``before``, else the
+    ``limit`` (``PAGE`` unless given, at most ``PAGE_MAX``) before index ``before`` (the end
+    unless given). A read that asks for no page is served the newest ``PAGE``: a chat of 885
+    messages was 3.5 MB to every script that read it."""
+    limit_raw, before = query.get("limit"), query.get("before")
+    if limit_raw is None and before is None and query.get("all", "") in ("1", "true", "yes"):
+        return all_msgs, False
+    total = len(all_msgs)
+    limit = min(int(limit_raw or PAGE), PAGE_MAX)
+    end = max(0, min(int(before), total)) if before is not None else total
+    start = max(0, end - limit)
+    return all_msgs[start:end], start > 0
+
+
+def _branch_lineage(state: DashboardState, session: Any) -> tuple[str, str]:
+    """The chat *session* was branched from, and its title for a human.
+
+    ``forked_from`` is persisted on the metadata line and restored on load, so the child's
+    "Branched from" breadcrumb is a read of existing state, served by the read a reopened or
+    reloaded chat makes; holding the parent in navigation state would lose it on the first
+    reload. The title is resolved live, then from disk, at read time (never a copy frozen at
+    fork time: the parent can be renamed). ``""`` means the origin no longer resolves at all,
+    which the breadcrumb renders as unlinked text rather than a link into nothing."""
+    forked_from = getattr(session, "forked_from", "") or ""
+    if not forked_from:
+        return "", ""
+    parent_key = forked_from.removeprefix("dashboard:")
+    parent = state._sessions.get(parent_key)
+    if parent is not None:
+        return forked_from, (parent.title if parent._titled else "") or parent_key
+    if not state.conversation_log:
+        return forked_from, ""
+    try:
+        parent_meta = state.conversation_log.get_metadata(forked_from)
+    except Exception:
+        parent_meta = {}
+    return forked_from, (str(parent_meta.get("title") or "") or parent_key) if parent_meta else ""
+
+
 async def api_chat_session_detail(request: web.Request) -> web.Response:
     """GET /api/chat/sessions/{session} — message history for a session.
 
-    Two query modes:
-      - Default (no ``limit`` and no ``before``): return the full chained history
-        from disk across gateway restarts.
-      - Paginated (``limit`` and/or ``before``): ``limit`` caps the number of
-        messages returned; ``before`` returns messages before that index.
+    A read that asks for no page is served the newest ``PAGE`` messages, with ``has_more`` and
+    ``total``; ``limit`` caps a page (at most ``PAGE_MAX``) and ``before`` serves the messages
+    before that index. ``?all=1``, with neither, serves the whole chained history, from disk
+    across gateway restarts (the dashboard's chat page). The rows are redacted off the event
+    loop: a chat of thousands of messages held every other chat for seconds.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -1035,160 +1083,147 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
     if not session:
         return web.json_response({"error": "not found"}, status=404)
 
-    limit_raw = request.query.get("limit")
-    before = request.query.get("before")
-
-    # ONE list for both modes: the whole transcript, oldest first. The session's buffer
+    # ONE list for every page: the whole transcript, oldest first. The session's buffer
     # holds its whole file (`_seed_transcript` never loads a window), and the splice with
     # older sibling files lives in `full_session_messages` (chat_utils) because the
     # session-map endpoint has to index the SAME list — see its docstring. Pagination is a
-    # slice of it, so `before` indexes the list the unpaginated read serves. (It used to
+    # slice of it, so `before` indexes the list `?all=1` serves whole. (It used to
     # stitch disk and memory by COUNT, and the per-turn `done` rows in the buffer made the
     # "unflushed tail" too long, serving the last turn twice.)
     all_msgs = full_session_messages(state, session)
     total = len(all_msgs)
-    if limit_raw is None and before is None:
-        messages = all_msgs
-        has_more = False
-    else:
-        limit = min(int(limit_raw or "200"), 500)
-        end = max(0, min(int(before), total)) if before is not None else total
-        start = max(0, end - limit)
-        messages = all_msgs[start:end]
-        has_more = start > 0
+    messages, has_more = _page_of(all_msgs, request.query)
 
     # Read in the same synchronous step as `messages` (nothing above awaits), so it is an
-    # exact resume point: these messages hold every chunk stamped <= it, and none after.
+    # exact resume point: these messages hold every chunk stamped <= it, and none after. Each
+    # row is copied in that step too, as it is now, since a chunk may land in the live row while
+    # the copies are redacted off the loop, below. So is everything else the reply says.
     stream_seq = state.stream_seq
-    prepared = _prepare_messages(messages, session.running)
-
-    # Branch lineage. `forked_from` is already persisted on the
-    # metadata line and restored on load, so the child's "Branched from" breadcrumb is
-    # a read of existing state — but only if the detail endpoint SERVES it. It is the
-    # request a reopened/reloaded chat makes, so serving it here is what makes the
-    # breadcrumb survive a refresh; holding the parent in navigation state instead
-    # would lose it on the first reload. Same reasoning as `memory_mode` below.
-    #
-    # `forked_from_title` names the parent for a human, resolved live-then-disk at read
-    # time (never a copy frozen at fork time — the parent can be renamed). "" means the
-    # origin no longer resolves at all, which the breadcrumb renders as unlinked text
-    # rather than a link into nothing.
-    forked_from = getattr(session, "forked_from", "") or ""
-    forked_from_title = ""
-    if forked_from:
-        parent_key = forked_from.removeprefix("dashboard:")
-        parent = state._sessions.get(parent_key)
-        if parent is not None:
-            forked_from_title = (parent.title if parent._titled else "") or parent_key
-        elif state.conversation_log:
-            try:
-                parent_meta = state.conversation_log.get_metadata(forked_from)
-            except Exception:
-                parent_meta = {}
-            if parent_meta:
-                forked_from_title = str(parent_meta.get("title") or "") or parent_key
+    rows = [dict(m) for m in messages]
+    running = session.running
+    forked_from, forked_from_title = _branch_lineage(state, session)
 
     # A conversation an app started approves nothing on its own, whoever sends into it — your
     # approval switches never reach it (`chat_runner.started_by_app`). The chat names the app and
     # says so above the composer, and the posture it restores is the one that asks.
     app_chat = started_by_app(session)
 
-    return web.json_response(
-        {
-            "key": session.key,
-            "title": session.title,
-            # Why an untitled chat has no title yet, when it is that no model is chosen for it.
-            "title_needs_model": title_needs_model(session),
-            # What its turn is doing — its phase, whether a stop is asked of it, whether it takes
-            # a steer — and how its last turn ended: the last phase frame it was sent
-            # (`chat_phase`). A tab that missed frames reads from this what one that heard them
-            # knows, and applies only a frame newer than its `seq`: the page's stall reconciler
-            # recovers a card whose `approval` frame it lost from the phase that waits on her OK.
-            "run_state": session.run_state,
-            # What the context ring was last told (`DashboardState.say_context_usage`), so a page
-            # opened after the turn draws the same ring; null until a turn has said anything.
-            "context_usage": session.context_usage,
-            "messages": prepared,
-            "queue": [{"id": q["id"], **shown(q)} for q in session._queue],
-            # The messages bookmarked on its Session Map, by their `ts` (`chat_bookmarks`).
-            "bookmarks": list(session.bookmarks),
-            "total": total,
-            "has_more": has_more,
-            # Where a live answer resumes: a client continuing the in-flight `streaming`
-            # partial drops chat_chunk frames stamped <= this and keeps the rest.
-            "stream_seq": stream_seq,
-            # agent/model binding so the composer restores the SAME selection the
-            # session was using when reopened (native agent/model OR ACP provider
-            # + provider_agent + reasoning effort).
-            "agent": session.agent or "",
-            "model": session.model or "",
-            # The Settings → Models chain a turn here runs on when no model is picked for it
-            # ("Code & tools" for a chat working in a folder of its own, else "Chat"), which the
-            # model pill's Auto names before the turn starts (`chat_runner.auto_chain_name`).
-            "auto_chain": auto_chain_name(session),
-            # The folder it works in, which the composer's Working directory prompt opens on.
-            "workspace_dir": session.workspace_dir or "",
-            # session mode so the UI can show the right indicator when a session
-            # is reopened.
-            "mode": getattr(session, "mode", "") or "",
-            "acp_provider": getattr(session, "acp_provider", "") or "",
-            "acp_provider_agent": getattr(session, "acp_provider_agent", "") or "",
-            "reasoning_effort": getattr(session, "reasoning_effort", "") or "",
-            # Both composer axes so the segmented controls restore to the session's
-            # ACTUAL posture on reopen (not the visual defaults). task_mode is
-            # per-session; approval is derived from the yolo(global)/trust/
-            # trust_reads precedence so the single enum the UI uses round-trips.
-            "task_mode": getattr(session, "_task_mode", "agent") or "agent",
-            # Investigate origin: the header ContextChip reads the staged
-            # envelope's display fields (title/kind/back_link) — present only until
-            # the first turn consumes it, or permanently via the injected preamble.
-            "investigate": (
-                {
-                    "kind": str((getattr(session, "_investigate_ctx", None) or {}).get("kind", "")),
-                    "title": str(
-                        (getattr(session, "_investigate_ctx", None) or {}).get("title", "")
-                    ),
-                    "back_link": str(
-                        (getattr(session, "_investigate_ctx", None) or {}).get("back_link", "")
-                    ),
-                }
-                if isinstance(getattr(session, "_investigate_ctx", None), dict)
-                else None
-            ),
-            "approval": (
-                "normal"
-                if app_chat
+    body = {
+        "key": session.key,
+        "title": session.title,
+        # Why an untitled chat has no title yet, when it is that no model is chosen for it.
+        "title_needs_model": title_needs_model(session),
+        # What its turn is doing — its phase, whether a stop is asked of it, whether it takes
+        # a steer — and how its last turn ended: the last phase frame it was sent
+        # (`chat_phase`). A tab that missed frames reads from this what one that heard them
+        # knows, and applies only a frame newer than its `seq`: the page's stall reconciler
+        # recovers a card whose `approval` frame it lost from the phase that waits on her OK.
+        "run_state": session.run_state,
+        # What the context ring was last told (`DashboardState.say_context_usage`), so a page
+        # opened after the turn draws the same ring; null until a turn has said anything.
+        "context_usage": session.context_usage,
+        "messages": [],  # the rows, redacted off the event loop below
+        "queue": [{"id": q["id"], **shown(q)} for q in session._queue],
+        # The messages bookmarked on its Session Map, by their `ts` (`chat_bookmarks`).
+        "bookmarks": list(session.bookmarks),
+        "total": total,
+        "has_more": has_more,
+        # Where a live answer resumes: a client continuing the in-flight `streaming`
+        # partial drops chat_chunk frames stamped <= this and keeps the rest.
+        "stream_seq": stream_seq,
+        # agent/model binding so the composer restores the SAME selection the
+        # session was using when reopened (native agent/model OR ACP provider
+        # + provider_agent + reasoning effort).
+        "agent": session.agent or "",
+        "model": session.model or "",
+        # The Settings → Models chain a turn here runs on when no model is picked for it
+        # ("Code & tools" for a chat working in a folder of its own, else "Chat"), which the
+        # model pill's Auto names before the turn starts (`chat_runner.auto_chain_name`).
+        "auto_chain": auto_chain_name(session),
+        # The folder it works in, which the composer's Working directory prompt opens on.
+        "workspace_dir": session.workspace_dir or "",
+        # session mode so the UI can show the right indicator when a session
+        # is reopened.
+        "mode": getattr(session, "mode", "") or "",
+        "acp_provider": getattr(session, "acp_provider", "") or "",
+        "acp_provider_agent": getattr(session, "acp_provider_agent", "") or "",
+        "reasoning_effort": getattr(session, "reasoning_effort", "") or "",
+        # Both composer axes so the segmented controls restore to the session's
+        # ACTUAL posture on reopen (not the visual defaults). task_mode is
+        # per-session; approval is derived from the yolo(global)/trust/
+        # trust_reads precedence so the single enum the UI uses round-trips.
+        "task_mode": getattr(session, "_task_mode", "agent") or "agent",
+        # Investigate origin: the header ContextChip reads the staged
+        # envelope's display fields (title/kind/back_link) — present only until
+        # the first turn consumes it, or permanently via the injected preamble.
+        "investigate": (
+            {
+                "kind": str((getattr(session, "_investigate_ctx", None) or {}).get("kind", "")),
+                "title": str((getattr(session, "_investigate_ctx", None) or {}).get("title", "")),
+                "back_link": str(
+                    (getattr(session, "_investigate_ctx", None) or {}).get("back_link", "")
+                ),
+            }
+            if isinstance(getattr(session, "_investigate_ctx", None), dict)
+            else None
+        ),
+        "approval": (
+            "normal"
+            if app_chat
+            else (
+                "yolo"
+                if state.is_yolo_active()
                 else (
-                    "yolo"
-                    if state.is_yolo_active()
-                    else (
-                        "trust"
-                        if session._trust
-                        else "trust_reads" if session._trust_reads else "normal"
-                    )
+                    "trust"
+                    if session._trust
+                    else "trust_reads" if session._trust_reads else "normal"
                 )
-            ),
-            **(_started_by(session.created_by_app, {}) if app_chat else {}),
-            # Its memory mode and its project, as the session list returns them (`_session_scope`).
-            **_session_scope(session),
-            # Reply style and explanations, each RESOLVED (the style with its preview), as for
-            # memory_mode: the composer must restore to what actually takes effect, and it must
-            # not re-derive either resolution order to work that out.
-            **_voice_payload(session),
-            # Branch lineage — see the resolution block above the return.
-            "forked_from": forked_from,
-            "forked_from_title": forked_from_title,
-            # The questions the turn waits on her answer to, as their cards: a page opened or
-            # reloaded while one waits shows it (`owner_questions`).
-            "pending_questions": state.owner_questions.pending_for(session.key),
-            # persisted side-chat transcript (reloads attached to the session).
-            "side": (
-                session._side.as_read()
-                if session._side is not None and session._side.messages
-                else None
-            ),
-        }
-    )
+            )
+        ),
+        **(_started_by(session.created_by_app, {}) if app_chat else {}),
+        # Its memory mode and its project, as the session list returns them (`_session_scope`).
+        **_session_scope(session),
+        # Reply style and explanations, each RESOLVED (the style with its preview), as for
+        # memory_mode: the composer must restore to what actually takes effect, and it must
+        # not re-derive either resolution order to work that out.
+        **_voice_payload(session),
+        # Branch lineage — see the resolution block above the return.
+        "forked_from": forked_from,
+        "forked_from_title": forked_from_title,
+        # The questions the turn waits on her answer to, as their cards: a page opened or
+        # reloaded while one waits shows it (`owner_questions`).
+        "pending_questions": state.owner_questions.pending_for(session.key),
+        # persisted side-chat transcript (reloads attached to the session).
+        "side": (
+            session._side.as_read()
+            if session._side is not None and session._side.messages
+            else None
+        ),
+    }
+    # Off the event loop: a chat of 3,000 messages held it for half a second, every other chat's
+    # stream and every read waiting (a script reading 28 chats a minute held health checks 86 s).
+    body["messages"] = await asyncio.to_thread(_prepare_messages, rows, running)
+    return web.json_response(text=await asyncio.to_thread(json.dumps, body))
+
+
+def _refused_before_create(body: dict) -> web.Response | None:
+    """Why ``POST /api/chat/sessions`` makes nothing, or ``None``: refused before anything is made
+    or opened. A name another kind of session has would be judged as that kind's, and one a live
+    session of it holds would open that session as a chat (``session_keys.chat_name_refusal``)."""
+    name = body.get("name")
+    if isinstance(name, str) and name and (refusal := session_keys.chat_name_refusal(name)):
+        return json_error("chat_name_refused", message=refusal, status=400)
+    title = body.get("title")
+    if title is not None and not isinstance(title, str):
+        return json_error("invalid_request", message="title must be a string", status=400)
+    return None
+
+
+def _title_as_made(state: DashboardState, session: Any, title: str | None) -> None:
+    """The chat's own title, given as it is made, as a rename gives one: auto-title leaves it alone.
+    A chat opened again by its name that has a title of its own keeps it."""
+    if title and title.strip() and not session._titled:
+        own_title(state, session, title.strip())
 
 
 async def api_chat_session_create(request: web.Request) -> web.Response:
@@ -1203,6 +1238,8 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     name = body.get("name")
     if name is not None and not isinstance(name, str):
         return web.json_response({"error": "name must be a string"}, status=400)
+    if (refused := _refused_before_create(body)) is not None:
+        return refused
     agent = body.get("agent", "")
     model = body.get("model", "")
     project_id = str(body.get("project_id", "") or "")
@@ -1249,6 +1286,7 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
         )
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=409)
+    _title_as_made(state, session, body.get("title"))
     if session.is_restricted:
         logger.info("Session %s created with memory_mode=%s", session.key, session.memory_mode)
     elif (

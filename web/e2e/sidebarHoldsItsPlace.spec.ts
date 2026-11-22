@@ -58,7 +58,7 @@ async function stubThreads(page: Page, sessions: { key: string; title: string }[
   await page.route('**/api/chat/tags', (route) =>
     route.request().method() === 'GET' ? route.fulfill(json([])) : route.fallback())
   // A thread the address opens reads its own detail: an idle chat with one exchange.
-  await page.route(/\/api\/chat\/sessions\/e2e-(many|few)-\d+$/, (route) => {
+  await page.route(/\/api\/chat\/sessions\/e2e-(many|few)-\d+\?all=1$/, (route) => {
     const k = new URL(route.request().url()).pathname.split('/').pop()!
     return route.request().method() === 'GET'
       ? route.fulfill(json({

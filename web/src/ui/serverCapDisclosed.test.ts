@@ -145,7 +145,7 @@ const BY_DESIGN: Record<string, string> = {
   '/api/chat/sessions/{session}/resume':
     'no web caller at all; the 200-message cap it reports is for API clients',
   '/api/chat/sessions/{session}':
-    'the transcript fetch sends neither limit nor before, and with neither the handler returns the WHOLE chained history with has_more hard-coded false — the flag is unreachable from this client',
+    'the transcript fetch asks for the whole history (all=1, neither limit nor before), and for that the handler returns the WHOLE chained history with has_more false — the flag is unreachable from this client',
 }
 
 describe('PartialCount', () => {
@@ -213,10 +213,13 @@ describe('every truncation the gateway declares reaches a surface that says so',
     // side changing (a paged fetch, or a default cap) puts it back in the census.
     const detail = consumersOf('/api/chat/sessions/{session}')
     expect(detail.fetched, 'the transcript route is fetched').toContain(API)
-    const line = apiLines.find((l) => /chatSessionDetail:/.test(l)) ?? ''
-    expect(line, 'and it asks for no page').not.toMatch(/limit=|before=/)
+    const at = apiLines.findIndex((l) => /chatSessionDetail:/.test(l))
+    const call = apiLines.slice(at, at + 40).find((l) => l.includes('/api/chat/sessions/${encodeURIComponent(key)}')) ?? ''
+    expect(call, 'and it asks for the whole history').toContain('?all=1')
+    expect(call, 'and for no page').not.toMatch(/limit=|before=/)
     const chat = readSource(join(GATEWAY, 'chat_handlers.py'))
-    expect(chat, 'while the handler caps only when asked').toContain('if limit_raw is None and before is None:')
+    expect(chat, 'which the handler serves whole, with nothing older left')
+      .toContain('if limit_raw is None and before is None and query.get("all", "") in ("1", "true", "yes"):\n        return all_msgs, False')
   })
 
   it('every exclusion is a route the sweep actually found', () => {

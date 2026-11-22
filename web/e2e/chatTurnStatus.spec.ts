@@ -52,7 +52,7 @@ async function plantTheTurn(page: Page): Promise<Planted> {
   let stops = 0
   const sockets: WebSocketRoute[] = []
   await page.routeWebSocket('**/api/ws', (ws) => { sockets.push(ws) })
-  await page.route(`**/api/chat/sessions/${KEY}`, (route) =>
+  await page.route(`**/api/chat/sessions/${KEY}?all=1`, (route) =>
     route.request().method() === 'GET'
       ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail(turnRuns)) })
       : route.fallback())

@@ -147,7 +147,8 @@ describe('an untitled chat with no model chosen for its title', () => {
   it('says why under the title, as the way to Settings → Models & Providers → Models', async () => {
     h.chatSessionDetail.mockResolvedValue({ ...h.detail, title: '', title_needs_model: TITLES_NEED })
     open('chat-7-x')
-    expect(await screen.findByText('Untitled chat')).toBeTruthy()
+    // Named by its first message until it has a title (`lib/sessionTitle`), in the header.
+    expect(await screen.findByText('How do I read a file in Python?', { selector: '[data-type="title-l"]' })).toBeTruthy()
     const why = await screen.findByRole('link', { name: TITLES_NEED })
     expect(why.getAttribute('href')).toBe('#/settings/models')
   })

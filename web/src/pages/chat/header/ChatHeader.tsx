@@ -6,6 +6,7 @@ import { bindingLabel } from '../../../app/keymap'
 import { chatContextChips } from '../ChatContextLine'
 import { NeedsModelNote } from '../NoModelSetupState'
 import { sessionTitle } from '../../../lib/sessionTitle'
+import { turnText } from '../chatTypes'
 import type { ChatStream } from '../useChatStream'
 import type { useChatComposer } from '../composer/useChatComposer'
 import type { useTranscript } from '../transcript/useTranscript'
@@ -21,7 +22,7 @@ import type { ChatHeaderState } from './useChatHeader'
 
 export function ChatHeader({ header, stream, composer, panes, transcript, started, navigate }: {
   header: ChatHeaderState
-  stream: Pick<ChatStream, 'sessionRef' | 'title' | 'titleNeed' | 'branchedFrom' | 'startedBy' | 'investigateOrigin'>
+  stream: Pick<ChatStream, 'sessionRef' | 'title' | 'titleNeed' | 'branchedFrom' | 'startedBy' | 'investigateOrigin' | 'turns'>
   composer: Pick<ReturnType<typeof useChatComposer>, 'memoryMode' | 'screenShare'>
   panes: Pick<ChatPanesState, 'activityOpen' | 'setActivityOpen' | 'historyOpen' | 'setHistoryOpen'>
   transcript: Pick<ReturnType<typeof useTranscript>, 'mapOpen' | 'setMapOpen'>
@@ -32,7 +33,9 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
     projectId, projectName, renaming, setRenaming, renameVal, setRenameVal, regenningTitle, handoffChannels,
     saveAsTemplate, beginRename, commitRename, regenTitle, copyLink, handOff,
   } = header
-  const { sessionRef, title, titleNeed, branchedFrom, startedBy, investigateOrigin } = stream
+  const { sessionRef, title, titleNeed, branchedFrom, startedBy, investigateOrigin, turns } = stream
+  // Until a title arrives, the chat is named by its first message, as the chat history names it.
+  const firstAsk = turns.find((t) => t.role === 'user')
   const { memoryMode, screenShare } = composer
   const { activityOpen, setActivityOpen, historyOpen, setHistoryOpen } = panes
   const { mapOpen, setMapOpen } = transcript
@@ -94,7 +97,7 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
           {/* Raw: the title is its own rename control, and no primitive draws bare title-l text. */}
           <button type="button" onClick={beginRename} title="Rename chat"
             className="group inline-flex items-center gap-1.5 min-w-0 max-w-[420px] text-on-surface hover:text-on-surface-var transition-colors">
-            <span data-type="title-l" className="truncate">{sessionTitle({ key: sessionRef.current ?? '', title })}</span>
+            <span data-type="title-l" className="truncate">{sessionTitle({ key: sessionRef.current ?? '', title, prompt_preview: firstAsk ? turnText(firstAsk) : undefined })}</span>
             <Pencil size={13} className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
           </button>
           {/* Regenerate title — a small magic-stars affordance hugging the title's

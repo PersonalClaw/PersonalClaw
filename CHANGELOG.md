@@ -25,6 +25,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The plan panel offers Cancel plan mode while a plan drafts and while it waits for a turn to end, not only once a draft is ready for review.**
 - **The desktop app runs on Electron 45, packed by electron-builder 26.18.**
 - **The chat's agent orb draws a tool step as what its call does: reading for a call that reads, editing for one that edits, and running a command for one that runs or doesn't say. Each step's drawing holds at least 1.2 s, so a read or an edit over in milliseconds is still seen. Settings › Design's gallery shows the two new ones.**
+- **A read of a chat (`GET /api/chat/sessions/{session}`) that asks for no page is served its newest 200 messages, with `has_more` and `total`, and `before` pages back from there; `?all=1` serves the whole history, which the dashboard's chat page asks for. Its messages are redacted off the event loop, so reading a long chat no longer holds every other chat and the rest of the API: a script reading 28 chats a minute held health checks for up to 86 s. For apps: a read of your own chat that needs all of it asks `?all=1`.**
 
 ### Fixed
 
@@ -88,6 +89,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A turn someone else asked for, such as a colleague's message in a shared thread, reads none of your memory, nor does the work it starts. Its context carries none of your saved facts, lessons, standing instructions or earlier conversations, `memory_recall` and the other memory tools say who asked instead of answering, and your memory documents are withheld from its file tools. Your own message in the same thread reads it as before.**
 - **An agent on an agent CLI reads the Inbox, so a Morning briefing on one says what is waiting. Its tool server offers `inbox_list`, in the built-in agent's words, and reads what the built-in agent would: its own chat's items and those about no chat, never another chat's.**
 - **The gateway no longer stops answering for minutes after a write to a large knowledge library. Graph maintenance's dedup and grouping steps read both items' whole texts again for every pair they compared, in long stretches no other work could interrupt; they now read each item once, in short steps, and rest a moment between them, and a consolidation a workflow or the Knowledge panel starts no longer plans on the gateway's own event loop. A slow maintenance run logs each pass's time, and while one runs the running list shows Tidying the knowledge library, with the pass it is in.**
+- **A chat a client names can't take a name another kind of session has, such as a loop's `loop-…` or a scheduled automation's `cron:…`: `POST /api/chat/sessions` refuses it with `chat_name_refused` and says why, and nothing is made or opened. A chat's own names and `personalclaw run --session` are taken as before.**
+- **`POST /api/chat/sessions` takes an optional `title`, the chat's own title as a rename gives one, so auto-title leaves it alone. Until a chat has a title, its header names it by its first message instead of "Untitled chat".**
 
 ### Security
 

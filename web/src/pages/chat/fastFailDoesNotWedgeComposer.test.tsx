@@ -4,6 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { runState, runningState } from '../../test/runState'
 import { receiptFor } from '../../test/chatReceipt'
 
+/** An untitled chat is named in its header by its first message (`lib/sessionTitle`), so a read
+ *  of that message in the transcript leaves the header's copy out. */
+const NOT_THE_NAME = { ignore: 'script, style, [data-type="title-l"]' }
+
 // ── A fast-failing FIRST turn wedged the composer on Stop, forever ────────────────────────────
 //
 // Measured out of the box (fresh install, bundled offline model bound to Chat), 6/6: send one
@@ -206,7 +210,7 @@ describe('a detail snapshot that lands AFTER the turn terminated', () => {
     // on either side. That is the measured disappearance.
     const [, , , queueMode] = h.sendChat.mock.calls[0]
     expect(queueMode, 'a turn that already ended must not be steered into').toBeUndefined()
-    expect(await screen.findByText('does this one land?')).toBeTruthy()
+    expect(await screen.findByText('does this one land?', NOT_THE_NAME)).toBeTruthy()
   })
 })
 
@@ -243,6 +247,6 @@ describe('a mid-stream send the server ran as a fresh turn', () => {
     await user.click(screen.getByRole('button', { name: 'Steer — send into the running turn' }))
 
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
-    expect(await screen.findByText('did this one survive?')).toBeTruthy()
+    expect(await screen.findByText('did this one survive?', NOT_THE_NAME)).toBeTruthy()
   })
 })

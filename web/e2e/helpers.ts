@@ -624,7 +624,7 @@ export async function openTheInspectedChat(page: Page, query: string): Promise<O
   const row = (work: string, kind: string, name: string, phase: string, line: string) => ({
     work, kind, session: INSPECTED, phase, line, since: at, name, agent: '', started_at: at, route: '', blocked: false, waiting: [],
   })
-  await page.route(`**/api/chat/sessions/${INSPECTED}`, (route) =>
+  await page.route(`**/api/chat/sessions/${INSPECTED}?all=1`, (route) =>
     route.request().method() === 'GET' ? route.fulfill({ json: detail }) : route.fallback())
   await page.route(/\/api\/running(\?.*)?$/, (route) => route.fulfill({
     json: { running: [row('workflow:a1b2c3d4', 'workflow', 'Nightly digest', 'working', 'Step 2 of 4')], finished: [row('workflow:0ld0ld00', 'workflow', 'Yesterday’s digest', 'complete', '')] },

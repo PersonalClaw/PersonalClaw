@@ -9683,6 +9683,8 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
+  // The whole history (`all=1`): a read of a chat that asks for no page is served its newest 200
+  // messages, and the chat page has no older pages to fetch yet.
   chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; title_needs_model?: string; messages: ChatHistoryMsg[]; run_state: RunState; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string; pastes?: { seq: number; lines: number; content: string }[]; widget_action?: boolean }[]; bookmarks?: string[]; side?: { open: boolean; messages: { role: string; content: string }[]; last_run_id?: string; is_complete?: boolean; partial?: string } | null
     /** Branch lineage: the parent's persisted HISTORY key (`dashboard:<key>`) when
      *  this session was branched, plus the parent's title resolved at read time. Served
@@ -9711,7 +9713,7 @@ export const api = {
     /** Present only on a conversation an APP started (`AppStarted`). A turn in it runs under
      *  that app's permissions, whoever sends the message: your approval switches never reach it,
      *  and the app approves none of its calls, so each one that needs approval asks you. */
-  } & AppStarted>(`/api/chat/sessions/${encodeURIComponent(key)}`, read),
+  } & AppStarted>(`/api/chat/sessions/${encodeURIComponent(key)}?all=1`, read),
   deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
   /** Set the per-conversation reply style. `''` resets it, so the conversation follows its agent
    *  (then the platform default) again. The response is the RE-RESOLVED state, not an echo: the

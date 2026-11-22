@@ -244,6 +244,18 @@ def _persist_title(state: DashboardState, session: _ChatSession) -> None:
             logger.debug("Failed to persist title for session %s", session.key)
 
 
+#: The longest title a person gives a chat, a rename's or one given as the chat is made.
+OWN_TITLE_LIMIT = 200
+
+
+def own_title(state: DashboardState, session: _ChatSession, title: str) -> str:
+    """Give *session* the title a person chose, cut at :data:`OWN_TITLE_LIMIT`: it is the chat's
+    own, so auto-title leaves it alone. Returns the title given."""
+    title = title[:OWN_TITLE_LIMIT]
+    _apply_title(state, session, title)
+    return title
+
+
 def _apply_title(state: DashboardState, session: _ChatSession, title: str) -> None:
     """Commit a resolved title to the session: mark it titled, persist, broadcast."""
     session.title = title
@@ -399,8 +411,7 @@ async def api_chat_session_rename(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "invalid JSON"}, status=400)
-    title = require_string(body, "title")[:200]
-    _apply_title(state, session, title)
+    title = own_title(state, session, require_string(body, "title"))
     sel().log_api_access(
         caller="dashboard",
         operation="chat.session_rename",
