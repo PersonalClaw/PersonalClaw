@@ -14,6 +14,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Settings › Diagnostics says how long the gateway keeps work waiting: its loop's lag and how long work waits for a worker thread, now, usually and at their worst in the last minute and ten.**
 - **A chat's `work_phase` frame says what its tool call does: while the turn is in `tool`, `act` is `read`, `edit` or `run`, from the kind an agent CLI declares or the name of one of PersonalClaw's own tools, and `null` when the call does not say. It is the word alone, never a path or a command.**
 - **A weekly pin refresh opens its own pull request: each workflow container whose tag has moved, and each action's newest week-old release, moved everywhere the tree holds them, through the pin-refresh App's token. It merges like any other pull request, on the normal checks, and the App is no bypass actor.**
+- **For apps, `personalclaw.sdk.channel.SessionManager.get_or_create` takes a keyword-only `asked_apart` (default `False`): `True` asks for a runtime built for the one turn alone, which resumes no conversation and whose session id is not kept, as core asks for a turn someone other than the owner asked for on an agent CLI. `slack-channel` calls it and needs no change.**
 
 ### Changed
 

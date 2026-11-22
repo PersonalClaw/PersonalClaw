@@ -2832,6 +2832,7 @@
      {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "cwd"},
      {"annotation": "dict[str, str] | None", "default": "None", "kind": "positional_or_keyword", "name": "extra_env"},
      {"annotation": "Callable[[], str] | None", "default": "None", "kind": "keyword_only", "name": "approval_source"},
+     {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "asked_apart"},
      {"annotation": "Any", "kind": "var_keyword", "name": "extra_factory_kwargs"}
     ],
     "returns": "tuple[ModelProvider, bool, bool]"
