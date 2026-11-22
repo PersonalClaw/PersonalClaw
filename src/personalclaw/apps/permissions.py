@@ -1374,7 +1374,8 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "answering a run's gate — only you answer one, never an app relaying it"
     ),
     "POST /api/workflows/runs/{run_id}/drop": AppMay(
-        "adds a file to the run's approval-gated drop; the run reads it only after you approve"
+        "offers a file to the run's drop; it never lands on the app's word, whatever the workflow"
+        " auto-accepts or the app confirms: only a file you drop yourself reaches the run's steps"
     ),
     # ── loops (every worker session is trusted: `loop/manager.py` sets its approval to auto) ──
     "POST /api/loops": OwnerOnly(_STARTS_LOOP),

@@ -7,9 +7,11 @@ becomes a state nobody designed.
 **In — the file drop.** Approval-gated multipart ingestion. Files land in the run's
 ``dropped/`` zone, whose lifecycle is ``immutable``: the agent may READ what a human handed
 it and may not rewrite it, because reference material an agent can edit is reference material that
-cannot be cited later. Ingested files are never inlined into a prompt unfenced — the read path hands
-them through ``fence_untrusted``, since a dropped file is by definition content the operator did not
-author.
+cannot be cited later. A step reads what was dropped through ``{{run.dropped}}``
+(:func:`dropped_for_steps`), and only there: each file's text passes the one door text from
+outside takes into a prompt (``outside_text.admit``), read by the injection screen and then fenced
+with its name, since a dropped file is by definition content the operator did not author. A
+step's file tools do not reach the zone.
 
 Named "file drop", not "inbox": PersonalClaw already has an Inbox feature and a second noun with the
 same name would collide in every conversation about either.
@@ -63,10 +65,12 @@ SPEC_KEY = "file_drop"
 
 
 def safe_filename(raw: str) -> str:
-    """A dropped file's stored name — basename only, sanitized, never empty."""
+    """A dropped file's stored name — basename only, sanitized, never empty, and never the drop's
+    own manifest (:data:`DROP_MANIFEST`), which sits in the same folder: a file dropped under that
+    name overwrote the manifest, and the manifest's next write overwrote the file."""
     base = Path(str(raw or "")).name
-    cleaned = _SAFE_NAME_RE.sub("_", base).strip("._") or "dropped"
-    return cleaned[:120]
+    cleaned = (_SAFE_NAME_RE.sub("_", base).strip("._") or "dropped")[:120]
+    return f"dropped_{cleaned}" if cleaned.lower() == DROP_MANIFEST else cleaned
 
 
 @dataclass
@@ -122,14 +126,23 @@ def parse_policy(spec: dict[str, Any] | None) -> DropPolicy:
     return DropPolicy(enabled=True, auto_accept_mimes=[str(m) for m in mimes if str(m).strip()])
 
 
-def approval_required(policy: DropPolicy, mime: str, *, confirmed: bool) -> tuple[bool, str]:
+def approval_required(
+    policy: DropPolicy, mime: str, *, confirmed: bool, by_app: bool = False
+) -> tuple[bool, str]:
     """Whether this file still needs a human, and what the human is being asked to accept.
 
     Ordered so an auto-accepted MIME never consults ``confirmed``: a template that declared
     ``image/*`` gets its screenshots without a prompt, and a caller cannot use ``confirm:true`` to
     widen that declaration to types the author excluded — the confirm flag ANSWERS the gate, it does
-    not bypass the policy.
+    not bypass the policy. ``confirmed`` is the owner's own confirmation, never a sender's
+    (``handlers.api_run_drop``).
+
+    🔴 A file an app hands a run (*by_app*) always waits for her, whatever the template
+    auto-accepts: a step reads what was dropped (``{{run.dropped}}``), and an app's own template
+    could auto-accept ``text/*`` and let in every file it sent without her.
     """
+    if by_app:
+        return True, "a file an app hands this run waits for you: it lands only when you drop it"
     if policy.auto_accepts(mime):
         return False, "auto-accepted by the workflow's declared MIME types"
     if confirmed:
@@ -199,21 +212,81 @@ def store_dropped_bytes(run_id: str, filename: str, data: bytes) -> dict[str, An
     }
 
 
-def read_dropped_text(run_id: str, filename: str, *, limit: int = 64 * 1024) -> str:
-    """A dropped file's text, FENCED — the only sanctioned way its content reaches a prompt.
+#: How much of one dropped file's text a step is handed: 64 KiB of characters. Reference material
+#: past that is a document to work through in steps, not a prompt's paragraph.
+MAX_FILE_CHARS = 64 * 1024
 
-    Fencing happens at the READ rather than at ingestion so the bytes on disk stay exactly what the
-    human handed over (a fenced-on-disk file could not be diffed against its original), while no
-    caller can reach the content without the fence. The two rules only compose in this order.
+#: How much text ``{{run.dropped}}`` hands a step for all the run's files together. Fifty files of
+#: 64 KiB would be 3 MiB in every prompt that binds it; a file past this is named and left out.
+MAX_DROPPED_CHARS = 128 * 1024
+
+#: What ``{{run.dropped}}`` reads in a run that accepts files and has been handed none yet: a
+#: sentence the step can act on, rather than an empty string a prompt reads past.
+NOTHING_DROPPED = "[No file has been dropped into this run yet.]"
+
+
+def dropped_for_steps(run_id: str, spec: dict[str, Any] | None) -> str | None:
+    """What ``{{run.dropped}}`` hands a step: each file dropped into the run, oldest first, its
+    text read by the injection screen and fenced with its name (:func:`dropped_text`), or
+    :data:`NOTHING_DROPPED`. None when the run's workflow accepts no files, where the field is
+    absent and a read of it says so.
+
+    Read when a step that binds it starts, so a file dropped while a step runs reaches the steps
+    after it. A file the drop's text has no room left for (:data:`MAX_DROPPED_CHARS`) is named and
+    left out, and so is one that is not text.
     """
-    from personalclaw.security import fence_untrusted
+    if not parse_policy(spec).enabled:
+        return None
+    rows = sorted(read_manifest(run_id), key=lambda r: str(r.get("accepted_at") or ""))
+    if not rows:
+        return NOTHING_DROPPED
+    parts = [f"The files dropped into this run ({len(rows)}):"]
+    room = MAX_DROPPED_CHARS
+    for row in rows:
+        name = safe_filename(str(row.get("filename") or ""))
+        if room <= 0:
+            parts.append(
+                f"[{name} was left out: the files before it hold all the text a step is handed"
+                " of this drop.]"
+            )
+            continue
+        text = dropped_text(run_id, name, limit=min(MAX_FILE_CHARS, room))
+        room -= len(text)
+        parts.append(text)
+    return "\n\n".join(parts)
 
-    path = drop_dir(run_id) / safe_filename(filename)
+
+def dropped_text(run_id: str, filename: str, *, limit: int = MAX_FILE_CHARS) -> str:
+    """One dropped file as a step is handed it: its text read by the injection screen and fenced
+    with its name (``outside_text.admit``), or a sentence saying why it is not there (the screen
+    refused it, it is not text, or it is gone).
+
+    At the READ rather than at ingestion, so the bytes on disk stay exactly what the human handed
+    over (a fenced-on-disk file could not be diffed against its original), while no step reaches
+    the content without the screen and the fence. The two rules only compose in this order.
+    """
+    from personalclaw.outside_text import admit, withheld
+
+    name = safe_filename(filename)
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace")[:limit]
+        data = (drop_dir(run_id) / name).read_bytes()
     except OSError:
-        return ""
-    return fence_untrusted(raw, source=f"dropped file {safe_filename(filename)}")
+        return f"[{name} is no longer in this run's drop.]"
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        text = ""
+    if not data:
+        return f"[{name} is empty.]"
+    if not text or "\x00" in text:
+        return f"[{name} is not text, so only its name is handed on.]"
+    cut = text[:limit]
+    admitted = admit(cut, source=f"dropped file {name}", source_type="file_drop", source_id=run_id)
+    if admitted.refused:
+        return withheld(f"The dropped file {name}", admitted.refused)
+    if len(cut) < len(text):
+        return f"{admitted.text}\n[{name}: its first {len(cut):,} characters of {len(text):,}.]"
+    return admitted.text
 
 
 def outbox_entries(run_id: str) -> list[dict[str, Any]]:

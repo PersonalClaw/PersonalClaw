@@ -298,6 +298,25 @@ cannot continue is refused, as is a subworkflow node that does. It is read once,
 when the run starts, so an edit of a run that would change it is refused too.
 `deep-research` is the worked example.
 
+## Files the owner hands a run: `{{run.dropped}}`
+
+Declare `"file_drop": true` at the top of a template, and its run page takes
+files: each one asks the owner first, unless its type is one the template
+auto-accepts (`"file_drop": {"auto_accept_mimes": ["image/*"]}`). A step reads
+what was dropped through `{{run.dropped}}`, in its prompt:
+
+```json
+{"kind": "stage", "id": "summarize",
+ "config": {"prompt": "Summarize what the owner dropped in:\n{{run.dropped}}"}}
+```
+
+Each file comes in oldest first, its text read by the injection screen and
+fenced with its name, so the step reads it as material, never as orders. A file
+the screen refuses, one that is not text, or an empty one is named with the
+reason instead. A step that binds it reads the drop as it starts, so a file
+dropped while one step runs reaches the steps after it. Without `file_drop`,
+`{{run.dropped}}` doesn't exist and the step fails saying so.
+
 ## A search held to a budget: `optimize-harness`
 
 The bundled `optimize-harness` template is the worked example of a loop that spends

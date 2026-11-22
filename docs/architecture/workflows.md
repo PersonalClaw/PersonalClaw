@@ -125,7 +125,7 @@ a wait: the step under the lock is still the one writer.
 | `leases.py` | the flock-backed claim files behind `containers.claim`/`release`: `single_flight`-guarded read-modify-write over a per-target lease file whose `expires_at` outlives the process, so a claim stays truthful across a gateway kill |
 | `publish.py` | the `publish:` declaration, material-change version gating, typed lineage (flattened to scalar event metadata), evidence bundles, the terminal handoff report and the append-only results ledger |
 | `publish_seam.py` | where `publish.py`'s decision is carried out, called from `engine.dispatch` beside the artifact gate: the artifact registry write, the media copies a published body references (read only from under the run's own cwd, sensitive paths refused), the run's `publishes.jsonl` the outbox lists, and the consumption outcome question the dormancy sweep grades. A malformed declaration fails the node; a registry failure is reported on the result instead; a run an Incognito or Temporary chat started publishes nothing, and its result says why |
-| `filedrop.py` | the per-run file drop (spec-declared, approval-gated multipart ingestion into the run's `immutable` `dropped/` zone, fenced on read) and the outbox — the run's published-artifact listing projected from the publish journal rather than a second registry |
+| `filedrop.py` | the per-run file drop (spec-declared, approval-gated multipart ingestion into the run's `immutable` `dropped/` zone, which a step reads through `{{run.dropped}}`, each file screened and fenced with its name by `outside_text.admit`) and the outbox — the run's published-artifact listing projected from the publish journal rather than a second registry |
 | `pinned.py` | the pinned-artifact set a user curates for the composable home (`entity_settings/pinned_artifacts.json`), owning its own entity file the way `channel_trust` does. Stores only slugs — name, kind and version are re-read from the artifact on every load, so a rename or a new version cannot leave a stale pin |
 | `project_archive.py` | the archive I/O around `project_export`'s planner: an allowlist walk into `plan_export`, a manifest ZIP, and extraction into a per-call temp dir reaped in `finally`. Writes only plan-ACCEPTED entries so the archive and its manifest cannot disagree, reuses `project_export.safe_member` rather than adding a second path check, and offers optional AES-GCM through the `cryptography` dependency |
 | `batch_compile.py` | batch `subagent_run` compiled to a `parallel[stage...]` run: the N≥2 threshold, capability classes, the single-writer lint, static depth rejection, typed leaf outputs compiled to `output_contract`, and the safety-filtered recall view. Each `tasks[]` item is read by the type its contract declares (`leaf_from_item`; the tool shows the same table as its schema, `leaf_item_schema`): one path sent as text is a one-item `writes`, and a value of another type, an unknown `capability` or a key the contract does not have refuses the compile. The boundary is prose for the worker plus `off_limits`, the paths it must not write; only those are compared with `writes` (`boundary_contradicts_writes`), never paths found in the prose. Each step is named by its item's `title` (the node's `label`, which every surface shows, and what its id is cut from), else by the start of its objective (`LeafTask.label`) — never by the task's text, which is written for the worker and often opens with a path. Called from `mcp_subagents._run_compiled_batch`, which hands the compiled spec to the gateway (`POST /api/workflows/batches`, `batch_start`) to persist as a def and start a run against, so the widget rebuilds from disk after a restart. Emits the top-level `workspace:` block the run-start applier reads (`provisioning.declares_workspace`), so the fan-out is provisioned into one isolated `scratch` substrate — RUN-scoped, because there is no per-node provisioning in the engine. A crash-surviving batch is therefore SUSPENDED with a Resume affordance rather than auto-adopted, since `stamp_run` records a recoverable `worktree_path` for every isolated mode |
@@ -462,8 +462,19 @@ subworkflow child is refused the same way, as its node's failure). The carry ask
 the store for that run again rather than trusting the start check, and reads only
 an earlier run of the same workflow. `continue_from` is read when the run starts,
 so an edit that would change it on a run that exists is refused
-(`WF_MUT_START_ONLY_INPUT`). A run that keeps no document has no `run` root, and a
+(`WF_MUT_START_ONLY_INPUT`). A run that keeps no document has no `run.document`, and a
 read of it says so.
+
+`{{run.dropped}}` is what the owner dropped into the run, for a workflow that
+declares `file_drop` (`filedrop.dropped_for_steps`): each file, oldest first, its
+text read by the injection screen and fenced with its name (`outside_text.admit`,
+the census's `filedrop.dropped_text` door), or a sentence saying why it is not
+there (refused by the screen, not text, empty). Up to 64 KiB of one file and
+128 KiB of them all; a file past that is named and left out. It is read when a
+step that binds it starts, and only for such a step, so a file dropped while one
+step runs reaches the next. A step's file tools do not reach the `dropped/` zone,
+so this is the one way in. Its value is already fenced: don't pipe it through
+`fenced`. A workflow that declares no drop has no `run.dropped`.
 
 A pipe's arguments are **literals** — a quoted string, a number, `true`/`false` or
 `null` — so an argument can never name a variable. That makes `| default([])` not an

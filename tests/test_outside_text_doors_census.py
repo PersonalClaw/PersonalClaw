@@ -75,6 +75,10 @@ DOORS: dict[tuple[str, str], Door] = {
         via="admit",
     ),
     ("attachments.py", "reading"): Door("an Inbox message's attachments, for its fire", "admit"),
+    ("workflows/filedrop.py", "dropped_text"): Door(
+        "a file the owner dropped into a workflow run, for a step that binds {{run.dropped}}",
+        via="admit",
+    ),
     ("hooks.py", "hand_on"): Door(
         "what a lifecycle trigger's event carried (a prompt, a reply, a tool's result)",
         via="admit_payload",
@@ -164,7 +168,6 @@ FENCED_NOT_SCREENED: dict[tuple[str, str], str] = {
     ("web/fetch.py", "web_extract"): "a page the agent fetched",
     ("workflows/bindings.py", "_pipe_fenced"): "a workflow step's output, read by a later step",
     ("workflows/bindings.py", "_pipe_fenced_sources"): "knowledge a workflow step reads",
-    ("workflows/filedrop.py", "read_dropped_text"): "a file dropped to start a workflow",
 }
 
 #: Fences around PersonalClaw's own words or the owner's, which are not text from outside.
@@ -360,13 +363,13 @@ def test_the_census_reads_the_whole_tree():
     """Vacuity: a scan that stopped matching would pass with nothing found. Floored at what it
     finds today."""
     found = scan(_tree())
-    assert len(found["fence"]) >= 45 and len(found["screen"]) >= 5, found
+    assert len(found["fence"]) >= 44 and len(found["screen"]) >= 5, found
     assert len(DOORS) >= 14
 
 
 #: How many doors still fence text from outside without the screen. It may only fall: a door sent
 #: through ``outside_text.admit`` moves its row to :data:`DOORS` and lowers this in the same change.
-NOT_SCREENED_CEILING = 28
+NOT_SCREENED_CEILING = 27
 
 
 def test_the_doors_not_screened_yet_may_only_shrink():

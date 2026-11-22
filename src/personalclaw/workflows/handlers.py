@@ -1224,7 +1224,7 @@ async def api_run_drop_status(request: web.Request) -> web.Response:
 
     A read, so not `_guard`ed — the same rule `api_run_workspace` follows. The payload is filenames,
     sizes and digests; no dropped CONTENT is served here, because a drop is untrusted input and the
-    one sanctioned read path fences it (`filedrop.read_dropped_text`).
+    one read path, a step's `{{run.dropped}}`, screens and fences it (`filedrop.dropped_text`).
     """
     return _reply(service.drop_status(request.match_info.get("run_id", "")))
 
@@ -1272,7 +1272,13 @@ async def api_run_drop(request: web.Request) -> web.Response:
     # `confirm` may arrive as a form field ahead of the files (a browser sends parts in order), so
     # it is read as the stream advances rather than from a pre-parsed body — request.post() would
     # buffer every file into memory to give the same answer.
-    confirmed = confirm_granted_query(request.query)
+    #
+    # 🔴 It approves a file only from her own request. An app's or an agent's `confirm` would be
+    # the sender approving what it sends, and a step reads what was dropped (`{{run.dropped}}`).
+    # An app's file waits for her whatever it says (`filedrop.approval_required`).
+    by = approval_answer.of_request(request)
+    owner = by.kind == approval_answer.OWNER
+    confirmed = owner and confirm_granted_query(request.query)
     accepted: list[dict[str, Any]] = []
     while True:
         try:
@@ -1290,7 +1296,8 @@ async def api_run_drop(request: web.Request) -> web.Response:
             continue
         name = part.name or ""
         if name == "confirm":
-            confirmed = confirmed or (await part.text()).strip().lower() == "true"
+            said = (await part.text()).strip().lower() == "true"
+            confirmed = confirmed or (owner and said)
             continue
         if name != "file":
             continue
@@ -1327,7 +1334,12 @@ async def api_run_drop(request: web.Request) -> web.Response:
             _audit(request, "workflow_run_drop", "rejected", f"{run_id}:{exc.code}")
             return exc.response()
         result = service.accept_dropped_file(
-            run_id, filename=filename, data=dropped, mime=mime, confirmed=confirmed
+            run_id,
+            filename=filename,
+            data=dropped,
+            mime=mime,
+            confirmed=confirmed,
+            by_app=by.kind == approval_answer.APP,
         )
         if not result.get("ok"):
             _audit(
