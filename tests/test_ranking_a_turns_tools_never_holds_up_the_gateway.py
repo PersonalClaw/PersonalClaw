@@ -40,6 +40,10 @@ _EMBED_SECS = 0.03
 #: free loop turns within milliseconds, a loaded runner's too; a loop held waiting on the
 #: embedding never does, and the wait ends there with the loop counted held.
 _HANDSHAKE_SECS = 3.0
+#: The coarse bound beside them: the longest the loop may go without a turn during a turn, for a
+#: stall of any other cause the checks above cannot see. Far over a loaded runner's jitter (0.74 s
+#: in run 45031617092), and under the handshake's wait, so a loop held on the query fails it too.
+_GROSS_STALL = 2.5
 
 
 class _EmbeddingServer:
@@ -165,6 +169,27 @@ async def _new_agent() -> NativeAgentRuntime:
     return runtime
 
 
+async def _longest_still_during(work) -> float:
+    """How long the event loop stood still, at most, while *work* ran on it."""
+    gaps: list[float] = []
+    running = True
+
+    async def _beat() -> None:
+        while running:
+            began = time.monotonic()
+            await asyncio.sleep(0.005)
+            gaps.append(time.monotonic() - began)
+
+    beat = asyncio.create_task(_beat())
+    await asyncio.sleep(0.02)
+    try:
+        await work()
+    finally:
+        running = False
+        await beat
+    return max(gaps)
+
+
 @pytest.fixture
 def ranked_on(monkeypatch):
     """The threads the retriever ranked and warmed on, with the loop's thread first."""
@@ -194,9 +219,13 @@ async def _turn(runtime: NativeAgentRuntime, message: str) -> None:
 @pytest.mark.asyncio
 async def test_a_new_agents_first_turn_leaves_the_gateway_serving(embedding_server, ranked_on):
     """The catalog's first embedding, and the ranking, happen off the loop's thread."""
-    runtime = await _new_agent()
-    await _turn(runtime, "which tool does thing 7")
+
+    async def _first_turn() -> None:
+        await _turn(await _new_agent(), "which tool does thing 7")
+
+    still = await _longest_still_during(_first_turn)
     _wait_for_background_embedding()
+    assert still < _GROSS_STALL, f"the gateway answered nothing for {still:.2f}s"
     assert embedding_server.tool_texts(), "the catalog was never embedded: nothing was judged"
     _off_the_loop(ranked_on)
 
@@ -239,7 +268,8 @@ async def test_a_turn_waiting_on_a_slow_embedding_server_leaves_the_gateway_serv
 ):
     """Even the one request a turn makes — its own query's vector — is made off the loop: the
     gateway's loop turns while it is out."""
-    await _slow_query_turn(embedding_server)
+    still = await _longest_still_during(lambda: _slow_query_turn(embedding_server))
+    assert still < _GROSS_STALL, f"the gateway answered nothing for {still:.2f}s"
     assert embedding_server.loop_turned == [True], "the loop was held while the query was out"
     _off_the_loop(ranked_on)
 
@@ -253,7 +283,8 @@ async def test_a_turn_that_ranks_on_the_loop_is_caught(embedding_server, ranked_
         return fn(*args, **kwargs)
 
     monkeypatch.setattr(asyncio, "to_thread", on_the_loop)
-    await _slow_query_turn(embedding_server)
+    still = await _longest_still_during(lambda: _slow_query_turn(embedding_server))
+    assert still >= _GROSS_STALL, f"a loop held {still:.2f}s passed the coarse bound"
     assert embedding_server.loop_turned == [False], "a held loop went unseen"
     with pytest.raises(AssertionError, match="on the loop's thread"):
         _off_the_loop(ranked_on)
