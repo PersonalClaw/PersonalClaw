@@ -2553,29 +2553,53 @@ class CodeKind(LoopKindStrategy):
 
     async def _no_stage_done(self, loop: Loop, findings: list[dict], ctx) -> bool:
         """Completion for a code loop with NO stage plan (free-running off its brief):
-        ≥1 finding AND any configured verify/test command passes. The project-level
-        'prove it' gate; no judge (no stage criteria to judge against). A command the shell
-        denylist refuses proves nothing, so it pauses the loop with the rule instead. The
-        commands run where the work is (`effective_dir`: the bound workspace, else the loop's
-        own folder a greenfield worker builds in), as the stage gate's do."""
+        ≥1 finding AND every configured verify/test command passes, and then the loop is
+        completed here (``ctx.complete``), as the stage path completes it. True iff it was. The
+        project-level 'prove it' gate; no judge (no stage criteria to judge against). A command
+        the shell denylist refuses proves nothing, so it pauses the loop with the rule instead.
+        A command that could not run (:func:`~personalclaw.loop.gates.run_verify_command`'s
+        ``None``: refused, timed out, a program not installed) is no pass either: it holds
+        completion, and the loop keeps cycling with what the check said. Each command's outcome
+        is published as a stage's is (``gate_check``). The commands run where the work is
+        (`effective_dir`: the bound workspace, else the loop's own folder a greenfield worker
+        builds in), as the stage gate's do."""
         if not findings:
             return False
-        from personalclaw.loop.gates import run_verify_command
+        from personalclaw.loop.gates import CheckReport, run_verify_command
         from personalclaw.loop.loop import effective_dir
 
         cfg = loop.kind_config or {}
         ws = effective_dir(loop)
-        for cmd in (
-            str(cfg.get("verify_command", "")).strip(),
-            str(cfg.get("test_command", "")).strip(),
+        checked = False
+        for label, cmd in (
+            ("verify", str(cfg.get("verify_command", "")).strip()),
+            ("test", str(cfg.get("test_command", "")).strip()),
         ):
             if refused := gates.refusal(cmd, cwd=ws or ""):
                 gates.pause_for_refusal(loop.id, refused, ctx.publish)
                 return False
-            if cmd:
-                ok = await run_verify_command(cmd, ws or None)
-                if ok is False:
-                    return False  # a real failure holds completion
+            if not cmd:
+                continue
+            report = CheckReport()
+            ok = await run_verify_command(cmd, ws or None, label=label, report=report)
+            if self._still_ours(loop) is None:
+                return False  # it stopped, paused or went while the check ran
+            said = {
+                "loop_id": loop.id,
+                "label": label,
+                "command": redact_for_display(cmd),
+                "ok": ok,
+                "output": report.output,
+            }
+            if ok is None:
+                said["skipped"] = report.not_run or "the check could not run"
+            ctx.publish(loop.id, "gate_check", said)
+            if ok is not True:
+                return False  # a failure, or a check that could not run, holds completion
+            checked = True
+        await ctx.complete(
+            loop.id, "its checks passed" if checked else "a finding landed, and it has no check"
+        )
         return True
 
     def cycle_nudge(self, loop: Loop, loop_dir: str) -> str:
