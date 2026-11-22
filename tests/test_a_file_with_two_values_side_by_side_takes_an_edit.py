@@ -25,7 +25,9 @@ from personalclaw.security import MaskConflict
 
 pytestmark = pytest.mark.security
 
-KEYS = "AKIAQQQQQQQQQQQQQQQQAKIAQQQQQQQQQQQQQQQQ"
+#: The AWS documentation's example access key, written twice with nothing between.
+KEY = "AKIAIOSFODNN7EXAMPLE"
+KEYS = KEY + KEY
 STORED = f'KEYS = "{KEYS}"\nname = "old"\n'
 CORPUS = Path(__file__).with_name("test_redaction_cost.py")
 
