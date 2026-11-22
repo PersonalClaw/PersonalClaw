@@ -63,6 +63,10 @@ export function RestoreHoldNotice({ holds, onResumed }: { holds: RestoreHold[]; 
       const n = r.resumed.length
       if (n > 0) notify(n === 1 ? `Resumed ${r.resumed[0].name}.` : `Resumed ${n} automations.`, 'success')
       for (const kept of r.still_held) notify(`${kept.name} stays paused: ${kept.reason}`, 'error')
+      // On again, and still unable to fire: a file automation whose folder is not on this machine.
+      for (const on of r.resumed) {
+        for (const w of on.warnings ?? []) notify(`${on.name} is on. ${w}`, 'error')
+      }
     } catch (e) {
       notify(failureSentence('resume the paused automations', e), 'error')
     } finally {

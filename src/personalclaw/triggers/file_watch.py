@@ -103,6 +103,70 @@ def expand_globs(patterns: list[str] | tuple[str, ...], *, base: Path | None = N
     return [seen[k] for k in sorted(seen)]
 
 
+#: What makes a pattern segment a wildcard, for `pathlib` globs.
+_WILDCARD = frozenset("*?[")
+
+
+def missing_folders(
+    patterns: list[str] | tuple[str, ...], *, base: Path | None = None
+) -> list[str]:
+    """The folders *patterns* look in that are not on this machine, each once, in order.
+
+    A pattern's folder is its fixed part, every segment before the first that holds a wildcard, or
+    the folder a pattern with none names a file in. `~` and relative patterns resolve as
+    :func:`expand_globs` resolves them. A watch whose folder is not there matches no file, ever,
+    so it never fires, and nothing said so: a home restored from another machine keeps the paths
+    of the one it was taken on. A folder that is there with no match in it yet is not missing:
+    the file may still come. A pattern that starts with a wildcard looks in its base folder.
+    """
+    root = base or Path.cwd()
+    missing: list[str] = []
+    for raw in patterns or ():
+        pattern = str(raw or "").strip()
+        if not pattern:
+            continue
+        fixed: list[str] = []
+        wild = False
+        for part in Path(os.path.expanduser(pattern)).parts:
+            if _WILDCARD & set(part):
+                wild = True
+                break
+            fixed.append(part)
+        folder = Path(*fixed) if wild else Path(*fixed).parent
+        if not folder.is_absolute():
+            folder = root / folder
+        try:
+            there = folder.is_dir()
+        except OSError:
+            there = False
+        if not there and str(folder) not in missing:
+            missing.append(str(folder))
+    return missing
+
+
+def watch_warnings(trigger: Any) -> list[str]:
+    """What a `file` trigger's list row and its resume say when a folder it watches is not on this
+    machine (:func:`missing_folders`); none for another kind, or when every folder is there."""
+    if getattr(trigger, "kind", "") != "file":
+        return []
+    from personalclaw.triggers.models import watched_paths
+
+    paths = watched_paths(getattr(trigger, "spec", None))
+    missing = missing_folders(paths)
+    if not missing:
+        return []
+    named = missing[0] if len(missing) == 1 else ", ".join(missing[:-1]) + " and " + missing[-1]
+    are = "is" if len(missing) == 1 else "are"
+    # Every pattern looking in a missing folder is a watch that cannot fire at all; one pattern of
+    # several is a part of the watch that cannot.
+    every = all(missing_folders([path]) for path in paths)
+    outcome = "so it never fires" if every else "so nothing there can fire it"
+    return [
+        f"It watches {named}, which {are} not on this machine, {outcome}. Make the folder, or "
+        "change the pattern: a home restored from another machine keeps that machine's paths."
+    ]
+
+
 def content_hash(path: Path) -> str:
     """A cheap content signature: size + the first `HASH_BYTES`.
 

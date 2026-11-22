@@ -10797,11 +10797,12 @@ export const api = {
       consented({ enabled }, c, shown))),
   /** Resume all: switch on every automation a restore holds (`triggers/restore_hold.py`), each the
    *  way its own switch would. One that refuses — its action needs your yes, which its own switch
-   *  asks for — stays held, with why. */
+   *  asks for — stays held, with why. Each resumed one carries what it should be told as it
+   *  starts again (`warnings`): a file automation whose folder is not on this machine. */
   resumeRestoredTriggers: () =>
     post<{
       ok: boolean
-      resumed: Array<{ id: string; name: string }>
+      resumed: Array<{ id: string; name: string; warnings?: string[] }>
       still_held: Array<{ id: string; name: string; reason: string }>
     }>('/api/triggers/restore-hold/resume'),
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),

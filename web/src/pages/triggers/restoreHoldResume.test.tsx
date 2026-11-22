@@ -116,7 +116,28 @@ describe('the notice above the Triggers list', () => {
     await waitFor(() => expect(API.resumeRestoredTriggers).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(toasts).toContain('Resumed 2 automations.'))
     expect(toasts).toContain('Morning source digest stays paused: its action needs your yes')
+    expect(toasts.filter((t) => t.includes(' is on. '))).toEqual([])
     await waitFor(() => expect(API.schedules.mock.calls.length).toBeGreaterThan(reads))
+  })
+
+  it('says, as it switches one back on, that a watch whose folder is not here can never fire', async () => {
+    const said = 'It watches /Users/someone-else/notes, which is not on this machine, so it never fires. '
+      + "Make the folder, or change the pattern: a home restored from another machine keeps that machine's paths."
+    API.resumeRestoredTriggers.mockImplementationOnce(() => Promise.resolve({
+      ok: true,
+      resumed: [
+        { id: 'file:notes', name: 'New notes', warnings: [said] },
+        { id: 'event:new-mail', name: 'New mail', warnings: [] },
+      ],
+      still_held: [],
+    }))
+    await mountTriggers()
+    const notice = await screen.findByTestId('restore-hold')
+    fireEvent.click(within(notice).getByRole('button', { name: /Resume all/ }))
+    await waitFor(() => expect(toasts).toContain(`New notes is on. ${said}`))
+    expect(toasts).toContain('Resumed 2 automations.')
+    // The one with nothing to say is not named again.
+    expect(toasts.filter((t) => t.startsWith('New mail is on'))).toEqual([])
   })
 
   it("a home restored from its own snapshot is told nothing else runs them", async () => {

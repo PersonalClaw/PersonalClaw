@@ -417,7 +417,14 @@ def _issue_messages(row: Any) -> tuple[list[str], list[str]]:
         )
         if i.severity == "error"
     ]
-    return ([i.message for i in row.errors] + never, [i.message for i in row.warnings])
+    # A folder a file automation watches that is not on this machine: it saves and reads on, and
+    # matches no file, so it never fires (`file_watch.watch_warnings`).
+    from personalclaw.triggers.file_watch import watch_warnings
+
+    return (
+        [i.message for i in row.errors] + never,
+        [i.message for i in row.warnings] + watch_warnings(trigger),
+    )
 
 
 def _served_by(trigger_id: str, served_by: str | None) -> str:
@@ -1978,11 +1985,13 @@ async def api_triggers_resume_restored(request: web.Request) -> web.Response:
 
     A replace restore switches off each automation that ran on its own where its snapshot was taken
     (`triggers.restore_hold`), and the Triggers page says why. This switches each back on the way
-    its own switch would (`tools.set_paused`), and answers ``{resumed: [{id, name}], still_held:
-    [{id, name, reason}]}``: one that refuses (it no longer parses, its action needs the yes its
-    switch asks for, or its one time has passed) stays held, with why. One switch resumes one.
+    its own switch would (`tools.set_paused`), and answers ``{resumed: [{id, name, warnings}],
+    still_held: [{id, name, reason}]}``: one that refuses (it no longer parses, its action needs
+    the yes its switch asks for, or its one time has passed) stays held, with why. One switch
+    resumes one. A resumed one's warnings say what it should be told as it starts again.
     """
     from personalclaw.triggers import restore_hold
+    from personalclaw.triggers.file_watch import watch_warnings
 
     state: DashboardState = request.app["state"]
     # In the loop, as the switch writes: a few store writes under its lock, nothing awaited.
@@ -2000,7 +2009,12 @@ async def api_triggers_resume_restored(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "ok": True,
-            "resumed": [{"id": t.id, "name": _redact(t.name)} for t in resumed],
+            # Each with what it should be told as it starts again: a file automation whose folder
+            # is not on this machine (a restore from another one) is on and can never fire.
+            "resumed": [
+                {"id": t.id, "name": _redact(t.name), "warnings": watch_warnings(t)}
+                for t in resumed
+            ],
             "still_held": [{"id": t.id, "name": _redact(t.name), "reason": why} for t, why in kept],
         }
     )
