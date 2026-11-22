@@ -1,14 +1,12 @@
-"""A run whose text holds a lone surrogate is recorded, and its automation's hourly cap counts it.
+"""A run whose text holds a character UTF-8 cannot write is recorded in its History like any other.
 
-🔴 The defect (found in review of c8f22d1d2). A JSON ``\\ud800`` escape, in a webhook body or any
-payload an action hands on, decodes to a lone surrogate, which UTF-8 cannot encode. The run
-history wrote its rows as UTF-8 text, so the write raised; the recorder, which never raises,
-dropped the run with a debug line. The run had happened and was nowhere: not in its History,
-and not in the count the hourly cap reads, so a fire carrying such text was never counted.
+🔴 The defect. A JSON ``\\ud800`` escape decodes to a lone surrogate, which UTF-8 cannot encode.
+The run history wrote its rows as UTF-8 text, so the write raised, and the run was missing from its
+automation's History.
 
 Now every row is written with the characters past ASCII escaped, which is plain JSON and reads
 back to the same text. Driven through the real fire recorder (`run_record.record_run`), the real
-run history and the real hourly-cap read, in a home of the test's own.
+run history and the real count of an automation's runs in a window, in a home of the test's own.
 """
 
 from __future__ import annotations
@@ -64,8 +62,8 @@ def test_the_run_is_in_its_history_with_its_own_words(home: Path) -> None:
     assert full is not None and full["trace"] == SAID
 
 
-def test_the_hourly_cap_counts_it(home: Path) -> None:
-    """🔴 Before: the cap's count passed over the run, which had no row."""
+def test_it_counts_as_a_run_in_the_window(home: Path) -> None:
+    """Counted among its automation's runs in the window, as every recorded run is."""
     trigger = _fired(home, ActionResult(success=True, exit_code=0, stdout=SAID, summary=SAID))
     assert asyncio.run(service._fires_in_window(trigger, now=time.time(), base_dir=home)) == 1
 
@@ -90,7 +88,7 @@ def test_words_past_ascii_read_back_as_they_were(home: Path) -> None:
     assert (home / "cron-history" / "j.jsonl").read_bytes().isascii()
 
 
-def test_the_capped_read_is_this_homes(home: Path) -> None:
+def test_the_count_read_is_this_homes(home: Path) -> None:
     """A guard on the test itself: the count above is the run this home recorded, not zero from
     another home's empty history."""
     capped = SimpleNamespace(id="clock:none", gates={"max_runs_per_hour": 5})
