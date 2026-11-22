@@ -141,14 +141,7 @@ def install_accepted_template(data: dict[str, Any]) -> str:
             "still waits."
         )
     try:
-        _target, spec, _payload = prompt_cards.build_entity(
-            {
-                "target": "template",
-                "name": name,
-                "description": str(data.get("title") or ""),
-                "steps": [{"prompt": step} for step in template_steps(str(data.get("body") or ""))],
-            }
-        )
+        spec = _spec_of(data)
     except prompt_cards.PromptCardError as exc:
         raise proposals.AcceptError(_not_saved(name, exc)) from exc
     spec["tags"] = [SPEC_TAG]
@@ -185,6 +178,44 @@ def _workflow_names() -> set[str]:
 
 #: The validator's code for a step holding something shaped like a credential.
 _CREDENTIAL_CODE = "WF_INLINE_SECRET"
+
+
+def _spec_of(data: dict[str, Any]) -> dict[str, Any]:
+    """The workflow spec accepting the template proposal *data* saves, built and checked by the
+    validator a run starts with. Raises :class:`~personalclaw.packs.prompt_cards.PromptCardError`
+    when the validator refuses it."""
+    from personalclaw.packs import prompt_cards
+
+    _target, spec, _payload = prompt_cards.build_entity(
+        {
+            "target": "template",
+            "name": template_name(data),
+            "description": str(data.get("title") or ""),
+            "steps": [{"prompt": step} for step in template_steps(str(data.get("body") or ""))],
+        }
+    )
+    return spec
+
+
+def wont_save(data: dict[str, Any]) -> str:
+    """Why accepting the template proposal *data* would save nothing, said before it is pressed,
+    or ``""`` when it would save. The review reads it, so a template the validator refuses (a step
+    shaped like a credential) is drawn with no Save. Never the value, and never the prompt-card
+    path's own words."""
+    from personalclaw.packs import prompt_cards
+
+    if why_not(data):
+        return ""
+    try:
+        _spec_of(data)
+    except prompt_cards.PromptCardError as exc:
+        if _CREDENTIAL_CODE in tuple(getattr(exc, "codes", ()) or ()):
+            return (
+                "One of its steps holds something shaped like a credential, so it won't be saved. "
+                "Reject it, or make the template yourself with the credential kept as a secret."
+            )
+        return "Its steps wouldn't make a template that runs, so it won't be saved."
+    return ""
 
 
 def _not_saved(name: str, exc: Exception) -> str:
