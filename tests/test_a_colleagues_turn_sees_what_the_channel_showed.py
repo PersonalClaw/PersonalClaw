@@ -282,3 +282,23 @@ def test_a_turn_whose_channel_owner_cant_be_read_is_someone_elses(monkeypatch):
     assert holds_a_turn_not_asked_by(mine, his), "an unreadable owner"
     monkeypatch.setattr(credentials, "owner_id_for", lambda _channel: "")
     assert holds_a_turn_not_asked_by(mine, his), "no owner kept"
+
+
+def test_a_runner_that_never_says_answers_his_turn_apart():
+    """Closed: a runner that never says whether its turn is answered apart (``run_chat`` always
+    does: ``memory_writes.answers_apart``) answers a turn someone else asked for apart from the
+    history all the same, from its own message on. Said, the turn engine's word decides. 🔴 Red
+    with that default open."""
+    from personalclaw import memory_writes
+    from personalclaw.agents.native.runtime import NativeAgentRuntime
+    from personalclaw.turn_source import arrived_on
+
+    hers = {"role": "user", "content": "Morning! Notes go here."}
+    reply = {"role": "assistant", "content": "Noted."}
+    his = {"role": "user", "content": "What's the plan?"}
+    runtime = SimpleNamespace(_messages=[hers, reply, his], _turn_message=his)
+    with memory_writes.derived_from("dashboard:chat-41-1790900041", "chat-41-1790900041"):
+        memory_writes.asked_for(arrived_on("1790800000.000100", "U0JONAS", "teamchat"))
+        assert NativeAgentRuntime._history_for_turn(runtime) == [his]
+        memory_writes.answers_apart(False)
+        assert NativeAgentRuntime._history_for_turn(runtime) == [hers, reply, his]

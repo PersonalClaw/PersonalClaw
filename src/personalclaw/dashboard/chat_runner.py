@@ -1527,7 +1527,13 @@ def _answered_apart(session: _ChatSession, in_flight: str, depth: int) -> bool:
     (``turn_source.holds_a_turn_not_asked_by``): the owner, another person, or the automation,
     report or nudge that started it. A conversation every turn of which they asked for (a
     program's own conversation through the OpenAI-compatible door, a thread only they wrote in) is
-    theirs, and goes on as it is."""
+    theirs, and goes on as it is.
+
+    Read off the chat's own rows, while a turn it lets go on is sent all its runtime holds. That
+    holds only while the runtime keeps no turn the rows do not: nothing trims the buffer, and a
+    rewind puts back files, not turns. A change that drops turns from the rows and not from the
+    runtime (a trim, an edit-and-resend, a fork that keeps the runtime) must answer apart here, or
+    the turn after it reads turns this never saw."""
     asker = memory_writes.asker()
     if not asker:
         return False
