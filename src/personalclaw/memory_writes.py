@@ -206,6 +206,9 @@ class _Source:
     whose: "_Whose | None" = None
     asker: Mapping[str, str] | None = None
     marks: tuple[tuple[str, object], ...] = ()
+    #: Whether its turn is answered apart from its runtime's history (:func:`answers_apart`);
+    #: ``None`` while the turn has not said.
+    apart: bool | None = None
 
 
 class _Whose:
@@ -788,6 +791,29 @@ def turn_asked_by(session_key: str, source: Mapping[str, str], *aliases: str) ->
 
 
 # ── the models a session's work reaches ─────────────────────────────────────────────────────
+
+
+def answers_apart(apart: bool) -> None:
+    """Say whether the current work's turn is answered apart from what its runtime holds of the
+    conversation before it: someone other than you asked for it, and a turn before it was asked
+    for by someone else than they (``chat_runner._answered_apart``).
+
+    The turn engine says it before the turn's message is sent (``chat_runner.run_chat``), and the
+    built-in runtime reads it for the history it sends (``NativeRuntime._history_for_turn``). It
+    holds for the rest of the scope it is said in. Outside any scope it does nothing."""
+    scope = _SCOPE.get()
+    if scope is not None:
+        _SCOPE.set(replace(scope, apart=bool(apart)))
+
+
+def answered_apart() -> bool:
+    """Whether the current work's turn is answered apart from its runtime's history
+    (:func:`answers_apart`). Closed: a turn that has not said it is, when someone other than you
+    asked for it (:func:`asker`)."""
+    scope = _SCOPE.get()
+    if scope is not None and scope.apart is not None:
+        return scope.apart
+    return bool(asker())
 
 
 def answered_by(model_ref: str) -> None:

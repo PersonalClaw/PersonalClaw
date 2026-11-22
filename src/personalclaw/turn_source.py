@@ -290,6 +290,39 @@ def starts_a_turn(row: object) -> bool:
     return not (isinstance(meta, Mapping) and meta.get(STEERED))
 
 
+def holds_a_turn_not_asked_by(rows: Iterable[object], asker: Mapping[str, str]) -> bool:
+    """Whether *rows*, a conversation's rows, hold a turn (a row that starts one,
+    :func:`starts_a_turn`) someone other than *asker* asked for (:func:`asked_by`): one of the
+    owner's (``{}``), another person's, or one an automation's result, a helper's report or a
+    loop's nudge started. Closed: a turn whose channel's owner cannot be read
+    (:func:`_owner_read`) is counted as someone else's, whoever its sender."""
+    wanted = source_of(asker)
+    return any(
+        starts_a_turn(row) and (asked_by(row) != wanted or not _owner_read(row)) for row in rows
+    )
+
+
+def _owner_read(row: object) -> bool:
+    """Whether the owner of every channel *row* names is known: each source it records (its own,
+    or each of several queued messages', :data:`QUEUED_FROM`) that names a channel names one
+    whose owner can be read (``owner_id_for``) and is kept. A row that names no channel has no
+    channel owner to read."""
+    from personalclaw.config.credentials import owner_id_for
+
+    sources = _queued(row)
+    for source in [source_of(row)] if sources is None else sources:
+        channel = source.get("source_channel", "")
+        if not channel:
+            continue
+        try:
+            if not owner_id_for(channel):
+                return False
+        except Exception:  # noqa: BLE001 - an owner that cannot be read is not known
+            logger.warning("channel %r: its owner could not be read", channel, exc_info=True)
+            return False
+    return True
+
+
 def by_turn(rows: Iterable[Row]) -> list[list[Row]]:
     """*rows*, a conversation's rows in order, as its turns: each from a row that starts one
     (:func:`starts_a_turn`) up to the next, so a turn's calls, approvals, notices and answer are its

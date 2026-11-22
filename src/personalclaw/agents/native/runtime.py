@@ -2221,8 +2221,9 @@ class NativeAgentRuntime(
         return True
 
     def _history_for_turn(self) -> list[dict]:
-        """The history the running turn is answered from: all of ``_messages`` for the owner's
-        own turn, and for a turn someone else asked for only the turn itself, from its message on.
+        """The history the running turn is answered from: all of ``_messages``, and for a turn
+        answered apart from it (``memory_writes.answered_apart``: someone else asked for it, and a
+        turn before it was not theirs) only the turn itself, from its message on.
 
         What came before holds what the channel never showed them: each earlier turn's message as
         its model got it (the context it was built with, which for the owner's turn can carry her
@@ -2233,7 +2234,7 @@ class NativeAgentRuntime(
         and the owner's next turn reads it as before."""
         from personalclaw import memory_writes
 
-        if not memory_writes.asker():
+        if not memory_writes.answered_apart():
             return self._messages
         at = next((i for i, m in enumerate(self._messages) if m is self._turn_message), -1)
         return self._messages[at:] if at >= 0 else []

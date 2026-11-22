@@ -204,6 +204,7 @@ from personalclaw.turn_source import (
     ASKED_FOR_BY,
     FROM_OUTSIDE,
     asked_by,
+    holds_a_turn_not_asked_by,
     named,
     shared_source,
 )
@@ -1493,18 +1494,37 @@ def _as_quoted(name: str) -> str:
     return " ".join(name.split()).replace("`", "'")[:80]
 
 
+def _answered_apart(session: _ChatSession, in_flight: str, depth: int) -> bool:
+    """Whether *session*'s turn now being sent is answered apart from what its runtime holds of the
+    conversation before it: someone other than the owner asked for it (``memory_writes.asker``),
+    and a turn before it was asked for by someone else than they
+    (``turn_source.holds_a_turn_not_asked_by``): the owner, another person, or the automation,
+    report or nudge that started it. A conversation every turn of which they asked for (a
+    program's own conversation through the OpenAI-compatible door, a thread only they wrote in) is
+    theirs, and goes on as it is."""
+    asker = memory_writes.asker()
+    if not asker:
+        return False
+    at = in_flight_index(session, in_flight, nested=depth > 0)
+    before = session.messages if at is None else session.messages[:at]
+    return holds_a_turn_not_asked_by(before, asker)
+
+
 def _turn_history(
     session: _ChatSession, in_flight: str, depth: int, provider_kind: str
 ) -> tuple[list[dict], bool]:
     """What *session*'s turn now being sent is built with of the conversation before it, and
-    whether it is answered apart from its runtime's history. A turn someone other than the owner
-    asked for (``memory_writes.asker``), on the built-in runtime, is: the runtime's earlier turns
-    hold what the channel never showed them (``NativeRuntime._history_for_turn``), so it is built
-    as a fresh runtime's turn is, from the conversation as the channel showed it
-    (``channel_view``). Any other turn, from the session's own prior turns."""
+    whether it is answered apart from its runtime's history. A turn answered apart
+    (:func:`_answered_apart`, said to the turn's work: ``memory_writes.answers_apart``), on the
+    built-in runtime, is: the runtime's earlier turns hold what the channel never showed them
+    (``NativeRuntime._history_for_turn``), so it is built as a fresh runtime's turn is, from the
+    conversation as the channel showed it (``channel_view``). Any other turn, from the session's
+    own prior turns."""
     from personalclaw.providers import model_efforts
 
-    apart = bool(memory_writes.asker()) and model_efforts.native_runtime(provider_kind)
+    owed = _answered_apart(session, in_flight, depth)
+    memory_writes.answers_apart(owed)
+    apart = owed and model_efforts.native_runtime(provider_kind)
     transcript = (channel_view if apart else prior_turns_transcript)(
         session, in_flight, nested=depth > 0
     )

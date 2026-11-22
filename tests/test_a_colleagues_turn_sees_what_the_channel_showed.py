@@ -81,6 +81,22 @@ async def test_a_colleagues_turn_holds_none_of_her_turns_calls(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_a_thread_only_he_wrote_in_goes_on_as_his(tmp_path, monkeypatch):
+    """A conversation every turn of which he asked for is his: his next turn is answered from it
+    as it is, the call his own turn made with it. 🔴 Red before: every turn he asked for was
+    answered apart from it, so a conversation of his own lost what his turns had read."""
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        gw.notes.write_text(f"# Notes\n\n- {NOTED}\n", encoding="utf-8")
+        gw.agent.calls.append(("read_file", {"path": "notes.md"}))
+        await gw.say(COLLEAGUE, "Read the team notes, please.")
+        assert NOTED in gw.agent.told(), "the control: his call read the file"
+
+        gw.agent.calls.append([])
+        await gw.say(COLLEAGUE, "And what did they say about the key?")
+        assert NOTED in _handed(gw)
+
+
+@pytest.mark.asyncio
 async def test_a_colleagues_turn_holds_none_of_a_helpers_report(tmp_path, monkeypatch):
     """A helper's report to her chat starts a turn of its own, which the channel never showed: his
     turn is shown a stub that names it. 🔴 Red before: the report's turn was in the history his
@@ -159,3 +175,39 @@ def test_the_channel_view_shows_what_the_channel_showed_and_stubs_the_rest():
     ):
         assert stub in said, stub
     assert "What's the plan?" not in said, "the in-flight message is cut off"
+
+
+def test_a_conversation_holds_a_turn_someone_else_asked_for():
+    """Whose turns a conversation holds, read off the rows that start them: his alone, or one of
+    hers, a helper's report's or another person's beside his."""
+    from personalclaw.turn_source import arrived_on, holds_a_turn_not_asked_by
+
+    his = arrived_on("1790800000.000100", "U0JONAS", "teamchat")
+    ana = arrived_on("1790800000.000100", "U0ANAOTHR", "teamchat")
+    mine = [
+        _row("user", "Read the team notes.", **his),
+        _row("assistant", "Noted."),
+        _row("tool", "x"),
+    ]
+    assert not holds_a_turn_not_asked_by(mine, his)
+    assert holds_a_turn_not_asked_by([*mine, _row("user", "Thanks!")], his), "hers"
+    assert holds_a_turn_not_asked_by([*mine, _row("subagent", REPORT)], his), "a report's"
+    assert holds_a_turn_not_asked_by([*mine, _row("user", "Hi", **ana)], his), "another's"
+
+
+def test_a_turn_whose_channel_owner_cant_be_read_is_someone_elses(monkeypatch):
+    """Closed: with the channel's owner unreadable, even his own earlier turn counts as someone
+    else's, so his next turn is answered apart. 🔴 Red before: there was no such reading."""
+    from personalclaw.config import credentials
+    from personalclaw.turn_source import arrived_on, holds_a_turn_not_asked_by
+
+    his = arrived_on("1790800000.000100", "U0JONAS", "teamchat")
+    mine = [_row("user", "Read the team notes.", **his), _row("assistant", "Noted.")]
+
+    def _unreadable(_channel: str) -> str:
+        raise OSError("the credential store could not be read")
+
+    monkeypatch.setattr(credentials, "owner_id_for", _unreadable)
+    assert holds_a_turn_not_asked_by(mine, his), "an unreadable owner"
+    monkeypatch.setattr(credentials, "owner_id_for", lambda _channel: "")
+    assert holds_a_turn_not_asked_by(mine, his), "no owner kept"
