@@ -49,10 +49,12 @@ async def test_the_status_route_says_it_too(monkeypatch):
         manager._agents[agent_id] = _helper(agent_id, stopped=stopped)
     app = web.Application()
     app["state"] = SimpleNamespace(subagents=manager)
-    # The chat reads its own helpers: who may read which is held by its own tests.
-    monkeypatch.setattr(
-        messaging, "reader_of", lambda _r, _s: SimpleNamespace(reads=lambda _k: True)
-    )
+    # The owner reads every helper, from her own pages: who may read which is held by its own
+    # tests. A real reader, so the route asks it what it asks every reader (who asked for the work
+    # it reads as: ``subagent_reach.asked_by_someone_else``).
+    from personalclaw.subagent_reach import Reader
+
+    monkeypatch.setattr(messaging, "reader_of", lambda _r, state: Reader(state, everyone=True))
 
     async def status(agent_id: str) -> dict:
         request = make_mocked_request(
