@@ -185,16 +185,27 @@ def plan_images(
     return list(updates.values()), problems
 
 
+def _bare(digest: str) -> str:
+    """A digest's hex alone, as a rail's control keeps it (``_UBUNTU_INDEX = "c098…"``)."""
+    return digest.removeprefix("sha256:")
+
+
+def _hex_run(value: str) -> re.Pattern[str]:
+    """*value* as a whole run of hex, so a longer value that only holds it is left alone."""
+    return re.compile(rf"(?<![0-9a-f]){re.escape(value)}(?![0-9a-f])")
+
+
 def edit(text: str, actions: Sequence[ActionUpdate], images: Sequence[ImageUpdate]) -> str:
     """*text* with every copy of each old pin moved: an action's SHA, and the release comment
-    beside it; an image's index and its platform manifest."""
+    beside it; an image's index and its platform manifest, with its ``sha256:`` or as bare hex."""
     for a in actions:
         text = re.sub(
             rf"{a.old_sha}(\s*#\s*){re.escape(a.old_tag)}\b", rf"{a.new_sha}\g<1>{a.new_tag}", text
         )
         text = text.replace(a.old_sha, a.new_sha)
     for i in images:
-        text = text.replace(i.old_index, i.new_index).replace(i.old_digest, i.new_digest)
+        for old, new in ((i.old_index, i.new_index), (i.old_digest, i.new_digest)):
+            text = _hex_run(_bare(old)).sub(_bare(new), text)
     return text
 
 
@@ -205,7 +216,9 @@ def apply(
     images: Sequence[ImageUpdate],
 ) -> list[str]:
     """Edit every tracked file under *root* that holds an old pin; the paths changed, in order."""
-    olds = [a.old_sha for a in actions] + [x for i in images for x in (i.old_index, i.old_digest)]
+    olds = [a.old_sha for a in actions] + [
+        _bare(x) for i in images for x in (i.old_index, i.old_digest)
+    ]
     changed: list[str] = []
     for rel in tracked:
         path = root / rel
