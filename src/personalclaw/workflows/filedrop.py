@@ -127,7 +127,7 @@ def parse_policy(spec: dict[str, Any] | None) -> DropPolicy:
 
 
 def approval_required(
-    policy: DropPolicy, mime: str, *, confirmed: bool, by_app: bool = False
+    policy: DropPolicy, mime: str, *, confirmed: bool, held: str = ""
 ) -> tuple[bool, str]:
     """Whether this file still needs a human, and what the human is being asked to accept.
 
@@ -137,12 +137,14 @@ def approval_required(
     not bypass the policy. ``confirmed`` is the owner's own confirmation, never a sender's
     (``handlers.api_run_drop``).
 
-    🔴 A file an app hands a run (*by_app*) always waits for her, whatever the template
-    auto-accepts: a step reads what was dropped (``{{run.dropped}}``), and an app's own template
-    could auto-accept ``text/*`` and let in every file it sent without her.
+    🔴 A file *held* says waits for her whatever the template auto-accepts, and *held* is the
+    sentence saying whose it is (``handlers._held_for_her``): an app's, an agent's for a run that
+    is not its own chat's, any sender's but hers. A step reads what was dropped
+    (``{{run.dropped}}``), and a template could auto-accept ``text/*`` and let in every file such
+    a sender sent without her.
     """
-    if by_app:
-        return True, "a file an app hands this run waits for you: it lands only when you drop it"
+    if held:
+        return True, held
     if policy.auto_accepts(mime):
         return False, "auto-accepted by the workflow's declared MIME types"
     if confirmed:

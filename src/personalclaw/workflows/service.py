@@ -1871,7 +1871,7 @@ def accept_dropped_file(
     data: bytes,
     mime: str = "",
     confirmed: bool = False,
-    by_app: bool = False,
+    held: str = "",
 ) -> dict[str, Any]:
     """Ingest one dropped file into the run's immutable zone, gated on approval.
 
@@ -1890,7 +1890,7 @@ def accept_dropped_file(
         return _service_failure(
             "WF_DROP_DISABLED", policy.reason or "this run does not accept dropped files"
         )
-    needs, why = filedrop.approval_required(policy, mime, confirmed=confirmed, by_app=by_app)
+    needs, why = filedrop.approval_required(policy, mime, confirmed=confirmed, held=held)
     if needs:
         return _service_failure(
             "WF_DROP_APPROVAL_REQUIRED",
