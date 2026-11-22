@@ -1,6 +1,6 @@
 """What ``test_session_acquisition_census.py`` shares with the suite's other tests.
 
-``REACQUIRES, _census, _functions``.
+``REACQUIRES, _census, _functions, acquires``.
 
 Kept here, beside the suite, so a test that is not a rail can import them without importing
 a rail (rails live in ``tests/rails/``, which only the rails job collects)."""
@@ -41,9 +41,23 @@ def _parsed(source: str | ast.Module) -> ast.Module:
     return source if isinstance(source, ast.Module) else ast.parse(source)
 
 
+def acquires(node: ast.AST) -> bool:
+    """Whether *node* acquires a session: a call of ``….get_or_create(…)``, or one that binds it
+    for later (``functools.partial(….get_or_create, …)``), whose call acquires with what the bind
+    holds. A bound acquisition counts where it is bound, once, however often it is called."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Attribute) and func.attr == "get_or_create":
+        return True
+    named = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+    bound = node.args[0] if node.args else None
+    return named == "partial" and isinstance(bound, ast.Attribute) and bound.attr == "get_or_create"
+
+
 def acquisitions(source: str | ast.Module) -> list[str]:
-    """The qualified name of the function around each ``….get_or_create(…)`` in *source* (text,
-    or its tree), once per call."""
+    """The qualified name of the function around each acquisition in *source* (text, or its
+    tree): each ``….get_or_create(…)`` call and each bind of it (:func:`acquires`), once each."""
     tree = _parsed(source)
     out: list[str] = []
     for qualname, func in _functions(tree).items():
@@ -54,12 +68,7 @@ def acquisitions(source: str | ast.Module) -> list[str]:
             for n in ast.walk(f)
         }
         for node in ast.walk(func):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "get_or_create"
-                and id(node) not in inner
-            ):
+            if acquires(node) and id(node) not in inner:
                 out.append(qualname)
     return out
 

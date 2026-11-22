@@ -54,6 +54,7 @@ Four mechanisms clean up processes. They are complementary — not redundant.
 """
 
 import asyncio
+import functools
 import logging
 import os
 import signal
@@ -356,9 +357,14 @@ async def _hold_to_its_mode(sess: "_Session", asked: dict[str, Any]) -> None:
     sess.asked_mode = mode
 
 
-def _rebuild_reason(sess: "_Session", asked: dict[str, Any]) -> str:
+def _rebuild_reason(sess: "_Session", asked: dict[str, Any], apart: bool = False) -> str:
     """Why *sess*'s cached runtime cannot answer the turn *asked* (``get_or_create``'s factory
-    arguments) acquires it for, or ``""`` when it can."""
+    arguments) acquires it for, or ``""`` when it can. *apart* is whether that turn runs on a
+    runtime built for it alone (``get_or_create``'s ``asked_apart``)."""
+    if apart:
+        return "someone other than the owner asked for this turn"
+    if sess.apart:
+        return "someone other than the owner asked for the turn it was built for"
     if sess.forgotten:
         return "the conversation it holds was let go"
     if sess.definition_stale:
@@ -462,6 +468,10 @@ class _Session:
     # acquired for or a turn since; ``None`` while none has named one. A turn asking another tells
     # the CLI before its prompt goes out (:func:`_hold_to_its_mode`).
     asked_mode: str | None = None
+    #: Built for a turn someone other than the owner asked for (``get_or_create``'s
+    #: ``asked_apart``): it opened a conversation of its own, whose id is never kept for the key,
+    #: and it answers no other turn.
+    apart: bool = False
     #: The app whose code asked for this runtime, ``""`` for core's own: read from the code that
     #: made the session (``app_code.owner``), as the session is made in the ``get_or_create`` that
     #: code awaits. What an app reports about the runtime is recorded as this app's, never as one
@@ -1080,6 +1090,44 @@ class SessionManager:
         unattended = bool(extra_factory_kwargs.get("unattended")) or is_unattended_session(key)
         guard_unattended_spawn(runtime_id, unattended=unattended)
 
+    async def _claim_pooled(
+        self,
+        provider: ModelProvider,
+        key: str,
+        channel_id: str | None,
+        agent: str | None,
+        model: str | None,
+    ) -> None:
+        """Make the warm-pool *provider* ``get_or_create`` claimed *key*'s: re-keyed, tied to the
+        session, and switched to *model* when that is not the pool's. A claim that fails kills it.
+        """
+        try:
+            # Re-key pooled provider with actual session parameters via the
+            # AgentProvider capability surface (set_session_key/set_model) so
+            # any stateful runtime — ACP or native — claims cleanly.
+            from personalclaw.agents.provider import AgentProvider
+
+            if isinstance(provider, AgentProvider):
+                provider.set_session_key(key, channel_id)
+                # Its agent CLI's tool server was started before any chat, so it learns the
+                # one it now serves from this tie, whichever surface claimed it.
+                tie_to_session(provider.pid, key)
+                # Switch model post-claim if caller requested non-default
+                if model:
+                    _pool_model = (
+                        self._resolve_agent_model(self._pool_agent) if self._pool_agent else None
+                    )
+                    if model and _pool_model and model != _pool_model:
+                        await provider.set_model(model)
+                        logger.info("Pool post-claim: switched model to %s", model)
+            logger.info(
+                "Claimed warm-pool process for %s (agent=%s)", key, agent or self._pool_agent
+            )
+            self._schedule_replenish()
+        except (asyncio.CancelledError, Exception):
+            _sync_kill_provider(provider)
+            raise
+
     async def get_or_create(
         self,
         key: str,
@@ -1091,6 +1139,7 @@ class SessionManager:
         extra_env: dict[str, str] | None = None,
         *,
         approval_source: Callable[[], str] | None = None,
+        asked_apart: bool = False,
         **extra_factory_kwargs: Any,
     ) -> tuple[ModelProvider, bool, bool]:
         """Return ``(ModelProvider, is_new, resumed)`` for *key*, creating if needed.
@@ -1116,8 +1165,26 @@ class SessionManager:
             model: Optional model override for the session.
             approval_source: Read at each approval decision instead of ``approval_policy``
                 (:func:`_push_approval_policy`), for a session whose grants follow the settings.
+            asked_apart: Someone other than the owner asked for the turn, whose runtime keeps
+                its own conversation (an agent CLI's): it gets a runtime built for it alone,
+                which resumes nothing and whose session id is not kept for *key*, so it holds
+                none of the turns before. The turn after it gets a rebuilt one, which resumes
+                *key*'s own.
         """
         approval_policy = _bounded_policy(approval_policy, key=key)
+        again = functools.partial(
+            self.get_or_create,
+            key,
+            agent=agent,
+            channel_id=channel_id,
+            approval_policy=approval_policy,
+            model=model,
+            cwd=cwd,
+            extra_env=extra_env,
+            approval_source=approval_source,
+            asked_apart=asked_apart,
+            **extra_factory_kwargs,
+        )
 
         # Fast path: existing session — hold lock only briefly
         stale_provider = None
@@ -1186,7 +1253,7 @@ class SessionManager:
             except BaseException:
                 sess.semaphore.release()
                 raise
-            stale = _rebuild_reason(sess, extra_factory_kwargs)
+            stale = _rebuild_reason(sess, extra_factory_kwargs, asked_apart)
             if not stale:
                 try:
                     await _hold_to_its_mode(sess, extra_factory_kwargs)
@@ -1203,21 +1270,12 @@ class SessionManager:
             # with, and this one — the first to start after — gets a runtime built from how things
             # now read. The session map is kept, as for a dead provider, so an ACP runtime resumes
             # its conversation and a native chat restores its own; a conversation let go has no id
-            # left in it to resume from.
+            # left in it to resume from. Someone other than the owner asked for this turn, or for
+            # the one it was built for: what it holds is not this turn's to read.
             sess.semaphore.release()
             await self._drop_session(key, sess)
             logger.info("Session %s: %s — rebuilding its runtime", key, stale)
-            return await self.get_or_create(
-                key,
-                agent=agent,
-                channel_id=channel_id,
-                approval_policy=approval_policy,
-                model=model,
-                cwd=cwd,
-                extra_env=extra_env,
-                approval_source=approval_source,
-                **extra_factory_kwargs,
-            )
+            return await again()
 
         # ── Unattended adapter-verification gate ──
         # Past this line the call CREATES a runner — it claims a warm/pooled process,
@@ -1239,10 +1297,11 @@ class SessionManager:
         # no longer the only way to be seen as unattended.
         self._guard_unattended_runner(key, agent, extra_factory_kwargs)
 
-        # Check session map for resume — only for long-lived sessions
+        # Check session map for resume — only for long-lived sessions, and not for a turn whose
+        # runtime holds none of the turns before it.
         resume_sid: str | None = None
         is_stateless = session_keys.is_stateless(key)
-        if not is_stateless:
+        if not is_stateless and not asked_apart:
             resume_sid = self._session_map.get(key)
 
         # Try warm pool first (no resume — pooled processes have no prior session)
@@ -1267,34 +1326,7 @@ class SessionManager:
         )
         if pooled is not None:
             provider = pooled
-            try:
-                # Re-key pooled provider with actual session parameters via the
-                # AgentProvider capability surface (set_session_key/set_model) so
-                # any stateful runtime — ACP or native — claims cleanly.
-                from personalclaw.agents.provider import AgentProvider
-
-                if isinstance(provider, AgentProvider):
-                    provider.set_session_key(key, channel_id)
-                    # Its agent CLI's tool server was started before any chat, so it learns the
-                    # one it now serves from this tie, whichever surface claimed it.
-                    tie_to_session(provider.pid, key)
-                    # Switch model post-claim if caller requested non-default
-                    if model:
-                        _pool_model = (
-                            self._resolve_agent_model(self._pool_agent)
-                            if self._pool_agent
-                            else None
-                        )
-                        if model and _pool_model and model != _pool_model:
-                            await provider.set_model(model)
-                            logger.info("Pool post-claim: switched model to %s", model)
-                logger.info(
-                    "Claimed warm-pool process for %s (agent=%s)", key, agent or self._pool_agent
-                )
-                self._schedule_replenish()
-            except (asyncio.CancelledError, Exception):
-                _sync_kill_provider(provider)
-                raise
+            await self._claim_pooled(provider, key, channel_id, agent, model)
         else:
             # When concurrent sessions are enabled for this (proven-concurrent) ACP
             # runtime and there is no resume to honor, open a session on the runtime's
@@ -1397,6 +1429,7 @@ class SessionManager:
                         agent=agent or "",
                         built_posture=_built_posture(extra_factory_kwargs),
                         asked_mode=_mode_asked(extra_factory_kwargs),
+                        apart=asked_apart,
                     )
                     _push_approval_policy(provider, approval_policy, approval_source)
                     self._sessions[key] = sess
@@ -1408,11 +1441,11 @@ class SessionManager:
                         len(self._sessions),
                     )
 
-                    # Save session mapping for long-lived sessions. session_id is an
-                    # AgentProvider capability (ACP: the CLI's session UUID; native:
-                    # its own id) — read it through the public accessor.
+                    # Save session mapping for long-lived sessions, but not one built for a turn
+                    # apart (``asked_apart``). session_id is an AgentProvider capability (ACP: the
+                    # CLI's session UUID; native: its own id) — read it through the public accessor.
                     _cwd_str = str(provider._work_dir) if hasattr(provider, "_work_dir") else ""
-                    if not is_stateless and isinstance(provider, AgentProvider):
+                    if not (is_stateless or asked_apart) and isinstance(provider, AgentProvider):
                         sid = provider.session_id
                         if sid:
                             self._session_map.set(key, sid, cwd=_cwd_str)
@@ -1435,6 +1468,10 @@ class SessionManager:
 
         # Race-loser reuse: acquire the winner's per-session semaphore OUTSIDE the
         # lock (it may be mid-turn) so we never block other get_or_create callers.
+        if race_loser is not None and (asked_apart or race_loser.apart):
+            # Built for another turn than this one, of which one is someone else's: acquired
+            # again, it is rebuilt for this turn once it holds no turn (``_rebuild_reason``).
+            return await again()
         if race_loser is not None:
             await race_loser.semaphore.acquire()
             self._stopped_turns.discard(key)
@@ -1730,7 +1767,7 @@ class SessionManager:
                 _cwd_str = (
                     str(sess.provider._work_dir) if hasattr(sess.provider, "_work_dir") else ""
                 )
-                if isinstance(sess.provider, AgentProvider) and not sess.forgotten:
+                if isinstance(sess.provider, AgentProvider) and not (sess.forgotten or sess.apart):
                     sid = sess.provider.session_id
                     if sid and not session_keys.is_stateless(key):
                         self._session_map.set(key, sid, cwd=_cwd_str)

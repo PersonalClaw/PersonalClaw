@@ -89,6 +89,8 @@ class _Agent:
 
     supports_tools = True
     _model = "scripted"
+    #: What it answers once its calls are made.
+    answer = "Noted."
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict] | list[tuple[str, dict]]] = []
@@ -109,7 +111,7 @@ class _Agent:
                 tool_input=json.dumps(arguments),
             )
         else:
-            yield AgentEvent(kind=EVENT_TEXT_CHUNK, text="Noted.")
+            yield AgentEvent(kind=EVENT_TEXT_CHUNK, text=self.answer)
         yield AgentEvent(kind=EVENT_COMPLETE, input_tokens=10, output_tokens=3)
 
     def told(self) -> str:

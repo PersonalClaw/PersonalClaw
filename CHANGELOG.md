@@ -14,6 +14,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Settings › Diagnostics says how long the gateway keeps work waiting: its loop's lag and how long work waits for a worker thread, now, usually and at their worst in the last minute and ten.**
 - **A chat's `work_phase` frame says what its tool call does: while the turn is in `tool`, `act` is `read`, `edit` or `run`, from the kind an agent CLI declares or the name of one of PersonalClaw's own tools, and `null` when the call does not say. It is the word alone, never a path or a command.**
 - **A weekly pin refresh opens its own pull request: each workflow container whose tag has moved, and each action's newest week-old release, moved everywhere the tree holds them, through the pin-refresh App's token. It merges like any other pull request, on the normal checks, and the App is no bypass actor.**
+- **For apps, `personalclaw.sdk.channel.SessionManager.get_or_create` takes a keyword-only `asked_apart` (default `False`): `True` asks for a runtime built for the one turn alone, which resumes no conversation and whose session id is not kept, as core asks for a turn someone other than the owner asked for on an agent CLI. `slack-channel` calls it and needs no change.**
 
 ### Changed
 
@@ -97,6 +98,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A long conversation that other people write in is condensed from your messages and the agent's only. Each message someone else sent follows the summary word for word, as theirs, so a summary never words their request as yours. A summary written before this is not read for a span that holds one.**
 - **An agent's command that gives git an author or committer of its own, such as `git -c user.email=…`, `git commit --author`, `GIT_AUTHOR_EMAIL=…` or a change to git's settings, is asked about whatever the chat or its agent allows, and refused in an unattended run. And a helper's report names each commit it made whose author, committer or sign-off is anyone but who git commits as in its folder, so the chat that started it tells you instead of calling the commit signed.**
 - **A turn someone other than you asked for, such as a colleague's message in a shared thread, reads nothing of your Inbox and no helper's report, as it reads none of your memory: a helper that worked for your own turn may hold what it read of your memory. It is told who asked, on the built-in agent, the tool route and an agent CLI alike.**
+- **A colleague's turn in a shared thread is answered from the conversation as the channel showed it: what was said there and the replies the thread was shown, with a short note where a helper's report, a scheduled result, a reply the thread wasn't shown or anything else the channel never showed arrived. The owner's own turns there, as her model read them, and the calls they made are no longer part of it.**
+- **The same holds when the chat runs on an agent CLI: a colleague's turn is sent to a CLI session of its own, handed the conversation as the channel showed it, instead of the session that holds the owner's turns. The owner's next turn goes back to her own session.**
 
 ## [0.3.9] — 2026-11-16
 

@@ -18,6 +18,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from session_acquisitions import acquires
+
 #: Surfaces a person is working in. The daily cap is for automations; these stay on the chat
 #: binding, as a chat does. Keyed by (file under ``src/personalclaw``, function qualname).
 INTERACTIVE: dict[tuple[str, str], str] = {
@@ -130,7 +132,10 @@ class _Census(ast.NodeVisitor):
 
 
 def _acquires(call: ast.Call) -> bool:
-    return isinstance(call.func, ast.Attribute) and call.func.attr == "get_or_create"
+    """A runtime acquisition: ``….get_or_create(…)``, or a bind of it for later
+    (``functools.partial(….get_or_create, …)``), read by the keywords the bind holds
+    (``session_acquisitions.acquires``)."""
+    return acquires(call)
 
 
 def _resolves(call: ast.Call) -> bool:

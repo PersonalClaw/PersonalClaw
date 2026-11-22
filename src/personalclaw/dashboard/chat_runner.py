@@ -55,6 +55,7 @@ from personalclaw.dashboard import (
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
+    channel_view,
     in_flight_index,
     prior_turns_transcript,
     save_session_to_history,
@@ -203,6 +204,7 @@ from personalclaw.turn_source import (
     ASKED_FOR_BY,
     FROM_OUTSIDE,
     asked_by,
+    holds_a_turn_not_asked_by,
     named,
     shared_source,
 )
@@ -743,6 +745,32 @@ def _flush_segment(
                 "content": redacted,
             },
         )
+
+
+async def _mirror_the_answer(
+    session: _ChatSession, delivery: Any, channel: str, thread: str, text: str
+) -> None:
+    """Mirror the turn's answer *text* to the channel *thread* *session* is linked to, and mark
+    the answer row the thread was shown (``turn_source.SHOWN_ON_CHANNEL``): the answers a turn
+    someone other than the owner asked for is built with (``channel_view``). Only the turn's last
+    segment is mirrored, and a mirror that failed marks nothing. The 5 s flush writes the mark."""
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL
+
+    try:
+        await delivery.deliver_chat_mirror(channel, text, thread)
+    except Exception:
+        logger.debug("Failed to mirror response to channel", exc_info=True)
+        return
+    # The row `_flush_segment` settled this text as, redacted as it is kept.
+    kept = redact_credentials(redact_exfiltration_urls(text)[0])[0]
+    for row in reversed(session.messages):
+        if row.get("role") != "assistant":
+            continue
+        if row.get("content") == kept:
+            meta = row.get("meta")
+            row["meta"] = {**(meta if isinstance(meta, dict) else {}), SHOWN_ON_CHANNEL: True}
+            session._dirty = True
+        return
 
 
 def _log_turn_failure(session_key: str, exc: BaseException) -> None:
@@ -1492,6 +1520,57 @@ def _as_quoted(name: str) -> str:
     return " ".join(name.split()).replace("`", "'")[:80]
 
 
+def _answered_apart(session: _ChatSession, in_flight: str, depth: int) -> bool:
+    """Whether *session*'s turn now being sent is answered apart from what its runtime holds of the
+    conversation before it: someone other than the owner asked for it (``memory_writes.asker``),
+    and a turn before it was asked for by someone else than they
+    (``turn_source.holds_a_turn_not_asked_by``): the owner, another person, or the automation,
+    report or nudge that started it. A conversation every turn of which they asked for (a
+    program's own conversation through the OpenAI-compatible door, a thread only they wrote in) is
+    theirs, and goes on as it is.
+
+    Read off the chat's own rows, while a turn it lets go on is sent all its runtime holds. That
+    holds only while the runtime keeps no turn the rows do not: nothing trims the buffer, and a
+    rewind puts back files, not turns. A change that drops turns from the rows and not from the
+    runtime (a trim, an edit-and-resend, a fork that keeps the runtime) must answer apart here, or
+    the turn after it reads turns this never saw."""
+    asker = memory_writes.asker()
+    if not asker:
+        return False
+    at = in_flight_index(session, in_flight, nested=depth > 0)
+    before = session.messages if at is None else session.messages[:at]
+    return holds_a_turn_not_asked_by(before, asker)
+
+
+def _asks_apart(session: _ChatSession, in_flight: str, depth: int, provider_kind: str) -> bool:
+    """Whether the turn now acquiring its runtime gets one built for it alone
+    (``SessionManager.get_or_create``'s ``asked_apart``): it is answered apart
+    (:func:`_answered_apart`), and the runtime keeps its own conversation, as an agent CLI's
+    session does, which holds every earlier turn as its model read it. The built-in runtime's
+    turn is answered apart from its history where it runs (``NativeRuntime._history_for_turn``)."""
+    from personalclaw.providers import model_efforts
+
+    return _answered_apart(session, in_flight, depth) and not model_efforts.native_runtime(
+        provider_kind
+    )
+
+
+def _turn_history(session: _ChatSession, in_flight: str, depth: int) -> tuple[list[dict], bool]:
+    """What *session*'s turn now being sent is built with of the conversation before it, and
+    whether it is answered apart from its runtime's history. A turn answered apart
+    (:func:`_answered_apart`, said to the turn's work: ``memory_writes.answers_apart``) is: the
+    runtime's earlier turns hold what the channel never showed them, so it is built as a fresh
+    runtime's turn is, from the conversation as the channel showed it (``channel_view``), on the
+    built-in runtime (``NativeRuntime._history_for_turn``) and on an agent CLI's session opened
+    for it alone (:func:`_asks_apart`). Any other turn, from the session's own prior turns."""
+    apart = _answered_apart(session, in_flight, depth)
+    memory_writes.answers_apart(apart)
+    transcript = (channel_view if apart else prior_turns_transcript)(
+        session, in_flight, nested=depth > 0
+    )
+    return transcript, apart
+
+
 @memory_writes.runs_as_its_session
 @_says_its_phases
 async def run_chat(
@@ -2222,6 +2301,7 @@ async def run_chat(
             reasoning_effort_override=turn_effort or None,
             provider_kind=provider_kind or None,
             acp_mode=acp_mode or None,
+            asked_apart=_asks_apart(session, _in_flight_text, _prompt_depth, provider_kind),
             # Brownfield Code/Goal-Loop workers: let the native file tools also reach
             # the project files dir (engine files live outside the workspace cwd).
             extra_tool_roots=list(getattr(session, "_extra_tool_roots", []) or []) or None,
@@ -2331,17 +2411,17 @@ async def run_chat(
         # transcript the bootstrap consumes (one source, so the label cannot drift
         # from the behaviour it names): THIS session's turns before the one being
         # sent — never the in-flight message, never another session's.
-        _prior_transcript = prior_turns_transcript(
-            session, _in_flight_text, nested=_prompt_depth > 0
-        )
+        # Built as a fresh runtime's turn when someone else asked for it (`_turn_history`).
+        _prior_transcript, _apart = _turn_history(session, _in_flight_text, _prompt_depth)
+        _fresh = is_new or _apart
         _restores = (
-            is_new
+            _fresh
             and not resumed
             and not is_command
             and not _carrying_on
             and bool(state.context_builder)
         )
-        if _restores and _prior_transcript:
+        if _restores and _prior_transcript and not _apart:
             # What the fresh runtime is handed of those turns: while the chat's background
             # summary (`bg_compress`) still describes its oldest span, the summary stands in
             # for that span. The chat itself — the buffer and the file — is never shortened.
@@ -2671,7 +2751,7 @@ async def run_chat(
                 assemble_context,
                 state.context_builder,
                 message,
-                is_new_session=is_new,
+                is_new_session=_fresh,
                 session_key=session_key,
                 agent=provider_agent or session.agent or None,
                 resumed=resumed,
@@ -4714,12 +4794,9 @@ async def run_chat(
         # Rendering (mrkdwn, OPTIONS blocks) is the channel's concern — delegate to
         # the active ChannelDelivery so the dashboard imports no channel code.
         if assistant_text and _mirror_delivery and _mirror_thread and _mirror_chan:
-            try:
-                await _mirror_delivery.deliver_chat_mirror(
-                    _mirror_chan, assistant_text, _mirror_thread
-                )
-            except Exception:
-                logger.debug("Failed to mirror response to channel", exc_info=True)
+            await _mirror_the_answer(
+                session, _mirror_delivery, _mirror_chan, _mirror_thread, assistant_text
+            )
     # Every handler below settles the answer streamed so far BEFORE it appends its own row,
     # so the partial answer the user was reading is kept, and sits ahead of the error that
     # explains why it stops.
