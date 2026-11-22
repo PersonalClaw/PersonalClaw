@@ -10,7 +10,7 @@ import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
 import { confirm, promptForm } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
-import { fmtElapsed, isPrelaunch, isTerminal, itemProgress, nodeLabel, nodeLook, runLook, stepName } from './workflowMeta'
+import { fmtElapsed, isNodeTerminal, isPrelaunch, isTerminal, itemProgress, nodeLabel, nodeLook, runLook, stepName } from './workflowMeta'
 import { PolicyOverridesPanel, overlayOf } from './PolicyOverridesPanel'
 import { byInstancePath } from './instancePathOrder'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
@@ -360,6 +360,9 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // tree shape — a flat list of twenty node ids is unreadable on a real workflow. Numerically,
   // matching the engine: a string sort puts item 10 ahead of item 2 (issue #568).
   const nodes = useMemo(() => [...(run?.nodes ?? [])].sort(byInstancePath), [run])
+  // What the Document panel reads again on: a step settling (when its document is kept) and the run
+  // ending. A count, so a refetch that changed nothing reads nothing.
+  const deliverableKey = run ? `${run.status}:${nodes.filter((n) => isNodeTerminal(n.state)).length}` : ''
 
   // What the run last showed of the inspected node: its latest instance (the one the inspector
   // reads) and that instance's state. The drawer reads again whenever it changes, so a drawer opened
@@ -917,7 +920,12 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 navigating between runs refetches rather than showing the previous run's document,
                 which on a reading surface would be the worst kind of wrong: plausible prose about
                 someone else's work. Below the steps because it is what they produced. */}
-            <DeliverablePanel key={`deliverable:${run.run_id}`} runId={runId} />
+            <DeliverablePanel
+              key={`deliverable:${run.run_id}`}
+              runId={runId}
+              refreshKey={deliverableKey}
+              ended={isTerminal(run.status)}
+            />
           </div>
         )}
       </div>
