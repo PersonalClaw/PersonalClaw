@@ -1059,6 +1059,11 @@ def _draft_conflict_proposals(home: Path) -> None:
 # ── the loop ───────────────────────────────────────────────────────────────────
 
 
+#: A graph-maintenance run this long is logged, as a warning, with each pass's time, slowest
+#: first.
+SLOW_MAINTENANCE_SECS = 5.0
+
+
 def _tick_graph_maintenance() -> None:
     """One graph-maintenance tick. Never raises; logs only when something ran.
 
@@ -1093,6 +1098,17 @@ def _tick_graph_maintenance() -> None:
         )
     if result.total:
         logger.info("graph maintenance processed %d unit(s): %s", result.total, result.per_pass)
+    took = sum(result.per_pass_secs.values())
+    if took >= SLOW_MAINTENANCE_SECS:
+        # Named by the pass, whatever it processed: a pass that held this process for seconds
+        # is what the owner needs named when the gateway was slow to answer, so it is a warning,
+        # which the gateway's log keeps by default (an info line is not written there).
+        slowest = sorted(result.per_pass_secs.items(), key=lambda kv: kv[1], reverse=True)
+        logger.warning(
+            "graph maintenance took %.1f s: %s",
+            took,
+            ", ".join(f"{name} {secs:.1f} s" for name, secs in slowest),
+        )
 
 
 def _tick_evals_watchdog(*, notifier=None) -> None:

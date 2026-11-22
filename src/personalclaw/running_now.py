@@ -458,6 +458,33 @@ def _triggers(started_by: set[str]) -> list[dict[str, Any]]:
     return out
 
 
+def _maintenance() -> list[dict[str, Any]]:
+    """The knowledge library's upkeep while it runs (``knowledge.maintenance.running``), named by
+    the pass it is in: on a large library a pass holds this process's interpreter for seconds,
+    and the owner sees what is running while the gateway is slow to answer, where every other
+    piece of live work is listed."""
+    from personalclaw.knowledge import maintenance
+    from personalclaw.knowledge.maintenance_passes import PASS_LABELS
+
+    now = maintenance.running()
+    if now is None:
+        return []
+    return [
+        _row(
+            None,
+            work=work_ref("maintenance", "knowledge"),
+            kind="maintenance",
+            name="Tidying the knowledge library",
+            agent="",
+            started_at=_iso(now.since),
+            route="#/knowledge",
+            session="",
+            fallback=(WorkPhase.THINKING, PASS_LABELS.get(now.step, now.step)),
+            order=float(now.since),
+        )
+    ]
+
+
 # ── A webhook's turns ───────────────────────────────────────────────────────────────────────
 
 
@@ -701,6 +728,7 @@ def read(snap: Snapshot) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         rows += _triggers(started_by)
     except Exception:  # noqa: BLE001 - as above
         logger.warning("running now: could not read the triggers' fires", exc_info=True)
+    rows += _maintenance()
     now = _now()
     tail = [_finished_row(snap, held) for held in reversed(snap.tail) if now - held.at <= TAIL_SECS]
     work_project.stamp(rows, project_of)

@@ -41,6 +41,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import monotonic as _monotonic
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -215,6 +216,9 @@ class MaintenanceResult:
     snapshot: float = 0.0
     per_pass: dict[str, int] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
+    #: How long each pass took, in seconds: what names the pass when a run is slow, as the
+    #: stalls this host caused were named only from a native stack sample.
+    per_pass_secs: dict[str, float] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
@@ -226,6 +230,26 @@ class MaintenanceResult:
             return int(value)
         except (TypeError, ValueError):
             return 0
+
+
+@dataclass(frozen=True)
+class Running:
+    """The run graph maintenance is making now (:func:`running`): since when, and the pass it is
+    in and since when, for what the owner is shown while it runs (``running_now``)."""
+
+    since: float
+    step: str
+    step_since: float
+
+
+#: The run in progress, or None between runs. Written by the one thread a run is made on
+#: (:func:`execute`) and read whole by another, so a reader never sees half of one.
+_RUNNING: Running | None = None
+
+
+def running() -> Running | None:
+    """The run graph maintenance is making now, or None."""
+    return _RUNNING
 
 
 #: The registry. A dict keyed by name so a re-register REPLACES rather than appending — a
@@ -288,20 +312,29 @@ def execute(
 
     The snapshot is read first and deliberately not re-read: see the module docstring.
     """
+    global _RUNNING
     state = load_state()
     snapshot = float(state.get("dirty_ts") or (now if now is not None else time.time()))
     result = MaintenanceResult(ran=True, reason="running", snapshot=snapshot)
-    for name in sorted(_PASSES):
-        p = _PASSES[name]
-        try:
-            result.per_pass[name] = _claim_batches(
-                p, batch_size=batch_size, max_batches=max_batches
-            )
-        except Exception as exc:  # noqa: BLE001 — one job's outage is not the others' problem
-            logger.warning("graph maintenance pass %r failed: %s", name, exc, exc_info=True)
-            result.errors[name] = f"{type(exc).__name__}: {exc}"
-            if p.fatal:
-                break
+    began = time.time()
+    try:
+        for name in sorted(_PASSES):
+            p = _PASSES[name]
+            _RUNNING = Running(since=began, step=name, step_since=time.time())
+            clock = _monotonic()
+            try:
+                result.per_pass[name] = _claim_batches(
+                    p, batch_size=batch_size, max_batches=max_batches
+                )
+            except Exception as exc:  # noqa: BLE001 — one job's outage is not the others' problem
+                logger.warning("graph maintenance pass %r failed: %s", name, exc, exc_info=True)
+                result.errors[name] = f"{type(exc).__name__}: {exc}"
+                if p.fatal:
+                    break
+            finally:
+                result.per_pass_secs[name] = round(_monotonic() - clock, 3)
+    finally:
+        _RUNNING = None
     # Cleared even when a pass errored: the stamp records WHAT WAS SEEN, not what succeeded.
     # Holding the watermark open on a persistent failure would re-run the whole library every
     # tick forever, and the passes are idempotent so the next write re-triggers them anyway.

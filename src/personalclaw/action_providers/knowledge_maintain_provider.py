@@ -18,6 +18,7 @@ would destroy exactly the knowledge nobody happened to link.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -221,7 +222,11 @@ class KnowledgeConsolidateActionProvider(ActionProvider):
             return ActionResult(success=False, error=f"knowledge store unavailable: {exc}")
 
         cfg_min_hours, cfg_min_cluster = _config_gate_defaults()
-        items = _load_items(store)
+        # 🔴 Read and planned in a worker thread, resting as it goes (`consolidation.Pace`). A
+        # workflow or the Knowledge panel awaits this on the gateway's own loop, and the planner
+        # compares every pooled item with every group: on a large library, seconds to minutes in
+        # which the loop answered nothing.
+        items = await asyncio.to_thread(_load_items, store)
         unprocessed = [i for i in items if not i.consolidated and not i.is_archived]
         unattended = _is_unattended(ctx)
         hours_since_last = _hours_since_last_pass(store)
@@ -251,12 +256,14 @@ class KnowledgeConsolidateActionProvider(ActionProvider):
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        plan = consolidation.plan_consolidation(
+        plan = await asyncio.to_thread(
+            consolidation.plan_consolidation,
             items,
             vector_of=_vector_lookup(store),
             # Same precedence as `min_hours` above, and the same bug before it:
             # `knowledge.consolidate_min_cluster` had no reader either.
             min_size=_int(cfg.get("min_cluster_size"), cfg_min_cluster),
+            rest=consolidation.Pace(),
         )
 
         summaries = cfg.get("summaries")
