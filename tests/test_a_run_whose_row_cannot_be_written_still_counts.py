@@ -136,6 +136,21 @@ def test_runs_written_again_are_counted_with_the_ones_that_were_not(home, unwrit
     assert _counted(trigger, home) == 3
 
 
+def test_a_run_whose_row_cannot_even_be_made_is_counted(home, monkeypatch):
+    """A row that cannot be made (`ScheduleRun.to_dict` raising) is one that cannot be read for
+    the rule either: the run still ran, so it is counted."""
+    from personalclaw.schedule_history import ScheduleRun
+
+    def _no_row(self, *, include_trace: bool = True):
+        raise TypeError("a field that is not JSON")
+
+    trigger = _automation(home)
+    with monkeypatch.context() as patched:
+        patched.setattr(ScheduleRun, "to_dict", _no_row)
+        assert _ran(trigger) == ""
+    assert _counted(trigger, home) == 1
+
+
 def test_another_homes_history_is_not_counted_here(home, unwritable, tmp_path):
     """Kept by history folder: a run this home could not write is not another home's run."""
     trigger = _automation(home)
