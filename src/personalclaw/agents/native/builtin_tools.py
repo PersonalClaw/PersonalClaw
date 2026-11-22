@@ -31,6 +31,7 @@ from personalclaw.agents.native.decision_tool_defs import decision_tool_definiti
 from personalclaw.agents.native.inbox_tool_defs import (
     INBOX_LIST_DEFAULT,
     INBOX_LIST_MAX,
+    inbox_asked_refusal,
     inbox_list_text,
     inbox_tool_definitions,
 )
@@ -1779,12 +1780,15 @@ class NativeBuiltinToolProvider(ToolProvider):
             limit = INBOX_LIST_DEFAULT
         limit = max(1, min(limit, INBOX_LIST_MAX))
         kind = str(a.get("kind", "") or "").strip().lower()
+        from personalclaw import inbox_reach
         from personalclaw.inbox_providers.native_source import get_dashboard_state, open_inbox_items
         from personalclaw.subagent_reach import reader_of_work
 
         # As the work the call is for (`inbox_reach`): its own chat's items and those about no
         # chat; a tool you run from your own pages reads every one.
         reader = reader_of_work(get_dashboard_state(), self._session_key)
+        if asked := await asyncio.to_thread(inbox_reach.asked_by_someone_else, reader):
+            return _ok_capped(inbox_asked_refusal(asked), session_key=self._session_key)
         # On the loop, not in an executor: taking in another writer's rows changes the store.
         items = await open_inbox_items(reader, kind=kind)
         if items is None:

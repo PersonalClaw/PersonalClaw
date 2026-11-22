@@ -85,6 +85,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat read again while its answer streams (a reload, a reconnect, a rewind) keeps that answer's paragraph whole: a tool call, approval, question, segment break or thinking the chat already shows no longer splits it in two.**
 - **A chat opened, or read again after its link came back, keeps what changed about it during the read: a queued message that started is gone from the queue, a new title stays, and a side-chat answer still being written shows what it has said so far and carries on.**
 - **A turn someone else asked for, such as a colleague's message in a shared thread, reads none of your memory, nor does the work it starts. Its context carries none of your saved facts, lessons, standing instructions or earlier conversations, `memory_recall` and the other memory tools say who asked instead of answering, and your memory documents are withheld from its file tools. Your own message in the same thread reads it as before.**
+- **An agent on an agent CLI reads the Inbox, so a Morning briefing on one says what is waiting. Its tool server offers `inbox_list`, in the built-in agent's words, and reads what the built-in agent would: its own chat's items and those about no chat, never another chat's.**
 
 ### Security
 
@@ -94,6 +95,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Large merged ranges in a workbook are read within the cell cap.**
 - **A long conversation that other people write in is condensed from your messages and the agent's only. Each message someone else sent follows the summary word for word, as theirs, so a summary never words their request as yours. A summary written before this is not read for a span that holds one.**
 - **An agent's command that gives git an author or committer of its own, such as `git -c user.email=…`, `git commit --author`, `GIT_AUTHOR_EMAIL=…` or a change to git's settings, is asked about whatever the chat or its agent allows, and refused in an unattended run. And a helper's report names each commit it made whose author, committer or sign-off is anyone but who git commits as in its folder, so the chat that started it tells you instead of calling the commit signed.**
+- **A turn someone other than you asked for, such as a colleague's message in a shared thread, reads nothing of your Inbox, as it reads none of your memory. It is told who asked and that your Inbox is read only for your own requests, on the built-in agent, the tool route and an agent CLI alike.**
 
 ## [0.3.9] — 2026-11-16
 

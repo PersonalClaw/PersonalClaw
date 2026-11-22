@@ -17,13 +17,18 @@ on your Inbox page and in a tool you run from your own pages.
 Each read is made the way its caller makes it, against the gateway's real sign-in on a live server:
 the built-in agent's tool in the gateway (its chat's session bound, as its runtime binds it), and
 the tool route with the internal credential the tool server of an agent CLI and a scheduled script
-present, and with an app's token. The tool server an agent CLI runs serves no Inbox tool of its
-own, so the route is its door to the Inbox.
+present, and with an app's token, and the tool server an agent CLI runs (``personalclaw mcp-core``).
+
+🔴 That last one had no Inbox read at all: an agent on an agent CLI could not say what is waiting,
+so a Morning briefing on one could not. It now offers ``inbox_list`` with the built-in agent's
+schema and words, and the gateway makes each of its calls through the tool route, as the calling
+chat's work.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import re
 import time
@@ -113,6 +118,7 @@ async def gateway(tmp_path, monkeypatch):
     run of yours waiting on you."""
     import personalclaw.config.loader as loader
     from personalclaw.agents.native.builtin_tools import create_inbox_tools_provider
+    from personalclaw.dashboard.chat_handlers import api_chat_session_model_reach
     from personalclaw.dashboard.handlers.tools import api_tool_invoke
     from personalclaw.dashboard.handlers_inbox import api_inbox_list
     from personalclaw.dashboard.memory_write_gate import memory_write_middleware
@@ -176,10 +182,12 @@ async def gateway(tmp_path, monkeypatch):
     app["state"] = state
     app.router.add_post("/api/tools/invoke", api_tool_invoke)
     app.router.add_get("/api/inbox", api_inbox_list)
+    # What the tool server an agent CLI runs asks of each chat before it makes a call for it.
+    app.router.add_get("/api/chat/sessions/model-reach", api_chat_session_model_reach)
     client = TestClient(TestServer(app))
     await client.start_server()
     try:
-        yield _Gateway(client, state, inbox_tools, rows)
+        yield _Gateway(client, state, inbox_tools, rows, monkeypatch)
     finally:
         for task in rows.asking:
             task.cancel()
@@ -295,11 +303,14 @@ async def _raise_every_request(state: Any) -> SimpleNamespace:
 class _Gateway:
     """The reads a caller makes of the Inbox, by the path it makes them on."""
 
-    def __init__(self, client: TestClient, state: Any, inbox_tools: Any, rows: Any) -> None:
+    def __init__(
+        self, client: TestClient, state: Any, inbox_tools: Any, rows: Any, monkeypatch: Any
+    ) -> None:
         self.client = client
         self.state = state
         self.inbox_tools = inbox_tools
         self.ids: dict[str, str] = rows.ids
+        self._monkeypatch = monkeypatch
 
     async def native(self, work: str, **args: Any) -> str:
         """The built-in agent's `inbox_list` in the gateway, for the work *work* names: the runtime
@@ -332,8 +343,49 @@ class _Gateway:
         assert resp.status == 200 and body.get("ok"), body
         return str(body["output"])
 
+    async def tool_server(self, work: str, **args: Any) -> str:
+        """`inbox_list` through the tool server an agent CLI runs, for the chat *work* names (``""``
+        for none), as it dispatches a call (`mcp_core._call_as_its_session`): it asks this gateway
+        what the chat keeps, then makes the call here with the internal credential. Its calls are
+        blocking, so it runs in a thread."""
+        self.serve_as_an_agent_cli()
+        token = mcp_core.set_current_session_key(work)
+        try:
+            context = contextvars.copy_context()
+            said = await asyncio.to_thread(
+                context.run, mcp_core._call_as_its_session, "inbox_list", dict(args)
+            )
+        finally:
+            mcp_core.reset_current_session_key(token)
+        from personalclaw.tool_providers.base import ToolFailure
+
+        assert not isinstance(said, ToolFailure), said
+        return str(said)
+
+    def serve_as_an_agent_cli(self) -> list[str]:
+        """Make this process the tool server an agent CLI runs, calling this gateway; returns the
+        paths it POSTs to, as it POSTs them."""
+        base = str(self.client.make_url("")).rstrip("/")
+        posted: list[str] = []
+        post = mcp_core._post
+
+        def _post(path: str, *args: Any, **kwargs: Any) -> dict:
+            posted.append(path)
+            return post(path, *args, **kwargs)
+
+        self._monkeypatch.setattr(mcp_core, "_SERVES_AN_AGENT_CLI", True)
+        self._monkeypatch.setattr(mcp_core, "_api_base", lambda: base)
+        self._monkeypatch.setattr(mcp_core, "_internal_secret", lambda: SECRET)
+        self._monkeypatch.setattr(mcp_core, "_post", _post)
+        return posted
+
     async def read(self, path: str, work: str, **args: Any) -> str:
-        return await (self.native if path == "native" else self.route)(work, **args)
+        reader = {"native": self.native, "route": self.route, "tool_server": self.tool_server}
+        said = await reader[path](work, **args)
+        # An answer that is no Inbox read (a tool the path does not serve) says nothing of any
+        # item either: without this, a read that never happened passes as an empty Inbox.
+        assert "in the Inbox" in said, said
+        return said
 
     def shown(self, said: str) -> set[str]:
         """Which of the waiting items *said* shows, by what each says."""
@@ -352,7 +404,57 @@ class _Gateway:
         return await resp.json()
 
 
-PATHS = ["native", "route"]
+PATHS = ["native", "route", "tool_server"]
+
+
+def test_the_tool_server_an_agent_cli_runs_offers_the_inbox_read():
+    """🔴 Red before: it offered no Inbox read. It offers the built-in agent's, in its words."""
+    from personalclaw.agents.native.inbox_tool_defs import inbox_tool_definitions
+
+    [offered] = [t for t in mcp_core._aggregated_list_tools() if t["name"] == "inbox_list"]
+    [builtin] = [t for t in inbox_tool_definitions("x", {}) if t.name == "inbox_list"]
+    assert offered["description"] == builtin.description
+    assert offered["annotations"] == {"readOnlyHint": True}
+    assert set(offered["inputSchema"]["properties"]) == {"limit", "kind"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("work", [KEY[B], KEY[T], KEY[I], f"subagent:{T_HELPER}"])
+async def test_an_agent_cli_reads_exactly_what_the_built_in_agent_reads(gateway, work):
+    """The tool server's read is the built-in agent's, word for word, for the same chat: its
+    filter (``inbox_reach``, the calling chat's work and nothing more) and the masking and fencing
+    of each item's text. 🔴 Red before: it had no Inbox read."""
+    built_in = await gateway.read("native", work)
+    agent_cli = await gateway.read("tool_server", work)
+
+    assert agent_cli == built_in
+
+
+@pytest.mark.asyncio
+async def test_an_agent_cli_whose_chat_cannot_be_named_reads_nothing(gateway, monkeypatch):
+    """A call the tool server cannot name the chat of is made nowhere, and the gateway refuses an
+    internal call that names no chat. 🔴 Red before: the tool server had no Inbox read at all."""
+    from personalclaw.tool_providers.base import ToolFailure
+
+    assert "inbox_list" in {tool["name"] for tool in mcp_core._aggregated_list_tools()}
+    posted = gateway.serve_as_an_agent_cli()
+    monkeypatch.setattr(mcp_core, "_resolve_session_key", lambda: "")
+
+    said = await asyncio.to_thread(mcp_core._call_as_its_session, "inbox_list", {})
+
+    assert isinstance(said, ToolFailure) and mcp_core.UNNAMED_CALL in str(said), said
+    assert posted == [], f"a call naming no chat reached the gateway: {posted}"
+    for words in SAYS.values():
+        assert words not in said
+    # The gateway's own refusal, for a caller that holds the credential and names no chat.
+    resp = await gateway.client.post(
+        "/api/tools/invoke",
+        json={"tool": "inbox_list", "arguments": {}},
+        headers={"X-Internal-Secret": SECRET},
+    )
+    body = await resp.text()
+    assert resp.status >= 400, body
+    assert not any(words in body for words in SAYS.values()), body
 
 
 # ── another chat's requests are not there for a chat's agent ──────────────────────────────────
@@ -415,6 +517,35 @@ async def test_nothing_says_another_chats_request_is_there(gateway, path):
     empty = await gateway.read(path, KEY[Z], kind="agent_request")
     assert said == empty, said
     assert not _COUNT.match(said) and not gateway.shown(said), said
+
+
+# ── a turn someone else asked for reads none of your Inbox ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chat", [B, T])
+@pytest.mark.parametrize("path", PATHS)
+async def test_a_turn_someone_else_asked_for_reads_none_of_the_owners_inbox(gateway, path, chat):
+    """A colleague's message in a chat's shared thread starts a turn there, marked as his
+    (``session_restrictions.mark_asked_by``, as the channel's turn marks it). It reads none of your
+    memory, and none of your Inbox either, whose items about no chat (your mail, what your own runs
+    wait on) are yours: it is told who asked, in the memory refusal's words. 🔴 Red before: it read
+    what your own turn there reads, your mail and your run's question with it."""
+    from personalclaw import session_restrictions
+    from personalclaw.turn_source import arrived_on
+
+    colleague = arrived_on("1790800000.000100", "U0JONAS", "slack")
+    token = session_restrictions.mark_asked_by(KEY[chat], colleague)
+    try:
+        said = await getattr(gateway, path)(KEY[chat])
+    finally:
+        session_restrictions.unmark_asked_by(KEY[chat], token)
+
+    assert gateway.shown(said) == set(), said
+    assert not any(item in said for item in gateway.ids.values()), said
+    assert said.startswith("Nothing was read from the owner's Inbox: ") and "U0JONAS" in said, said
+    # Your own turn there, once his is over, reads as before.
+    assert gateway.shown(await gateway.read(path, KEY[chat])) == READS[KEY[chat]]
 
 
 # ── an item whose chat cannot be told is yours alone ──────────────────────────────────────────

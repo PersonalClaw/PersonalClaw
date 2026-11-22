@@ -1,8 +1,9 @@
 """The ``personalclaw-core`` MCP server rendered in ACP ``session/new`` wire shape.
 
-Prong A. The native tool registry (knowledge / tasks /
-loops / inbox / artifacts / workflows / subagents / web) reaches an ACP CLI only
-through the ``personalclaw-core`` stdio MCP server. Before this module every live
+Prong A. PersonalClaw's own tools reach an ACP CLI only through the
+``personalclaw-core`` stdio MCP server: its core tools, the artifacts, prompts, memory,
+subagents, workflows, automation and computer-use tools, and the Inbox read
+(``mcp_core._aggregated_list_tools``). Before this module every live
 ``session/new`` sent ``"mcpServers": []``, so an ACP session had none of it — the
 single largest capability cliff in the ACP parity audit (gap 1).
 

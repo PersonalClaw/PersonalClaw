@@ -796,12 +796,16 @@ GATEWAY_MAKES = {
     "video_generate",
     "visualize",
 }
+#: The built-in agent's reads the gateway makes for the tool server: what it reads (the Inbox's
+#: open items) only the gateway holds. Each is waited for as a read is.
+GATEWAY_READS = {"inbox_list"}
 
 
 def test_the_gateway_makes_exactly_the_calls_whose_work_writes_its_stores(monkeypatch):
     """Each tool the server lists is declared by its module as the gateway's or as its own; the
     ones that write a store at the top of the home are the gateway's, each waited for as its work
-    takes, and every other tool is made in the tool server as before."""
+    takes, and so are the built-in agent's reads it serves; every other tool is made in the tool
+    server as before."""
     declared: dict[str, Any] = {}
 
     def noting(name: str, *_a: Any, gateway_makes: Any = None, **_kw: Any) -> str:
@@ -814,7 +818,9 @@ def test_the_gateway_makes_exactly_the_calls_whose_work_writes_its_stores(monkey
         mcp_core._aggregated_call_tool(name, {})
 
     made_there = {name for name, waits in declared.items() if waits != "here"}
-    assert made_there == GATEWAY_MAKES, made_there ^ GATEWAY_MAKES
+    assert made_there == GATEWAY_MAKES | GATEWAY_READS, made_there ^ (GATEWAY_MAKES | GATEWAY_READS)
+    assert {declared[name] for name in GATEWAY_READS} == {mcp_core.GATEWAY_READ_TIMEOUT_SECS}
+    made_there -= GATEWAY_READS
     # A model's work is waited for as long as it takes: the four whose work is a model's, and the
     # three whose `when` a model may read.
     long_waits = {name for name in made_there if declared[name] is not None}

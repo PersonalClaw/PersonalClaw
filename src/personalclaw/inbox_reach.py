@@ -22,6 +22,11 @@ batch's request names each task in that chat's words), so it is read as the chat
 * **You read every item:** your Inbox page, and a tool you run from your own pages.
 * **Any other caller reads its own chat's items and those about no chat.** Another chat's item is
   not there for it: not listed, and not counted.
+* **Work someone other than you asked for reads none of it** (a colleague's turn in a shared
+  thread, a correspondent's, a program's, and the work it starts): what is about no chat (your
+  mail, what your own runs wait on) is yours, as your memory is, which such work reads none of
+  (``memory_reads``). Who asked is read as a memory read reads it (:func:`asked_by_someone_else`),
+  and a read for it reads nothing, closed rather than split by chat.
 * **An item whose chat cannot be told is yours alone,** and so is one that names
   ``refs.yours_alone`` (:data:`YOURS_ALONE`): the question an MCP server several chats share asks,
   and the note it leaves when nobody answers.
@@ -86,7 +91,8 @@ def _spellings(session: str) -> tuple[str, ...]:
 
 def reads(reader: Reader, item: Any) -> bool:
     """Whether *reader* reads the Inbox item *item*: every one for you; for anyone else, one about
-    no chat and one of its own chat's. One whose chat cannot be told is read by you alone.
+    no chat and one of its own chat's. One whose chat cannot be told is read by you alone. Work
+    someone other than you asked for reads none (:func:`readable`).
 
     Walks to the chat at the top of the item's work (``subagent_reach.Reader.reads``), which reads
     its records, so call it off the event loop."""
@@ -114,6 +120,21 @@ def reads(reader: Reader, item: Any) -> bool:
         return False
 
 
+def asked_by_someone_else(reader: Reader) -> dict[str, str]:
+    """Who asked for the work *reader* reads as, when it was someone other than you, read as a
+    memory read reads it (``memory_writes.asker``, else ``asker_of_sessions`` for the work and the
+    chat at its top): ``{}`` when you did or nothing says, and for a read you make from your own
+    pages. Walks the chat's records, so call it off the event loop."""
+    if reader.everyone:
+        return {}
+    from personalclaw import memory_writes
+
+    return memory_writes.asker() or memory_writes.asker_of_sessions([reader.work, reader.chat])
+
+
 def readable(reader: Reader, items: Iterable[_Item]) -> list[_Item]:
-    """The items of *items* that *reader* reads (:func:`reads`), in their order."""
+    """The items of *items* that *reader* reads (:func:`reads`), in their order: none when someone
+    other than you asked for its work (:func:`asked_by_someone_else`)."""
+    if asked_by_someone_else(reader):
+        return []
     return [item for item in items if reads(reader, item)]
