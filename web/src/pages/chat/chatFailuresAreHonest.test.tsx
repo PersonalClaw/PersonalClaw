@@ -196,7 +196,9 @@ describe('Edit & resend', () => {
     const user = userEvent.setup()
     await openChat()
     h.editResend.mockResolvedValue({ ok: true, rewound: 3 })
-    h.details.push(detail([{ role: 'user', content: 'First question, edited', ts: '2026-09-26T10:02:00Z' }], { run_state: runningState() }))
+    // Titled, so the header names the chat by its title: an untitled one is named by its first
+    // message, which is the edited one here, and the transcript's copy is the one this reads.
+    h.details.push(detail([{ role: 'user', content: 'First question, edited', ts: '2026-09-26T10:02:00Z' }], { run_state: runningState(), title: 'Trip planning' }))
     await user.click(screen.getAllByRole('button', { name: 'Edit & resend' })[0])
     const box = screen.getByRole('textbox', { name: 'Edit your message' })
     await user.clear(box)

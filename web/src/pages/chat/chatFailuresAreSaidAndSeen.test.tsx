@@ -5,6 +5,10 @@ import userEvent from '@testing-library/user-event'
 import { TURN_ERROR_WITHOUT_REASON } from './turnError'
 import { runState, runningState } from '../../test/runState'
 
+/** An untitled chat is named in its header by its first message (`lib/sessionTitle`), so a read
+ *  of that message in the transcript leaves the header's copy out. */
+const NOT_THE_NAME = { ignore: 'script, style, [data-type="title-l"]' }
+
 // ── A failed turn is SAID and SEEN, and edit & resend never silently deletes turns ───────────
 //
 // Each block below reproduces one measured defect on a fresh instance
@@ -260,7 +264,7 @@ describe('where a turn’s outcome lands', () => {
       await waitFor(() => expect(h.navigate).toHaveBeenCalledWith('chat/chat-new-1', { replace: true }))
       scrollIntoView.mockClear()
       r.rerender(tree('chat-new-1'))  // the remount the navigate causes
-      await screen.findByText('a very long paste')
+      await screen.findByText('a very long paste', NOT_THE_NAME)
 
       pushFrame('chat_message', { session: 'chat-new-1', role: 'error', content: 'Unable to allocate 26.4 GiB' })
       await screen.findByRole('alert')

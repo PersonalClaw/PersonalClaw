@@ -6,6 +6,10 @@ import { STREAM_HEAL_WARNING, STREAM_SETTLED_GRACE_MS } from './streamStall'
 import { runState, runningState } from '../../test/runState'
 import { receiptFor } from '../../test/chatReceipt'
 
+/** An untitled chat is named in its header by its first message (`lib/sessionTitle`), so a read
+ *  of that message in the transcript leaves the header's copy out. */
+const NOT_THE_NAME = { ignore: 'script, style, [data-type="title-l"]' }
+
 // ── A streamed answer renders ONCE and WHOLE, whatever React batches and whenever it reloads ──
 //
 // Two measured defects on a fresh install, both driven here through
@@ -319,7 +323,7 @@ describe("a new chat's first turn across the session-create remount", () => {
   it('keeps the just-sent message when the replacement read beats the send', async () => {
     await sendFromNewChat()
     await answerRead(0, { run_state: runState(), messages: [], stream_seq: 0 })  // read before the POST landed
-    expect(screen.getByText('Count, please.'), 'the older snapshot erased the user’s own message').toBeTruthy()
+    expect(screen.getByText('Count, please.', NOT_THE_NAME), 'the older snapshot erased the user’s own message').toBeTruthy()
     expect(primaryAction(), 'an older snapshot must not end a turn it has not seen start').toBe('Stop this turn')
     for (const f of [...chunks(WHOLE, 1), DONE]) act(() => { deliver(f) })
     paintFrames()
