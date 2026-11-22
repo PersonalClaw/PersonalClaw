@@ -7,6 +7,7 @@ hold to.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import channel_delivery_per_provider_shared
@@ -35,7 +36,10 @@ class TestNoSecondSlotComesBack:
         chat's link names, and the mirror's handle is the one that returns."""
         code = _code(_CORE / "dashboard" / "chat_runner.py")
         told = code[code.index("async def _the_thread_told(") :]
-        told = told[: told.index("\ndef ") if "\ndef " in told else len(told)]
+        # Its own body only: up to the next function, an async one too, so lines moved into a
+        # helper after it are not read as its own.
+        after = re.search(r"\n(?:async )?def ", told[1:])
+        told = told[: after.start() + 1] if after else told
         assert "provider = state.channel_provider_for(session_key)" in told
         assert "delivery = state.delivery_for(provider)" in told
         assert (
