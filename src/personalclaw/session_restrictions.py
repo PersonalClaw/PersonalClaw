@@ -127,6 +127,42 @@ def asked_by(session_key: str) -> dict[str, str] | None:
     return dict(marks[-1][1]) if marks else None
 
 
+#: Where each running turn came from, by its session's key (:func:`mark_started_on`), kept as
+#: :data:`_asked_by` is: the newest last.
+_started_on: OrderedDict[str, list[tuple[object, dict[str, str]]]] = OrderedDict()
+
+
+def mark_started_on(session_key: str, source: Mapping[str, str]) -> object:
+    """Record where the turn of ``session_key`` now running came from: the source of its message
+    (``turn_source.started_on``), ``{}`` when nothing says. A helper the turn starts, from any
+    door, reads it (``memory_writes.origin_for``). Returns the token
+    :func:`unmark_started_on` takes when that turn ends."""
+    token = object()
+    marks = _started_on.setdefault(session_key, [])
+    marks.append((token, dict(source)))
+    _started_on.move_to_end(session_key)
+    if len(_started_on) > _MAX:
+        _started_on.popitem(last=False)
+    return token
+
+
+def unmark_started_on(session_key: str, token: object) -> None:
+    """Remove the mark *token* names: its turn ended. Another turn's mark stays."""
+    marks = _started_on.get(session_key)
+    if marks is None:
+        return
+    marks[:] = [mark for mark in marks if mark[0] is not token]
+    if not marks:
+        _started_on.pop(session_key, None)
+
+
+def started_on(session_key: str) -> dict[str, str] | None:
+    """Where the turn of ``session_key`` now running came from, as the newest mark records it;
+    ``None`` when no running turn said."""
+    marks = _started_on.get(session_key)
+    return dict(marks[-1][1]) if marks else None
+
+
 def clear(session_key: str) -> None:
     """Drop all restriction flags for a session key (e.g. on session close)."""
     _temporary.pop(session_key, None)
@@ -134,3 +170,4 @@ def clear(session_key: str) -> None:
     _unreadable.pop(session_key, None)
     _own_models.pop(session_key, None)
     _asked_by.pop(session_key, None)
+    _started_on.pop(session_key, None)

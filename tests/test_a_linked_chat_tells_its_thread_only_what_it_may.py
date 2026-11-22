@@ -9,7 +9,10 @@ them, though a colleague's own turn there is no longer given any of it.
 Now the thread hears a turn its own message started, as its answer. Any other turn is told there
 only when it is the owner's own message from the dashboard and the thread is her own DM with
 PersonalClaw, which nobody else reads. A channel's conversation, a group's, and one whose readers
-can't be told stay unposted, and an internal turn is told nowhere.
+can't be told stay unposted. A helper's report is answered in the thread only when the turn that
+started the helper came from that thread's own message, or the thread is her own DM; else its
+reply goes to her DM, and stays in the dashboard when nothing reaches her. Any other internal turn
+is told nowhere.
 
 Driven as the turn drives it: the real gateway over a scratch home, the door a channel's message
 crosses, and the real turn engine on a native runtime whose model is scripted, with the channel's
@@ -22,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from test_a_standing_grant_answers_only_the_owners_own_asks import (  # noqa: F401 — autouse
+    THREAD,
     _a_shared_channel,
     _gateway,
 )
@@ -33,6 +37,7 @@ from test_a_turn_someone_else_started_changes_no_memory_on_its_own import (
 )
 
 from personalclaw import channel_delivery
+from personalclaw.turn_source import DASHBOARD_SOURCE, STARTED_ON, arrived_on
 
 #: The owner's own DM with PersonalClaw on the channel, as the channel opens it for her.
 HER_DM = "D0OWNERDM1"
@@ -40,6 +45,9 @@ HER_DM = "D0OWNERDM1"
 REPORT = "Helper report: the landlord's number is 555-0142"
 #: What she writes in the chat on the dashboard.
 NOTE = "Remind me to book the therapist for Thursday."
+#: A thread in her own DM, where a chat was before it moved to the shared thread.
+DM_THREAD = "1790800000.000555"
+COLLEAGUE = "U0JONASCOL"
 
 
 class _Thread:
@@ -57,6 +65,11 @@ class _Thread:
         self.handle.start_stream = AsyncMock(return_value="")
         self.handle.append_stream_task = AsyncMock()
         self.handle.stop_stream = AsyncMock()
+        self.handle.deliver_subagent_reply = AsyncMock()
+
+    def replied_in(self) -> list[str]:
+        """Each conversation a helper's reply was sent to apart from the thread's mirror: her DM."""
+        return [c.args[0] for c in self.handle.deliver_subagent_reply.await_args_list]
 
     def heard(self) -> list[str]:
         """Everything posted to the channel, in the order it was sent: texts, answers and
@@ -83,11 +96,12 @@ async def _a_linked_chat(gw):
     return gw.chat()
 
 
-async def _run(gw, chat, role: str, text: str) -> None:
-    """A turn *chat* runs on a *role* row of *text*, as the dashboard or the gateway starts one."""
+async def _run(gw, chat, role: str, text: str, meta: dict | None = None) -> None:
+    """A turn *chat* runs on a *role* row of *text* (and *meta*), as the dashboard or the gateway
+    starts one."""
     from personalclaw.dashboard.chat_runner import run_chat
 
-    chat.append(role, text)
+    chat.append(role, text, meta=meta)
     gw.agent.calls.append([])
     await run_chat(gw.state, chat, text)
     await _settled(gw.state)
@@ -103,16 +117,77 @@ async def test_a_turn_its_own_message_started_is_answered_on_the_thread(
     assert any("Noted." in post for post in thread.heard()), thread.heard()
 
 
-@pytest.mark.asyncio
-async def test_a_helpers_report_is_not_posted_to_the_thread(tmp_path, monkeypatch, thread):
-    """🔴 Red before: the report's turn was posted to the thread, the report and its answer."""
+async def _report(gw, chat, started_on: dict[str, str] | None) -> None:
+    """A helper's report handed back to *chat*, its start recorded as *started_on* (no record
+    at all for ``None``), as the gateway hands one back (``subagent_endings.report_meta``)."""
     from personalclaw.dashboard.state import SUBAGENT_COMPLETION_PREFIX
 
+    meta = {STARTED_ON: started_on} if started_on is not None else None
+    await _run(gw, chat, "subagent", f"{SUBAGENT_COMPLETION_PREFIX}\n{REPORT}", meta)
+
+
+@pytest.mark.asyncio
+async def test_a_helpers_report_is_not_posted_to_the_thread(tmp_path, monkeypatch, thread):
+    """🔴 Red before: the report's turn was posted to the thread, the report and its answer. A
+    start nothing records is not the thread's: its reply goes to her DM."""
     async with _gateway(tmp_path, monkeypatch) as gw:
         chat = await _a_linked_chat(gw)
         before = thread.heard()
-        await _run(gw, chat, "subagent", f"{SUBAGENT_COMPLETION_PREFIX}\n{REPORT}")
+        await _report(gw, chat, None)
     assert thread.heard() == before
+    assert thread.replied_in() == [HER_DM]
+
+
+@pytest.mark.asyncio
+async def test_a_helper_its_thread_started_is_answered_in_the_thread(tmp_path, monkeypatch, thread):
+    """🔴 Red before: a helper a colleague asked for in the thread had its reply posted nowhere
+    on the channel. The work was asked for there, whoever asked."""
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        chat = await _a_linked_chat(gw)
+        before = thread.heard()
+        await _report(gw, chat, arrived_on(THREAD, COLLEAGUE, PROVIDER))
+    posted = thread.heard()[len(before) :]
+    assert any(post.startswith("deliver_chat_mirror") for post in posted), posted
+    assert thread.replied_in() == []
+
+
+@pytest.mark.asyncio
+async def test_a_helper_started_from_the_dashboard_answers_in_her_dm(tmp_path, monkeypatch, thread):
+    """🔴 Red before: the reply to work she started from the dashboard reached her nowhere off the
+    dashboard. It goes to her DM, never into the shared thread."""
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        chat = await _a_linked_chat(gw)
+        before = thread.heard()
+        await _report(gw, chat, dict(DASHBOARD_SOURCE))
+    assert thread.heard() == before
+    assert thread.replied_in() == [HER_DM]
+
+
+@pytest.mark.asyncio
+async def test_with_no_dm_a_helpers_reply_stays_in_the_dashboard(tmp_path, monkeypatch, thread):
+    """With no DM that reaches her, the reply is in the dashboard chat and posted nowhere."""
+    thread.handle.open_dm = AsyncMock(side_effect=ConnectionError("the channel did not answer"))
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        chat = await _a_linked_chat(gw)
+        before = thread.heard()
+        await _report(gw, chat, dict(DASHBOARD_SOURCE))
+    assert thread.heard() == before
+    assert thread.replied_in() == []
+
+
+@pytest.mark.asyncio
+async def test_a_helper_started_in_her_dm_before_a_move_answers_there(
+    tmp_path, monkeypatch, thread
+):
+    """A chat moved after its helper started is judged by where the starting message came from:
+    her DM, so the shared thread it is in now is shown none of it. 🔴 Red before: the reply
+    reached her nowhere off the dashboard."""
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        chat = await _a_linked_chat(gw)
+        before = thread.heard()
+        await _report(gw, chat, arrived_on(DM_THREAD, OWNER, PROVIDER))
+    assert thread.heard() == before
+    assert thread.replied_in() == [HER_DM]
 
 
 @pytest.mark.asyncio
@@ -190,17 +265,30 @@ async def test_her_dashboard_turn_that_fails_says_nothing_in_a_shared_thread(
 async def test_the_rows_see_a_mirror_that_lets_an_internal_turn_through(
     tmp_path, monkeypatch, thread
 ):
-    """The plant: with the rule that an internal turn is no owner's dashboard turn taken out, the
-    report's turn is posted again, and the rows above see it."""
+    """The plant: with the rule that an internal turn is no owner's dashboard turn taken out, a
+    scheduled result's turn is posted again, and the rows above see it."""
     from personalclaw.dashboard import chat_runner
-    from personalclaw.dashboard.state import SUBAGENT_COMPLETION_PREFIX
 
     monkeypatch.setattr(chat_runner, "_the_owners_dashboard_turn", lambda _row: True)
     thread.handle.open_dm = AsyncMock(return_value=CHANNEL)
     async with _gateway(tmp_path, monkeypatch) as gw:
         chat = await _a_linked_chat(gw)
         before = thread.heard()
-        await _run(gw, chat, "subagent", f"{SUBAGENT_COMPLETION_PREFIX}\n{REPORT}")
+        await _run(gw, chat, "inject", "Scheduled digest: 3 new invoices from the landlord")
+    assert thread.heard() != before
+
+
+@pytest.mark.asyncio
+async def test_the_rows_see_a_reply_rule_that_drops_the_origin_check(tmp_path, monkeypatch, thread):
+    """The plant: with where the helper's start came from no longer asked, the reply to work she
+    started from the dashboard is posted into the shared thread, and the rows above see it."""
+    from personalclaw.dashboard import chat_runner
+
+    monkeypatch.setattr(chat_runner, "came_from_thread", lambda *_a: True)
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        chat = await _a_linked_chat(gw)
+        before = thread.heard()
+        await _report(gw, chat, dict(DASHBOARD_SOURCE))
     assert thread.heard() != before
 
 
@@ -224,18 +312,17 @@ async def test_the_chat_says_whether_its_thread_is_shared(
 
 
 @pytest.mark.asyncio
-async def test_a_helpers_report_is_not_posted_into_her_own_dm_either(tmp_path, monkeypatch, thread):
-    """Never anywhere: in her own DM, where her dashboard turns are mirrored, a helper's report's
-    turn is posted no more than in a shared thread. The row the rule needs where every row would
-    count as her dashboard turn."""
-    from personalclaw.dashboard.state import SUBAGENT_COMPLETION_PREFIX
-
+async def test_a_helpers_report_is_answered_in_her_own_dm(tmp_path, monkeypatch, thread):
+    """In her own DM, which nobody else reads, the reply to work she started from the dashboard
+    is posted in the chat's thread there. 🔴 Red before: it was posted nowhere."""
     thread.handle.open_dm = AsyncMock(return_value=CHANNEL)
     async with _gateway(tmp_path, monkeypatch) as gw:
         chat = await _a_linked_chat(gw)
         before = thread.heard()
-        await _run(gw, chat, "subagent", f"{SUBAGENT_COMPLETION_PREFIX}\n{REPORT}")
-    assert thread.heard() == before
+        await _report(gw, chat, dict(DASHBOARD_SOURCE))
+    posted = thread.heard()[len(before) :]
+    assert any(post.startswith("deliver_chat_mirror") for post in posted), posted
+    assert not any(REPORT in post for post in posted), "the report itself is not posted"
 
 
 @pytest.mark.asyncio

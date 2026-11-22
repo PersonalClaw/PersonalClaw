@@ -24,17 +24,28 @@ to the chat's agent the same way.
 Every ending also reaches the chat's Subagents list live, as one ``subagent_done`` event
 (:func:`done_event`), a helper that never ran among them: its report starts no turn, so its card is
 where the chat shows how it ended.
+
+The reply its chat writes to a report goes back into the chat's channel thread only when the turn
+that started the helper came from that thread's own message (``SubagentInfo.started_on``), or the
+thread is the owner's own DM with PersonalClaw; else to her DM. The row a report starts its turn
+with carries that start (:func:`report_meta`) for a dashboard chat
+(``chat_runner._the_thread_told``), and a session a channel app runs asks
+:func:`thread_a_reply_goes_into`.
 """
 
 from __future__ import annotations
 
+import logging
 import time
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 if TYPE_CHECKING:
     from personalclaw.subagent import SubagentInfo
+
+logger = logging.getLogger(__name__)
 
 #: The ``_ChatSession`` attribute holding what the chat's agent is owed, oldest first.
 OWED = "_owed_subagent_endings"
@@ -174,3 +185,50 @@ def take_for(state: Any, session_key: str) -> list[str]:
         return []
     chat = get_session(session_key.removeprefix(session_keys.DASHBOARD.prefix))
     return take(chat) if chat is not None else []
+
+
+# ── where the reply to a report goes ─────────────────────────────────────────────────────────
+
+
+def report_meta(asked: Mapping[str, str], members: "list[SubagentInfo]") -> dict[str, Any] | None:
+    """The meta of the row *members*' report starts its chat's turn with: who asked for their work
+    when the owner did not (``turn_source.ASKED_FOR_BY``), and where the turn that started every
+    one of them came from (``SubagentInfo.started_on``, ``turn_source.STARTED_ON``), so its reply
+    goes into the chat's thread only from there. ``None`` when it records neither."""
+    from personalclaw.turn_source import ASKED_FOR_BY, STARTED_ON, shared_source
+
+    meta: dict[str, Any] = {ASKED_FOR_BY: dict(asked)} if asked else {}
+    origin = shared_source([m.started_on for m in members])
+    if origin:
+        meta[STARTED_ON] = origin
+    return meta or None
+
+
+async def thread_a_reply_goes_into(
+    members: "list[SubagentInfo]", channel_id: str | None, thread: str
+) -> Any:
+    """The channel that issued *channel_id* (``channel_delivery.channel_of_id``), the conversation
+    of the channel thread *thread* a report's session runs in, when the reply to *members*' report
+    goes into that thread; else ``None``, and it goes to the owner's DM.
+
+    It goes into the thread when the turn that started every one of them came from that thread's
+    own message (``SubagentInfo.started_on``, ``turn_source.came_from_thread``), whoever sent it,
+    or when the thread is the owner's own DM with PersonalClaw. Started anywhere else (the
+    dashboard, an internal turn, another thread, a start nothing records), its work was not asked
+    for there, and the thread, read by whoever is in it, is shown none of it."""
+    from personalclaw.channel_delivery import channel_of_id, delivery_for
+    from personalclaw.dashboard import channel_links
+    from personalclaw.turn_source import came_from_thread
+
+    provider, problem = channel_of_id(channel_id) if channel_id else ("", "")
+    if problem:
+        logger.info("channel id %s: %s", channel_id, problem)
+    delivery = delivery_for(provider) if provider else None
+    if delivery is None or not channel_id:
+        return None
+    if members and all(came_from_thread(m.started_on, provider, thread) for m in members):
+        return delivery
+    her_dm = await channel_links.is_the_owners_own_dm(
+        provider, channel_id, delivery, wait=channel_links.AUDIENCE_WAIT_SECS
+    )
+    return delivery if her_dm else None

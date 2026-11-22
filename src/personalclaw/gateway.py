@@ -122,7 +122,7 @@ from personalclaw.triggers.nudge import (
     NudgeLoop,
 )
 from personalclaw.triggers.nudge import enabled as autonudge_enabled
-from personalclaw.turn_source import ASKED_FOR_BY, FROM_OUTSIDE
+from personalclaw.turn_source import FROM_OUTSIDE
 
 
 def config_dir() -> Path:
@@ -4381,7 +4381,7 @@ class GatewayOrchestrator:
                         self.dashboard_state,
                         announce,
                         role="subagent",
-                        meta={ASKED_FOR_BY: dict(asked)} if asked else None,
+                        meta=subagent_endings.report_meta(asked, handed),
                         asked_for_by=asked,
                     )
                     if _taken.disposition != "started":
@@ -4526,18 +4526,18 @@ class GatewayOrchestrator:
 
                         # Post only the LLM's synthesized response to the channel
                         try:
-                            # The session's own thread when it has one; otherwise the owner's
-                            # DM, on the first channel that reaches the owner (the Inbox when
-                            # none does).
+                            # The session's own thread when its work was asked for there;
+                            # otherwise the owner's DM, on the first channel that reaches the
+                            # owner (the Inbox when none does).
                             thread_channel = _thread_channel
                             elapsed = (
                                 info.elapsed
                                 if info.elapsed > 0
                                 else (time.monotonic() - info.started)
                             )
-                            # The thread's own channel, the one that issued its id.
-                            thread_delivery = (
-                                _delivery_owning(thread_channel) if thread_channel else None
+                            # The thread's own channel, when the reply goes into the thread.
+                            thread_delivery = await subagent_endings.thread_a_reply_goes_into(
+                                handed, thread_channel, parent_key
                             )
                             if response and thread_channel and thread_delivery is not None:
                                 await thread_delivery.deliver_subagent_reply(

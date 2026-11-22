@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat's `work_phase` frame says what its tool call does: while the turn is in `tool`, `act` is `read`, `edit` or `run`, from the kind an agent CLI declares or the name of one of PersonalClaw's own tools, and `null` when the call does not say. It is the word alone, never a path or a command.**
 - **A weekly pin refresh opens its own pull request: each workflow container whose tag has moved, and each action's newest week-old release, moved everywhere the tree holds them, through the pin-refresh App's token. It merges like any other pull request, on the normal checks, and the App is no bypass actor.**
 - **For apps, `personalclaw.sdk.channel.SessionManager.get_or_create` takes a keyword-only `asked_apart` (default `False`): `True` asks for a runtime built for the one turn alone, which resumes no conversation and whose session id is not kept, as core asks for a turn someone other than the owner asked for on an agent CLI. `slack-channel` calls it and needs no change.**
+- **For apps, `personalclaw.sdk.channel.SubagentInfo` has `started_on`: the source of the message whose turn started the helper (`arrived_on(thread, sender, channel)`), `{}` when nothing records it. Its reply goes into its session's channel thread only when that source is the thread's own. A channel app whose thread turns name their source with `turn_asked_by(session_key, arrived_on(session_key, …))`, as `slack-channel`'s do, needs no change.**
 
 ### Changed
 
@@ -108,6 +109,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat linked to a channel thread other people read no longer posts what you write on the dashboard there, nor its answer, nor any helper's report or scheduled result the chat receives. Only your own DM with PersonalClaw shows your dashboard messages, and the composer of a chat on a shared thread says that what you write there stays there.**
 - **A chat you move from your DM with PersonalClaw into a shared thread, by linking it to a channel or handing it off there, shows a colleague's turn there nothing said or answered in your DM: only what that thread itself showed.**
 - **A thread other people read is told only that a chat was compacted, linked or moved there: not the compaction's summary of the conversation, not the chat's title or last messages, and not a move of a turn the thread never saw. Your own DM with PersonalClaw is told as before.**
+- **A helper's reply goes into a thread other people read only when the work was asked for in that thread. Work you started from the dashboard, or from anywhere else, is answered in your own DM with PersonalClaw, and stays in the dashboard when no channel reaches you. A chat moved after its helper started is judged by where the work was asked for.**
 
 ## [0.3.9] — 2026-11-16
 

@@ -205,10 +205,12 @@ from personalclaw.turn_source import (
     DASHBOARD_SOURCE,
     FROM_OUTSIDE,
     asked_by,
+    came_from_thread,
     holds_a_turn_not_asked_by,
     named,
     shared_source,
     source_of,
+    started_on,
 )
 from personalclaw.turn_streams import close_stream
 from personalclaw.usage_ledger import recorder, spent_rows
@@ -790,6 +792,27 @@ async def _mirror_the_answer(
         return
 
 
+def _a_helpers_report(row: object) -> bool:
+    """Whether *row*, the row a turn starts with, is a helper's report handed back to its chat."""
+    return isinstance(row, Mapping) and row.get("role") == "subagent"
+
+
+async def _tell_her_dm(state: DashboardState, session_key: str, row: object, text: str) -> None:
+    """Send *text*, the reply to the helper's report *row* starts, to the owner's own DM with
+    PersonalClaw (``channel_delivery.reach_owner``): the chat *session_key* is linked to a thread
+    the turn that started the helper did not come from (:func:`_the_thread_told`), which is shown
+    none of it. A chat linked to no thread keeps its reply in the dashboard, as does one when no
+    channel reaches her: it is there already, so nothing goes to the Inbox."""
+    from personalclaw.channel_delivery import reach_owner
+
+    if not (_a_helpers_report(row) and state.sessions.get_channel_link(session_key)[0]):
+        return
+    try:
+        await reach_owner(lambda delivery, dm: delivery.deliver_subagent_reply(dm, text))
+    except Exception:
+        logger.debug("Failed to send a helper's reply to the owner's DM", exc_info=True)
+
+
 def _the_owners_dashboard_turn(row: object) -> bool:
     """Whether *row*, the row a turn starts with, is the owner's own message from the dashboard:
     a person's row the dashboard's chat took in (``turn_source.DASHBOARD_SOURCE``), not words taken
@@ -817,9 +840,13 @@ async def _the_thread_told(
     is told only when it is the owner's own message from the dashboard
     (:func:`_the_owners_dashboard_turn`) and the thread is the owner's own DM with PersonalClaw
     (``channel_links.is_the_owners_own_dm``): a channel's or a group's conversation is read by
-    everyone in it, and one whose readers cannot be told is read as shared. An internal turn (a
-    helper's report, a scheduled run's result, a loop's nudge, words from outside, work someone
-    else asked for) is told nowhere.
+    everyone in it, and one whose readers cannot be told is read as shared. A helper's report
+    (:func:`_a_helpers_report`) is answered in the thread when the turn that started the helper
+    came from that thread's own message (``turn_source.STARTED_ON``, matched as above), whoever
+    sent it, or when the thread is her own DM; started anywhere else (the dashboard, an internal
+    turn, another thread, a start nothing records), its reply goes to her DM instead
+    (:func:`_tell_her_dm`). Any other internal turn (a scheduled run's result, a loop's nudge,
+    words from outside, work someone else asked for) is told nowhere.
 
     The handle is the one of the channel the chat's link names: ``None`` when that channel is not
     connected, and nothing is told, never on another channel, where the thread's ids would post
@@ -840,6 +867,17 @@ async def _the_thread_told(
         thread,
     ):
         return delivery, thread, channel, False
+    if _a_helpers_report(turn_row):
+        # Its reply answers work asked for where the turn that started the helper came from,
+        # wherever the chat is now: there, or in her own DM, and else in her DM apart
+        # (`_tell_her_dm`).
+        if came_from_thread(
+            started_on(turn_row), provider, thread
+        ) or await channel_links.is_the_owners_own_dm(
+            provider, channel, delivery, wait=channel_links.AUDIENCE_WAIT_SECS
+        ):
+            return delivery, thread, channel, False
+        return None, None, None, False
     if _the_owners_dashboard_turn(turn_row) and await channel_links.is_the_owners_own_dm(
         provider, channel, delivery, wait=channel_links.AUDIENCE_WAIT_SECS
     ):
@@ -1730,6 +1768,7 @@ async def run_chat(
     memory_writes.asked_for(
         (asked_by(_turn_row) if _turn_row is not None else {}) or dict(asked_for_by or {})
     )
+    memory_writes.started_on(started_on(_turn_row))  # where a helper it starts answers
     # What this attempt takes from the session that rides one turn only, as the way to put each
     # back: a retry of the turn (`_send_again`) is handed the same context the first attempt was.
     _taken_once: list[Callable[[], None]] = []
@@ -4866,6 +4905,8 @@ async def run_chat(
                 (_mirror_chan, _mirror_thread),
                 assistant_text,
             )
+        elif assistant_text:
+            await _tell_her_dm(state, session_key, _turn_row, assistant_text)
     # Every handler below settles the answer streamed so far BEFORE it appends its own row,
     # so the partial answer the user was reading is kept, and sits ahead of the error that
     # explains why it stops.
