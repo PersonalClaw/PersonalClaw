@@ -87,6 +87,23 @@ def test_a_steer_file_written_before_steers_were_kept_one_a_line_is_one_steer():
     assert said.endswith("\nUse the archive folder too.\nAnd keep the old names."), said
 
 
+def test_a_full_steer_file_keeps_the_steers_sent_last_not_the_lines_written_last():
+    """🔴 Red before: the file was cut by position, so a steer written last but sent long before
+    the others (a file put back from an older copy) was kept, and a newer one was lost."""
+    loop = _loop(attended=False)
+    folder = loop_files.loop_dir(loop.id)
+    assert folder is not None
+    kept = loop_files._PENDING_KEPT
+    newer = [{"text": f"steer {n}", "sent_at": 1000.0 + n} for n in range(kept)]
+    oldest = {"text": "the oldest steer", "sent_at": 1.0}
+    (folder / "guidance.txt").write_text("".join(json.dumps(s) + "\n" for s in [*newer, oldest]))
+
+    loop_files.write_guidance(loop.id, SECOND)
+
+    texts = [s["text"] for s in loop_files._read_pending(folder / "guidance.txt")]
+    assert texts == [*(f"steer {n}" for n in range(1, kept)), SECOND], texts
+
+
 # ── a parallel loop's tasks ─────────────────────────────────────────────────────────────────
 
 
