@@ -15,8 +15,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.knowledge import session_brief
-from personalclaw.workflows import deliverable, input_secrets, store
-from personalclaw.workflows.bindings import BindingContext, BindingError, item_prefixes, resolve
+from personalclaw.workflows import deliverable, filedrop, input_secrets, store
+from personalclaw.workflows.bindings import (
+    BindingContext,
+    BindingError,
+    item_prefixes,
+    refs_in,
+    resolve,
+)
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     GateKind,
@@ -157,7 +163,22 @@ def _step_fields(ctl: RunController, item: ReadyNode) -> dict[str, Any]:
         "brief": _session_brief(ctl),
         "input_secrets": input_secrets.of_run(ctl.run),
         "run_document": deliverable.document_path(ctl.run, ctl.spec),
+        "run_dropped": _dropped_for(ctl, item),
     }
+
+
+#: The binding a step reads the files dropped into its run through (`filedrop.dropped_for_steps`).
+DROPPED_REF = "run.dropped"
+
+
+def _dropped_for(ctl: RunController, item: ReadyNode) -> str | None:
+    """`{{run.dropped}}` for a step that binds it, or None: the files are read and screened only
+    for a step that asks, not for every step of a run that accepts them."""
+    wanted = any(
+        ref.split("|")[0].strip() == DROPPED_REF
+        for ref in refs_in([item.node.config, item.node.extra])
+    )
+    return filedrop.dropped_for_steps(ctl.run.id, ctl.spec) if wanted else None
 
 
 #: Node kinds whose bound config is the text of a model call: a stage's agent task, an infer

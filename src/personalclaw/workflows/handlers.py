@@ -1224,7 +1224,7 @@ async def api_run_drop_status(request: web.Request) -> web.Response:
 
     A read, so not `_guard`ed — the same rule `api_run_workspace` follows. The payload is filenames,
     sizes and digests; no dropped CONTENT is served here, because a drop is untrusted input and the
-    one sanctioned read path fences it (`filedrop.read_dropped_text`).
+    one read path, a step's `{{run.dropped}}`, screens and fences it (`filedrop.dropped_text`).
     """
     return _reply(service.drop_status(request.match_info.get("run_id", "")))
 

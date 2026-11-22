@@ -171,6 +171,10 @@ class BindingContext:
     #: `{{run.document}}` (`deliverable.document_path`). "" for a run that keeps none, where the
     #: root is absent and a read of it says so rather than handing a step an empty path.
     run_document: str = ""
+    #: What `{{run.dropped}}` reads: the files dropped into the run, each screened and fenced
+    #: with its name (`filedrop.dropped_for_steps`). None for a run whose workflow accepts no
+    #: files, and for a step that does not bind it, where the field is absent.
+    run_dropped: str | None = None
     #: instance path → (node id, output), for each step inside a fan-out item that ended in
     #: success. `node_outputs` is keyed by node id, and every item of a fan-out writes the same id,
     #: so on its own it holds whichever item finished last; `scoped_to` lays one item's own
@@ -267,8 +271,13 @@ class BindingContext:
             root["previous"] = {"output": self.previous_output}
         if self.has_self_output:
             root["output"] = self.self_output
+        run: dict[str, Any] = {}
         if self.run_document:
-            root["run"] = {"document": self.run_document}
+            run["document"] = self.run_document
+        if self.run_dropped is not None:
+            run["dropped"] = self.run_dropped
+        if run:
+            root["run"] = run
         if self.brief is not None:
             # `text` is pre-fenced and citation-instructed, so a template writes
             # `{{brief.text}}` and cannot accidentally interpolate raw knowledge into a prompt.
@@ -819,8 +828,20 @@ _ROOT_HOLDS = {
     "last": "the previous iteration of the loop this node is in",
     "output": "this node's own output, and only inside `success_when`",
     "previous": "the previous cycle of the enclosing `until_cancelled` body",
-    "run": "the document this run keeps in its own folder, for a run that declares one",
+    "run": (
+        "the document this run keeps in its own folder, for a run that declares one, and the"
+        " files dropped into it, for a run whose workflow declares `file_drop`"
+    ),
     "siblings": "the accumulated outputs of this node's `parallel` siblings",
+}
+
+
+#: The `run` root's fields, and the runs that have each: one is missing for a run that has no
+#: such thing, which a spelling check would never find.
+_RUN_HOLDS = {
+    "document": "the path of the document a run keeps in its own folder, for a run whose workflow"
+    " or kind declares one",
+    "dropped": "the files dropped into a run, for a run whose workflow declares `file_drop`",
 }
 
 
@@ -876,6 +897,8 @@ def _unresolved_remediation(seg: str, *, is_root: bool, head: str = "") -> str:
             f"there is no {seg!r} root here — check the spelling against `inputs`, `nodes` "
             f"and {', '.join(sorted(_ROOT_HOLDS))}."
         )
+    if head.split(".")[0].strip() == "run" and seg in _RUN_HOLDS:
+        return f"this run has no {seg!r}: that is {_RUN_HOLDS[seg]}."
     if [s.strip() for s in head.split(".")[:2]] == ["inputs", seg]:
         # The input itself: what the caller left out, so the fix is theirs, and it is at Start.
         return (
