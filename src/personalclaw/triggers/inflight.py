@@ -27,7 +27,8 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
@@ -114,3 +115,33 @@ def cut(trigger_id: str, *, older_than: float) -> int:
             # Its loop has closed: nothing of it is still running to end.
             logger.debug("the action of %s has no loop left to end it on", trigger_id)
     return ended
+
+
+#: Each automation's fires under way in this process, from the tick that granted each to its end,
+#: its run recorded (`loop._executed`). An automation that may run beside itself (`overlap:
+#: parallel`) can have several, none of them in its history yet, and its hourly cap counts them
+#: (`service._fires_in_window`): without them a long action's fires would all start before the
+#: first one's row is written.
+_FIRING: dict[str, int] = {}
+
+
+@contextmanager
+def firing(trigger_id: str) -> Iterator[None]:
+    """Count one fire of *trigger_id* under way while the block runs."""
+    with _LOCK:
+        _FIRING[trigger_id] = _FIRING.get(trigger_id, 0) + 1
+    try:
+        yield
+    finally:
+        with _LOCK:
+            left = _FIRING.get(trigger_id, 1) - 1
+            if left > 0:
+                _FIRING[trigger_id] = left
+            else:
+                _FIRING.pop(trigger_id, None)
+
+
+def fires_under_way(trigger_id: str) -> int:
+    """How many fires of *trigger_id* are under way in this process (:func:`firing`)."""
+    with _LOCK:
+        return _FIRING.get(trigger_id, 0)

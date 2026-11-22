@@ -95,27 +95,45 @@ async def run_forever(
     # The staggered catch-ups not yet fired, and the slot each stands in for — held here for the
     # same reason as `pending`: it has to outlive the tick that planned it.
     held_catch_ups: dict[str, tuple[float, float]] = dict(catching_up or {})
-    while True:
-        sleep_for = MAX_ITERATION_SLEEP_SECS
-        try:
-            result = await tick_once(
-                store,
-                runner=runner,
-                sessions=sessions,
-                base_dir=base_dir,
-                user_active=bool(user_active()) if user_active else False,
-                pending_resumes=pending,
-                catching_up=held_catch_ups,
-                on_missed=on_missed,
-            )
-            sleep_for = min(max(0.5, float(result.next_sleep)), MAX_ITERATION_SLEEP_SECS)
-            if on_store_changed is not None and getattr(result, "store_changed", False):
-                on_store_changed()
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - the loop must outlive any single tick's failure
-            logger.warning("clock tick failed; continuing", exc_info=True)
-        await asyncio.sleep(sleep_for)
+    # The fires this loop started and has not seen end. Each runs beside the tick (`tick_once`'s
+    # `fires`), so one automation's long action holds no other automation's fire; a stop of the
+    # loop stops each of them, and each records itself as a run a stop cut off.
+    fires: set[asyncio.Task[Any]] = set()
+    try:
+        while True:
+            sleep_for = MAX_ITERATION_SLEEP_SECS
+            try:
+                result = await tick_once(
+                    store,
+                    runner=runner,
+                    sessions=sessions,
+                    base_dir=base_dir,
+                    user_active=bool(user_active()) if user_active else False,
+                    pending_resumes=pending,
+                    catching_up=held_catch_ups,
+                    on_missed=on_missed,
+                    fires=fires,
+                )
+                sleep_for = min(max(0.5, float(result.next_sleep)), MAX_ITERATION_SLEEP_SECS)
+                if on_store_changed is not None and getattr(result, "store_changed", False):
+                    on_store_changed()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - the loop must outlive any single tick's failure
+                logger.warning("clock tick failed; continuing", exc_info=True)
+            await asyncio.sleep(sleep_for)
+    finally:
+        await _stop_fires(fires)
+
+
+async def _stop_fires(fires: set[asyncio.Task[Any]]) -> None:
+    """Stop each fire still under way, and wait while each records itself as a run a stop cut
+    off (`gateway._record_stopped_fire`), before the loop's own stop goes on its way."""
+    under_way = [task for task in fires if not task.done()]
+    for task in under_way:
+        task.cancel()
+    if under_way:
+        await asyncio.gather(*under_way, return_exceptions=True)
 
 
 async def tick_once(
@@ -129,6 +147,7 @@ async def tick_once(
     pending_resumes: list[Any] | None = None,
     catching_up: dict[str, tuple[float, float]] | None = None,
     on_missed: Callable[[dict[str, Any]], None] | None = None,
+    fires: set[asyncio.Task[Any]] | None = None,
 ) -> Any:
     """One iteration: tick, dispatch each fire, drain each target session. Returns the `TickResult`.
 
@@ -142,6 +161,15 @@ async def tick_once(
     `pending_resumes` and `catching_up` are the caller's cross-tick state, mutated in place. Owned
     by `run_forever` because this function is deliberately stateless — see that function.
     `on_missed` announces what the tick found missed after a sleep; it never fails the tick.
+
+    `fires` is the caller's set of fires under way (`run_forever`'s): given one, each fire this
+    tick grants runs as a task of its own, kept there until it ends, and the tick returns without
+    waiting for it. 🔴 Awaited in the tick, one automation's action held the whole clock while it
+    ran: measured on a twin, a 2-minute automation fired 0 times in the 30 minutes a long command
+    beside it ran, and its slots came back as one missed card. Each automation's one-at-a-time
+    rule still holds, since its claim is held until its own fire ends (`executor.run_one`), and
+    its hourly cap counts its fires under way (`inflight.firing`). Without one, each fire runs to
+    its end in the tick, as a test driving one iteration reads it.
     """
     from personalclaw.triggers import service as svc
     from personalclaw.triggers import wakeup as wk
@@ -234,13 +262,36 @@ async def tick_once(
     #    measured, is every scheduled fire on a real gateway, because nothing in the tree creates a
     #    trigger's session. See `_execute_delivery`.
     for delivery in deliveries:
+        run = _executed(delivery, runner, sessions=sessions, now=now, base_dir=base_dir)
+        if fires is None:
+            await run
+            continue
+        task = asyncio.ensure_future(run)
+        fires.add(task)
+        task.add_done_callback(fires.discard)
+    return result
+
+
+async def _executed(
+    delivery: Any,
+    runner: Callable[[dict[str, Any]], Awaitable[Any]],
+    *,
+    sessions: Any,
+    now: float,
+    base_dir: Any,
+) -> None:
+    """Execute one delivery, counted among its automation's fires under way while it runs
+    (`inflight.firing`). Never raises but for a stop: one automation's failure must not strand the
+    others."""
+    from personalclaw.triggers import inflight
+
+    with inflight.firing(delivery.wakeup.trigger_id):
         try:
             await _execute_delivery(delivery, runner, sessions=sessions, now=now, base_dir=base_dir)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - one trigger's execution must not strand the others
             logger.warning("execution failed for %s", delivery.wakeup.trigger_id, exc_info=True)
-    return result
 
 
 async def _execute_delivery(
