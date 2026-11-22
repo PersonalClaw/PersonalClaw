@@ -3870,11 +3870,11 @@ arrive, and images have no separate security-update path.
   could not resolve, which also fails the run and is never written as current. The pull
   request merges like any other: up to date, the normal verdict green.
   - The job's own token holds `contents: read`. Its writes go through a token minted from the
-    App (`vars.REFRESH_APP_ID`, `secrets.REFRESH_APP_KEY`), held in the `pin-refresh`
-    environment, which only `main` may use. The token asks for contents and pull-requests
-    write, and for workflows write only when a workflow file changed: GitHub refuses an App's
-    push to `.github/workflows/` without it. It reaches git through the environment for the one
-    push, never a command line or the checkout's config.
+    App (`vars.REFRESH_APP_CLIENT_ID`, its client ID, and `secrets.REFRESH_APP_KEY`), held in the
+    `pin-refresh` environment, which only `main` may use. The token asks for contents and
+    pull-requests write, and for workflows write only when a workflow file changed: GitHub
+    refuses an App's push to `.github/workflows/` without it. It reaches git through the
+    environment for the one push, never a command line or the checkout's config.
   - It never force-pushes and pushes no other branch. The App is no bypass actor, and nothing
     here reads or changes a ruleset.
   - Dependabot's weekly action update can propose the same release. Whichever merges first wins,
