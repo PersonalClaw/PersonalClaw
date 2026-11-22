@@ -855,7 +855,7 @@ def _end_sign_in(server: str, reason: str, next_step: str = _SIGN_IN_AGAIN) -> N
         state = get_dashboard_state()
         if state is not None:
             state.notify(
-                notification_kinds.WARNING,
+                notification_kinds.MCP_SIGN_IN_ENDED,
                 f"Sign in to {server} again",
                 f"{_say_ended(server, reason, next_step)} Its tools cannot be used until you do.",
                 meta={"event": "mcp.sign_in_ended", "server": server},

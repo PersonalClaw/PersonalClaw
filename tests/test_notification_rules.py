@@ -68,15 +68,19 @@ def test_with_no_rules_only_the_wire_kinds_of_decisions_and_errors_ping(home):
     for flat in nk._WIRE_TO_PAIR:
         by_mode.setdefault(nr.resolve_rule_for_legacy(flat).mode, []).append(flat)
     assert sorted(by_mode.pop("immediate")) == [
+        "action_held",
         "agent_request",
         "approval",
+        "budget_paused",
         "cron_failed",
         "error",
         "loop_failed",
+        "mcp_sign_in_ended",
         "needs_input",
         "room_paused",
         "run_review",
         "trigger_import",
+        "unknown_sender",
     ]
     assert sorted(by_mode.pop("digest")) == [nk.LOOP, nk.USAGE_RECAP]
     assert set(by_mode) == {"badge"}
@@ -445,13 +449,13 @@ def test_with_no_rules_the_matrix_shows_notify_only_on_decisions_and_errors(home
     assert pinging == sorted(
         k.key for k in nk.configurable_kinds() if k.decision or k.default_severity == nk.SEV_ERROR
     )
-    assert len(pinging) == 9
+    assert len(pinging) == 13
     assert [r["key"] for r in rows if r["mode"] == "digest"] == [
         "loop/progress",
         "system/usage_recap",
     ]
     assert {r["mode"] for r in rows} == {"immediate", "digest", "badge"}
-    assert sum(r["mode"] == "badge" for r in rows) == len(rows) - 11
+    assert sum(r["mode"] == "badge" for r in rows) == len(rows) - 15
 
 
 def test_rules_document_is_json_serializable(home):

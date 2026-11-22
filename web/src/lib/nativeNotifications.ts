@@ -52,6 +52,9 @@ export const NOTIFICATION_SOURCE_ROUTES: Record<string, string> = {
   // naming it here would red the sibling rail that pins every route to one App.tsx serves.
   approval: 'chat',
   apps: 'apps',
+  // `channel/unknown_sender` — someone unpaired wrote to her. Its Allow and Deny are on the
+  // notification itself, in the feed.
+  channel: 'notifications',
   cron: 'triggers',
   // An autonomy-grant revocation. `notifications`, NOT a Settings → Guardrails deep link, even though that
   // is where the user re-grants: `settings` is in neither NAV nor ROUTABLE, so naming it would

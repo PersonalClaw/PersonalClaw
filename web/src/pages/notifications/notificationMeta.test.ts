@@ -41,6 +41,7 @@ const BACKEND_KINDS = [
   // legacy + attention flat wire strings
   'agent', 'app.route.drift', 'app_update', 'cron', 'feedback_retire', 'heartbeat', 'hook',
   'inbox_alert', 'loop', 'schedule', 'mcp_description_changed',
+  'unknown_sender', 'budget_paused', 'mcp_sign_in_ended', 'action_held',
 ]
 
 describe('kindMeta covers every kind the backend emits', () => {

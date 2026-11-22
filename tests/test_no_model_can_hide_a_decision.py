@@ -66,6 +66,14 @@ DECISIONS = {
     "cron/run_review": False,
     # the push that wakes a phone for a pending approval
     "approval/requested": False,
+    # four notices that were plain warnings, each a note in the bell rather than an Inbox row:
+    # an unpaired sender waiting on your Allow or Deny (or on a reply to the message the Inbox
+    # holds), automations paused by the spend ceiling, an MCP server's tools stopped until you
+    # sign in again, and an action the denylist held for your approval
+    "channel/unknown_sender": False,
+    "cron/budget_paused": False,
+    "mcp/sign_in_ended": False,
+    "guardrails/action_held": False,
 }
 DECISION_KEYS = sorted(DECISIONS)
 ATTENTION_DECISION_KEYS = sorted(k for k, has_row in DECISIONS.items() if has_row)

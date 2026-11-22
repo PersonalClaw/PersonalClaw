@@ -189,11 +189,15 @@ def test_legacy_junk_resolves_to_generic(junk):
 _INTERRUPT_BY_DEFAULT = [
     "agent/room_paused",
     "approval/requested",
+    "channel/unknown_sender",
+    "cron/budget_paused",
     "cron/failed",
     "cron/run_review",
     "cron/trigger_import",
+    "guardrails/action_held",
     "loop/failed",
     "loop/needs_input",
+    "mcp/sign_in_ended",
     "system/agent_request",
     "system/error",
 ]

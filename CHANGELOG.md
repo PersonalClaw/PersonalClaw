@@ -20,6 +20,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An agent's settings say its tool list holds for the PersonalClaw tools an agent CLI is offered, and that the CLI's own built-in tools follow its permission mode.**
 - **Saving the tool list of an agent on an agent CLI warns of each entry that lets the CLI call nothing.**
 - **For apps: `personalclaw.sdk.channel.trust_mode.YOLO_DASHBOARD_TTL_SECS` is now 24 hours, up from 6, and YOLO turned on from the dashboard lasts that long before it turns itself off, so a night left in YOLO no longer starts asking again part-way through. It covers every chat while it is on, those a channel runs included. `slack-channel` imports the constant and takes no length from it; a channel's `!yolo on` still lasts 30 minutes (`YOLO_CHANNEL_TTL_SECS`), and a restart still ends either.**
+- **Four notices that wait on you interrupt by default again, as every other question does: someone unpaired writing to you on a chat channel (Allow or Deny), automations paused by the spend budget, an MCP server's sign-in that ended, and an action the denylist held for your approval. Each was a plain warning that only waited in the bell. Each now has its own row in Settings › Notifications, where you can quieten it.**
 
 ### Fixed
 
