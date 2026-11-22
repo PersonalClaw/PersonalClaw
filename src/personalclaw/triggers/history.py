@@ -198,6 +198,10 @@ HOOK_STATUS_TO_OUTCOME: dict[str, str] = {
     # a turn never reached one. A refusal of its result with its reason, not a failure: the script
     # did what it does, and a retry would print the same.
     "withheld": Outcome.REFUSED.value,
+    # A fire its rung held, which you declined to run when it asked (`hooks._withhold`): nothing
+    # ran, by your answer. `SKIPPED_GATE`, as a run's `declined` is in the table above, for its
+    # reasons: your own Deny is not the automation breaking.
+    "declined": Outcome.SKIPPED_GATE.value,
 }
 
 
