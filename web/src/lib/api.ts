@@ -2701,6 +2701,10 @@ export interface WorkflowRunDetailData {
   /** Paused at a cap: Resume raises what it reached, or, where its dollar cap could not count a
    *  step that had no price, goes on without counting that step. */
   at_budget?: boolean
+  /** Paused because its earlier steps did not record the tokens they used, so its token budget
+   *  cannot be checked: its Resume goes on with no token budget, the one resume that does not pause
+   *  it again. `error` says so in words. */
+  tokens_unrecorded?: boolean
   // The containing project (empty when unscoped) — the run view scopes its per-project
   // judge-guidance control on this, since that guidance writes through the project and is
   // what reaches this run's worker and judge sessions.
