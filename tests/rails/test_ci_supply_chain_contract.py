@@ -81,6 +81,8 @@ _UBUNTU_INDEX = _pinned(
 _BUILDKIT_AMD64 = _pinned(
     _ARTIFACTS_YML, r"^\s*driver-opts: image=moby/buildkit:[\w.-]+@sha256:([0-9a-f]{64})$"
 )
+#: setup-qemu-action as the layout smoke pins it today, the anchor of its moved-alone plant.
+_TOOLING_QEMU_ACTION = _pinned(_TOOLING, r"(docker/setup-qemu-action@[0-9a-f]{40})")
 _BUILDKIT_INDEX = _pinned(
     _ARTIFACTS_YML,
     r"# moby/buildkit:[\w.-]+, the linux/amd64 manifest[^\n]* of index\n"
@@ -2006,8 +2008,8 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant(
                 "the layout smoke's QEMU action moved alone",
                 _TOOLING,
-                "persist-credentials: false\n      - uses: docker/setup-qemu-action@99012661954931",
-                "persist-credentials: false\n      - uses: docker/setup-qemu-action@00000000000000",
+                f"persist-credentials: false\n      - uses: {_TOOLING_QEMU_ACTION}",
+                "persist-credentials: false\n      - uses: docker/setup-qemu-action@" + "0" * 40,
                 expect="layout-smoke runs docker/setup-qemu-action as",
             ),
             _plant(

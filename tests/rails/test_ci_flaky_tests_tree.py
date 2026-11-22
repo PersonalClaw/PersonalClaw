@@ -54,6 +54,12 @@ _CARRY_DAYS = 3
 _FETCH_OPTIONS = frozenset({"--repo", "--out", "--days", "--reserve", "--no-carry", "--carry"})
 
 # The plants' anchors in the real workflow.
+#: upload-artifact as flaky-tests.yml pins it today: the carry step's anchor follows the tree's pin,
+#: which a refresh or a Dependabot bump moves in the tree but not in main's copy of this file.
+_UPLOAD_ARTIFACT = re.search(
+    r"actions/upload-artifact@[0-9a-f]{40} # v[0-9.]+",
+    (_WORKFLOWS / _FLAKY).read_text(encoding="utf-8"),
+)[0]
 _CARRIED_DAYS = '/window" --days 15 --carry flaky-tests'
 _FETCH_ID = "        id: fetch\n"
 _CARRY_STEP = (
@@ -63,7 +69,7 @@ _CARRY_STEP = (
     " stored as built.\n"
     "      - name: carry the window to the next run\n"
     f"        if: {_AFTER_FETCH}\n"
-    "        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n"
+    f"        uses: {_UPLOAD_ARTIFACT}\n"
     "        with:\n"
     f"          name: {_CARRY}\n"
     f"          path: ${{{{ runner.temp }}}}/window/{fetch.WINDOW}\n"

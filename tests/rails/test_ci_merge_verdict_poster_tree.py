@@ -52,6 +52,14 @@ from tools.ci import workflows
 
 _WORKFLOW = REPO / ".github" / "workflows" / "merge-verdict.yml"
 _APP_ACTION = "actions/create-github-app-token@"
+#: The checkout and App-token pins as the poster has them today: the plants below find steps by
+#: them, and a refresh or a Dependabot bump moves them in the poster but not in main's copy of this
+#: file, which main's contract runs over the moved tree.
+_POSTER_TEXT = _WORKFLOW.read_text(encoding="utf-8")
+_CHECKOUT_PIN = re.search(r"actions/checkout@[0-9a-f]{40} # v[0-9.]+", _POSTER_TEXT)[0]
+_APP_TOKEN_PIN = re.search(
+    r"actions/create-github-app-token@[0-9a-f]{40} # v[0-9.]+", _POSTER_TEXT
+)[0]
 _POSTING = "steps.decide.outputs.post == 'true'"
 _APP_KEYS = {
     "app-id": "${{ vars.CONTROLLER_APP_ID }}",
@@ -758,13 +766,13 @@ def test_the_poster_keeps_its_trust_shape() -> None:
 
 _POST_CHECKOUT = (
     "      # No `ref:`: under `workflow_run` GitHub checks out the default branch.\n"
-    "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
+    f"      - uses: {_CHECKOUT_PIN}\n"
     "        with:\n"
     "          persist-credentials: false\n"
 )
 _CONTRACT_CHECKOUT = (
     "      # Main's tools/ci again, from the default branch, with no credential kept.\n"
-    "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
+    f"      - uses: {_CHECKOUT_PIN}\n"
     "        with:\n"
     "          persist-credentials: false\n"
 )
@@ -1749,8 +1757,7 @@ def _beside_contract() -> str:
 
 
 _CHECKOUT_STEP = (
-    "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
-    "        with:\n          persist-credentials: false\n"
+    f"      - uses: {_CHECKOUT_PIN}\n" "        with:\n          persist-credentials: false\n"
 )
 _IDENTITY_STEP = (
     "      - name: Runner identity\n"
@@ -1761,8 +1768,7 @@ _RERUN_STEP = "      - name: rerun the failed jobs in place, then wake the poste
 _POST_STEPS = (
     "      - name: the controller's token\n        id: controller\n"
     f"        if: {_POSTING}\n"
-    "        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510"
-    " # v3.3.0\n"
+    f"        uses: {_APP_TOKEN_PIN}\n"
     "        with:\n          app-id: ${{ vars.CONTROLLER_APP_ID }}\n"
     "          private-key: ${{ secrets.CONTROLLER_APP_KEY }}\n"
     "          permission-checks: write\n"
@@ -2284,8 +2290,7 @@ def test_a_planted_edit_of_the_beside_poster_fails(old: str, new: str, says: str
         ("    permissions:\n      actions: write\n", "", "not actions: write alone"),
         (
             "      - name: judge the head again\n",
-            "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n"
-            "      - name: judge the head again\n",
+            f"      - uses: {_CHECKOUT_PIN.split()[0]}\n" "      - name: judge the head again\n",
             "runs an action",
         ),
         (
