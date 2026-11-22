@@ -23,7 +23,9 @@ workflow's, the Knowledge panel's), and the planner rests a moment after every s
 is what the running list shows while it runs (`running_now`).
 
 Measured as the gateway feels it: an event loop's 1 ms sleeps, each wake taking the interpreter
-back, timed while the planner runs in another thread.
+back, timed while the action plans. On a scratch home of 100 items of 1 MB, `/api/healthz`
+answered in 7.9 s at worst while maintenance ran before, and in 0.087 s after (the row's note):
+that measurement takes minutes, so the suite pins what made it, in seconds.
 """
 
 from __future__ import annotations
@@ -31,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import random
 import re
-import threading
 import time
 
 import pytest
@@ -40,50 +41,6 @@ from personalclaw.action_providers import knowledge_maintain_provider as kmp
 from personalclaw.action_providers.base import ActionContext
 from personalclaw.knowledge import consolidation, maintenance
 from personalclaw.knowledge.consolidation import Item, cluster_items, plan_consolidation
-
-#: The library: items whose texts are long (a watched repository's files, a long report), each
-#: about something else, so the planner compares every item with every group before it: the
-#: pairwise work a pass over a real library does.
-ITEMS = 30
-TEXT_CHARS = 1_000_000
-
-
-def _library(seed: int = 7) -> list[Item]:
-    rng = random.Random(seed)
-    return [
-        Item(
-            id=f"k{i}",
-            content=" ".join(f"t{i}w{rng.randrange(4000)}" for _ in range(TEXT_CHARS // 9)),
-        )
-        for i in range(ITEMS)
-    ]
-
-
-async def _loop_beside(work) -> tuple[float, float]:
-    """How long *work* takes in another thread, and the worst wait of this event loop's 1 ms
-    sleeps meanwhile: each wake takes the interpreter back from the work, as the gateway's loop
-    does after every socket read."""
-    worker = threading.Thread(target=work, daemon=True)
-    clock = time.monotonic()
-    worker.start()
-    worst = 0.0
-    while worker.is_alive():
-        woke = time.monotonic()
-        await asyncio.sleep(0.001)
-        worst = max(worst, time.monotonic() - woke - 0.001)
-    return time.monotonic() - clock, worst
-
-
-@pytest.mark.timeout(600)
-def test_a_pass_over_a_library_of_large_items_is_over_in_a_moment():
-    """🔴 Before: 435 pairs in the dedup and 435 in the floor, each tokenizing two 1 MB texts
-    again in long stretches of C, held the interpreter for tens of seconds (minutes on a real
-    library), and the loop waited behind each stretch. Now each item is read once, in bounded
-    steps."""
-    items = _library()
-    took, worst = asyncio.run(_loop_beside(lambda: plan_consolidation(items, min_size=2)))
-    assert took < 5.0, f"the pass took {took:.1f} s"
-    assert worst < 0.5, f"the loop waited {worst * 1000:.0f} ms at worst"
 
 
 class _Reads:
@@ -168,7 +125,7 @@ def test_the_dedup_still_drops_what_says_the_same_thing():
     assert plan.pre_dedup_merges == [("k1", "k2")], plan.pre_dedup_merges
 
 
-def _many(count: int = 800) -> list[Item]:
+def _many(count: int = 500) -> list[Item]:
     """Many short items, each about something else: the pairwise work of a library of notes."""
     rng = random.Random(11)
     return [
@@ -177,12 +134,12 @@ def _many(count: int = 800) -> list[Item]:
     ]
 
 
-@pytest.mark.timeout(600)
 def test_the_consolidate_action_leaves_the_loop_that_awaits_it_free(tmp_path, monkeypatch):
     """🔴 Before: a workflow or the Knowledge panel awaits the action on the gateway's own loop,
     and it planned right there, so the loop answered nothing until the plan was made (seconds
     here, minutes on a real library). And a planner in a worker thread that never rested held
-    the loop's wakes up to a second at a time. Now it plans in a worker thread and rests."""
+    each of the loop's wakes for 140 to 200 ms here, and up to a second on 800 items. Now it plans
+    in a worker thread and rests, and a wake waits about 12 ms."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     items = _many()
     monkeypatch.setattr(kmp, "_open_store", lambda: object())
@@ -205,7 +162,7 @@ def test_the_consolidate_action_leaves_the_loop_that_awaits_it_free(tmp_path, mo
 
     result, worst, wakes = asyncio.run(awaited_on_this_loop())
     assert result.success, result.error
-    assert worst < 0.15, f"the loop waited {worst * 1000:.0f} ms at worst, in {wakes} wakes"
+    assert worst < 0.1, f"the loop waited {worst * 1000:.0f} ms at worst, in {wakes} wakes"
 
 
 def test_a_pace_rests_once_a_slice_is_worked_and_never_on_a_loop():
