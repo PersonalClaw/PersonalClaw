@@ -44,6 +44,7 @@ from personalclaw.config.loader import (
     APPROVAL_TIMEOUT_MINUTES_MIN,
     MEMORY_VAULT_MODES,
     PUSH_BACKENDS,
+    WORKFLOW_TIER_USE_CASES,
     _bot_name_disallowed,
 )
 
@@ -1056,9 +1057,9 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "workflows.retention_per_def": {"type": "int", "min": 1, "max": 10000},
     "workflows.max_concurrent_llm_nodes": {"type": "int", "min": 1, "max": 32},
     "workflows.max_concurrent_io_nodes": {"type": "int", "min": 1, "max": 32},
-    "workflows.model_tier_reasoning": {"type": "str", "max_len": 32},
-    "workflows.model_tier_standard": {"type": "str", "max_len": 32},
-    "workflows.model_tier_fast": {"type": "str", "max_len": 32},
+    "workflows.model_tier_reasoning": {"type": "enum", "values": list(WORKFLOW_TIER_USE_CASES)},
+    "workflows.model_tier_standard": {"type": "enum", "values": list(WORKFLOW_TIER_USE_CASES)},
+    "workflows.model_tier_fast": {"type": "enum", "values": list(WORKFLOW_TIER_USE_CASES)},
     # The T4 embedding tie-break floor. Live-editable — the dial an owner turns when the
     # matcher composes too readily or ignores a genuine semantic near-match, tuned while watching.
     "workflows.match_threshold": {"type": "float", "min": 0.0, "max": 1.0},
