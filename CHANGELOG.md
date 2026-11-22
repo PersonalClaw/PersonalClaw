@@ -73,6 +73,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The Library's Filter names a picked collection by its name when the collection holds nothing yet, as the count line beside it does, rather than by its id.**
 - **A dialog no longer takes the key that opened it as its answer: Enter on New collection's name now shows its search step instead of making the collection at once.**
 - **A Library search or filter that leaves the open item out of the list keeps it in its pane and says the search hides it, rather than saying nothing in your library has its address.**
+- **A Projects address with `?peek=` opens the project it names: the value is one part of the address, so one carrying path characters no longer lands on another page.**
 
 ### Security
 

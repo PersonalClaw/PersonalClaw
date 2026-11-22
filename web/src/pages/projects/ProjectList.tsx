@@ -171,7 +171,7 @@ export function ProjectListPage({ navigate, onOpenTasks, query, setQuery }: {
   // The addresses this page used to answer, kept landing: the Chats by project view is the list
   // now (its search stays), and a peek is the project's own page. Each replaces its entry.
   useEffect(() => {
-    if (query.peek) { navigate(`projects/${query.peek}`, { replace: true }); return }
+    if (query.peek) { navigate(`projects/${encodeURIComponent(query.peek)}`, { replace: true }); return }
     if (query.view) setQuery({ view: null }, { replace: true })
   }, [query.peek, query.view, navigate, setQuery])
   // The palette's New project and Import a project reach this page through its address. Each key
