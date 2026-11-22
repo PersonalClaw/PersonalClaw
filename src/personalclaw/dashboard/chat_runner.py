@@ -754,13 +754,23 @@ def _flush_segment(
 
 
 async def _mirror_the_answer(
-    session: _ChatSession, delivery: Any, channel: str, thread: str, text: str
+    state: DashboardState,
+    session: _ChatSession,
+    session_key: str,
+    delivery: Any,
+    where: tuple[str, str],
+    text: str,
 ) -> None:
-    """Mirror the turn's answer *text* to the channel *thread* *session* is linked to, and mark
-    the answer row the thread was shown (``turn_source.SHOWN_ON_CHANNEL``): the answers a turn
-    someone other than the owner asked for is built with (``channel_view``). Only the turn's last
-    segment is mirrored, and a mirror that failed marks nothing. The 5 s flush writes the mark."""
+    """Mirror the turn's answer *text* to the channel thread *session* is linked to (*where*: its
+    channel id and thread), and mark the answer row with where it was shown
+    (``turn_source.SHOWN_ON_CHANNEL``: the channel, its conversation and its thread): a turn
+    someone other than the owner asked for is built with the answers its own thread was shown
+    (``channel_view``). Only the turn's last segment is mirrored, and a mirror that failed marks
+    nothing. The 5 s flush writes the mark."""
     from personalclaw.turn_source import SHOWN_ON_CHANNEL
+
+    channel, thread = where
+    shown_on = {"provider": state.channel_provider_for(session_key), "channel": channel}
 
     try:
         await delivery.deliver_chat_mirror(channel, text, thread)
@@ -774,7 +784,8 @@ async def _mirror_the_answer(
             continue
         if row.get("content") == kept:
             meta = row.get("meta")
-            row["meta"] = {**(meta if isinstance(meta, dict) else {}), SHOWN_ON_CHANNEL: True}
+            shown = {**shown_on, "thread": thread}
+            row["meta"] = {**(meta if isinstance(meta, dict) else {}), SHOWN_ON_CHANNEL: shown}
             session._dirty = True
         return
 
@@ -800,8 +811,9 @@ async def _the_thread_told(
     answer, and for a turn from the dashboard its note), else ``(None, None, None, False)``: the
     turn stays in the dashboard.
 
-    A turn its own message started (*arrived_from_channel*, or a row the thread's channel took in)
-    is answered there, and its message, which the thread holds, is not posted back. Any other turn
+    A turn its own message started (*arrived_from_channel*, or a row the thread's channel took in
+    on that thread: another thread's row, from a DM the chat was moved out of, is not) is answered
+    there, and its message, which the thread holds, is not posted back. Any other turn
     is told only when it is the owner's own message from the dashboard
     (:func:`_the_owners_dashboard_turn`) and the thread is the owner's own DM with PersonalClaw
     (``channel_links.is_the_owners_own_dm``): a channel's or a group's conversation is read by
@@ -822,7 +834,11 @@ async def _the_thread_told(
     thread, channel = state.sessions.get_channel_link(session_key)
     if not (thread and channel):
         return None, None, None, False
-    if arrived_from_channel or source_of(turn_row).get("source_channel") == provider:
+    took = source_of(turn_row)
+    if arrived_from_channel or (took.get("source_channel"), took.get("source_thread")) == (
+        provider,
+        thread,
+    ):
         return delivery, thread, channel, False
     if _the_owners_dashboard_turn(turn_row) and await channel_links.is_the_owners_own_dm(
         provider, channel, delivery
@@ -1623,10 +1639,10 @@ def _turn_history(session: _ChatSession, in_flight: str, depth: int) -> tuple[li
     for it alone (:func:`_asks_apart`). Any other turn, from the session's own prior turns."""
     apart = _answered_apart(session, in_flight, depth)
     memory_writes.answers_apart(apart)
-    transcript = (channel_view if apart else prior_turns_transcript)(
-        session, in_flight, nested=depth > 0
-    )
-    return transcript, apart
+    if apart:  # as the thread whoever asked for it is on showed it
+        where = memory_writes.asker()
+        return channel_view(session, in_flight, nested=depth > 0, where=where), True
+    return prior_turns_transcript(session, in_flight, nested=depth > 0), False
 
 
 @memory_writes.runs_as_its_session
@@ -4843,7 +4859,12 @@ async def run_chat(
         # the active ChannelDelivery so the dashboard imports no channel code.
         if assistant_text and _mirror_delivery and _mirror_thread and _mirror_chan:
             await _mirror_the_answer(
-                session, _mirror_delivery, _mirror_chan, _mirror_thread, assistant_text
+                state,
+                session,
+                session_key,
+                _mirror_delivery,
+                (_mirror_chan, _mirror_thread),
+                assistant_text,
             )
     # Every handler below settles the answer streamed so far BEFORE it appends its own row,
     # so the partial answer the user was reading is kept, and sits ahead of the error that
