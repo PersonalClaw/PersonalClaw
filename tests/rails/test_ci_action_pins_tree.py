@@ -59,6 +59,10 @@ def test_on_a_pull_request_an_unresolved_answer_warns(
     (tmp_path / ".github" / "workflows" / "a.yml").write_text(
         f"jobs:\n  it:\n    steps:\n      - uses: a/b@{SHA} # v1.0.0\n", encoding="utf-8"
     )
+    # A gate that asks git for the tag when the API gives no answer asks this stand-in, which
+    # finds none, so the answer stays unresolved and no git reaches GitHub. A gate that never
+    # asks git ignores it.
+    monkeypatch.setattr(action_pins, "git_ls_remote", lambda repository, tag: None, raising=False)
     monkeypatch.setattr(
         action_pins, "github_fetch", lambda token: FakeAPI({_ref("a/b", "v1.0.0"): (500, None)})
     )
