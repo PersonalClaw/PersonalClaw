@@ -349,6 +349,31 @@ async def test_a_turn_someone_else_asked_for_reads_no_helpers_report(gateway, pa
     assert REPORT[A_DONE] in str(await gateway.read(path, KEY[A], A_DONE))
 
 
+@pytest.mark.asyncio
+async def test_a_turn_someone_else_asked_for_lists_no_helpers_report(gateway):
+    """The list route answers as the one helper's does: its finished helpers' status and task, and
+    no report. 🔴 Red before: ``GET /api/spawn`` handed every finished helper's report to work
+    someone other than the owner asked for, though no tool showed it."""
+    from personalclaw import session_restrictions
+    from personalclaw.turn_source import arrived_on
+
+    colleague = arrived_on("1790800000.000100", "U0JONAS", "slack")
+    token = session_restrictions.mark_asked_by(KEY[A], colleague)
+    try:
+        status, body = await gateway._route("/api/spawn", KEY[A])
+    finally:
+        session_restrictions.unmark_asked_by(KEY[A], token)
+
+    assert status == 200, body
+    [done] = [agent for agent in body["agents"] if agent["id"] == A_DONE]
+    assert done["result"] == "" and done["task"] == TASK[A_DONE], done
+    assert "The helper's report was not read" in done["withheld"] and "U0JONAS" in done["withheld"]
+    assert REPORT[A_DONE] not in json.dumps(body)
+    # The owner's own turn, once his is over, lists the report as before.
+    status, body = await gateway._route("/api/spawn", KEY[A])
+    assert REPORT[A_DONE] in json.dumps(body)
+
+
 # ── whose chat a helper's own call, a batch's task and a call naming no chat are ─────────────
 
 

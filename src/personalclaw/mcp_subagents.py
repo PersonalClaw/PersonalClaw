@@ -530,26 +530,33 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         return "\n".join(lines)
 
     if name == "subagent_status":
-        agent_id = args.get("agent_id", "")
-        if not agent_id or not agent_id.isalnum():
-            return tool_failure("invalid agent_id")
-        d = _get(f"/api/spawn/{agent_id}")
-        if d.get("error"):
-            return tool_failure(f"{d['error']}")
-        if d.get("withheld"):
-            return str(d["withheld"])  # someone other than the owner asked for this turn
-        result = d.get("result")
-        if not result:
-            return "_No result._"
-        from personalclaw.security import redact_credentials, redact_exfiltration_urls
-        from personalclaw.subagent_report import for_a_model
-
-        result, _ = redact_exfiltration_urls(result)
-        result, _ = redact_credentials(result)
-        # The helper's words, handed on as every text from outside is: screened, then fenced.
-        return for_a_model(agent_id, result)
+        return _subagent_status(args)
 
     return f"Unknown tool: {name}"
+
+
+def _subagent_status(args: dict[str, Any]) -> str:
+    """``subagent_status``: one helper's report once it has ended (``GET /api/spawn/{id}``), or
+    why it was not read: the route withholds it from work someone other than the owner asked for
+    (``subagent_reach.report_withheld``)."""
+    agent_id = args.get("agent_id", "")
+    if not agent_id or not agent_id.isalnum():
+        return tool_failure("invalid agent_id")
+    d = _get(f"/api/spawn/{agent_id}")
+    if d.get("error"):
+        return tool_failure(f"{d['error']}")
+    if d.get("withheld"):
+        return str(d["withheld"])  # someone other than the owner asked for this turn
+    result = d.get("result")
+    if not result:
+        return "_No result._"
+    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    from personalclaw.subagent_report import for_a_model
+
+    result, _ = redact_exfiltration_urls(result)
+    result, _ = redact_credentials(result)
+    # The helper's words, handed on as every text from outside is: screened, then fenced.
+    return for_a_model(agent_id, result)
 
 
 def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:

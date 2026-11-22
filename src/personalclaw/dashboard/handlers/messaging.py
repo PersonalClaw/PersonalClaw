@@ -250,12 +250,15 @@ async def api_spawn_list(request: web.Request) -> web.Response:
     """GET /api/spawn — the caller's own chat's subagents, and every chat's for you.
 
     Running and finished. You read every one: the Background agents page, ``personalclaw spawn``
-    (`subagent_reach`)."""
+    (`subagent_reach`). Work someone other than you asked for reads no finished one's report, as
+    in ``GET /api/spawn/{id}`` (``withheld``)."""
     state: DashboardState = request.app["state"]
     if not state.subagents:
         return web.json_response({"agents": []})
     reader = reader_of(request, state)
     readable = await asyncio.to_thread(reader.of, state.subagents.all_agents)
+    asked = await asyncio.to_thread(asked_by_someone_else, reader)
+    withheld = {"result": "", "withheld": report_withheld(asked)} if asked else {}
     # What each agent waits on its owner's answer for, from the asks it is listed under: its start,
     # or a call by its tool's name. The list said "running" through the wait, and the agent that
     # started it guessed why.
@@ -287,6 +290,7 @@ async def api_spawn_list(request: web.Request) -> web.Response:
         }
         if info.done:
             entry["result"] = _redact(info.result)
+            entry.update(withheld)
             entry["error"] = _redact(info.error) if info.error else ""
             # When it ended: its start plus how long it ran, set as it finished.
             if info.elapsed:
