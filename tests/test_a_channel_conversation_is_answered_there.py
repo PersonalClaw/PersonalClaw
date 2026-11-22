@@ -25,6 +25,8 @@ from personalclaw import channel_delivery, channel_trust
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.channel_transports.base import ChannelMessage
+from personalclaw.config.credentials import owner_id_credential, save_credential
+from personalclaw.config.loader import CRED_OWNER_ID
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.state import DashboardState
@@ -74,6 +76,10 @@ class _Channel:
     def __init__(self) -> None:
         self.seen: list[tuple[str, str, str]] = []  # (what, where, text)
 
+    async def open_dm(self, user_id):
+        """The owner's DM with the bot: on this channel a DM's id is the person's own."""
+        return user_id
+
     async def deliver_text(self, channel, text, thread_ts="", **_kw):
         self.seen.append(("text", channel, text))
         return "t-1"
@@ -99,10 +105,14 @@ class _Channel:
 
 
 @pytest.fixture
-def channel():
+def channel(unset_env):
     handle = _Channel()
     channel_delivery.register(handle, provider=PROVIDER)
     channel_trust.allow_sender(PROVIDER, OWNER)
+    # The channel knows its owner, so her DM with the bot is hers alone: a turn she starts on the
+    # dashboard is mirrored there (`chat_runner._the_thread_told`).
+    unset_env(CRED_OWNER_ID, owner_id_credential(PROVIDER))
+    save_credential(owner_id_credential(PROVIDER), OWNER)
     yield handle
     channel_delivery.register(None, provider=PROVIDER)
 

@@ -175,9 +175,11 @@ async def _answering(text: str):
 
 
 async def _turn(state, session, message: str) -> None:
+    """Her message *message*, sent in the chat on the dashboard, and the turn it starts."""
     from personalclaw.dashboard.chat_runner import run_chat
 
     session._trust = True
+    session.append("user", message, "msg msg-u")
     with (
         patch("personalclaw.dashboard.chat_runner.sel", MagicMock()),
         patch("personalclaw.dashboard.chat_runner.maybe_offer_check_work"),
@@ -194,15 +196,17 @@ async def _turn(state, session, message: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("body", "where"),
-    [({"channel": SLACK_CHANNEL}, SLACK_CHANNEL), ({}, SLACK_DM)],
+    ("body", "where", "answered_there"),
+    [({"channel": SLACK_CHANNEL}, SLACK_CHANNEL, False), ({}, SLACK_DM, True)],
     ids=["a-channel", "the-owners-dm"],
 )
 async def test_a_linked_chat_is_answered_told_and_continued_in_its_thread(
-    tmp_path, monkeypatch, chats, body, where
+    tmp_path, monkeypatch, chats, body, where, answered_there
 ):
     """🔴 Red before: the link named no channel, so the next answer and the compaction notice
-    stayed in the dashboard, and a reply in the thread found no chat to continue."""
+    stayed in the dashboard, and a reply in the thread found no chat to continue. Her turn from
+    the dashboard is answered in the thread only where nobody else reads it, her own DM: a
+    channel's thread hears none of it (``chat_runner._the_thread_told``)."""
     from personalclaw.dashboard.chat_utils import _broadcast_compaction_result
 
     slack = chats("slack")["slack"]
@@ -213,7 +217,10 @@ async def test_a_linked_chat_is_answered_told_and_continued_in_its_thread(
     assert status == 200 and linked["thread_ts"] == THREAD, linked
 
     await _turn(state, session, "and back?")
-    slack.deliver_chat_mirror.assert_awaited_with(where, "Take the 9:10.", THREAD)
+    if answered_there:
+        slack.deliver_chat_mirror.assert_awaited_with(where, "Take the 9:10.", THREAD)
+    else:
+        slack.deliver_chat_mirror.assert_not_awaited()
 
     notice = await _broadcast_compaction_result(
         state, session, AgentEvent(kind=EVENT_COMPACTION_STATUS, text="completed", title=SUMMARY)

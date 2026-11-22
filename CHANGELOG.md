@@ -104,6 +104,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A turn someone other than you asked for, such as a colleague's message in a shared thread, reads nothing of your Inbox and no helper's report, as it reads none of your memory: a helper that worked for your own turn may hold what it read of your memory. It is told who asked, on the built-in agent, the tool route and an agent CLI alike.**
 - **A colleague's turn in a shared thread is answered from the conversation as the channel showed it: what was said there and the replies the thread was shown, with a short note where a helper's report, a scheduled result, a reply the thread wasn't shown or anything else the channel never showed arrived. The owner's own turns there, as her model read them, and the calls they made are no longer part of it.**
 - **The same holds when the chat runs on an agent CLI: a colleague's turn is sent to a CLI session of its own, handed the conversation as the channel showed it, instead of the session that holds the owner's turns. The owner's next turn goes back to her own session.**
+- **A chat linked to a channel thread other people read no longer posts what you write on the dashboard there, nor its answer, nor any helper's report or scheduled result the chat receives. Only your own DM with PersonalClaw shows your dashboard messages, and the composer of a chat on a shared thread says that what you write there stays there.**
 
 ## [0.3.9] — 2026-11-16
 

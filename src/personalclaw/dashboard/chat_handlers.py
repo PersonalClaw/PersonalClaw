@@ -1203,7 +1203,32 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
     # Off the event loop: a chat of 3,000 messages held it for half a second, every other chat's
     # stream and every read waiting (a script reading 28 chats a minute held health checks 86 s).
     body["messages"] = await asyncio.to_thread(_prepare_messages, rows, running)
+    # A thread others read hears none of what she writes here: the composer says so.
+    body["shared_thread"] = await _linked_to_a_shared_thread(state, session.key)
     return web.json_response(text=await asyncio.to_thread(json.dumps, body))
+
+
+#: How long the chat's opening waits for its channel to say whose DM its thread is.
+_AUDIENCE_WAIT_SECS = 2.0
+
+
+async def _linked_to_a_shared_thread(state: DashboardState, name: str) -> bool:
+    """Whether the chat *name* is linked to a channel thread other people read: one that is not the
+    owner's own DM with PersonalClaw (``channel_links.is_the_owners_own_dm``). Her turns from the
+    dashboard stay in the dashboard there (``chat_runner._the_thread_told``). A chat on no thread
+    is not; one whose channel can't say in time, or is not connected, is (fail closed)."""
+    from personalclaw.dashboard import channel_links
+
+    thread, channel_id, provider = _channel_link(state, name)
+    if not (thread and channel_id):
+        return False
+    try:
+        hers = await asyncio.wait_for(
+            channel_links.is_the_owners_own_dm(provider, channel_id), _AUDIENCE_WAIT_SECS
+        )
+    except asyncio.TimeoutError:
+        hers = False
+    return not hers
 
 
 def _refused_before_create(body: dict) -> web.Response | None:

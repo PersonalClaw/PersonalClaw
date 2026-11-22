@@ -9710,6 +9710,10 @@ export const api = {
     /** The folder the chat works in (its working directory), which its Working directory prompt
      *  opens on. */
     workspace_dir?: string
+    /** True when the chat is linked to a channel thread other people read: a channel, a group,
+     *  a DM with someone else, or one whose readers can't be told. What you write here stays
+     *  here (`chat_runner._the_thread_told`), and the composer says so. */
+    shared_thread?: boolean
     /** Present only on a conversation an APP started (`AppStarted`). A turn in it runs under
      *  that app's permissions, whoever sends the message: your approval switches never reach it,
      *  and the app approves none of its calls, so each one that needs approval asks you. */
