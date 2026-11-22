@@ -88,6 +88,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An agent on an agent CLI reads the Inbox, so a Morning briefing on one says what is waiting. Its tool server offers `inbox_list`, in the built-in agent's words, and reads what the built-in agent would: its own chat's items and those about no chat, never another chat's.**
 - **The gateway no longer stops answering for minutes after a write to a large knowledge library. Graph maintenance's dedup and grouping steps read both items' whole texts again for every pair they compared, in long stretches no other work could interrupt; they now read each item once, in short steps, and rest a moment between them, and a consolidation a workflow or the Knowledge panel starts no longer plans on the gateway's own event loop. A slow maintenance run logs each pass's time, and while one runs the running list shows Tidying the knowledge library, with the pass it is in.**
 - **A chat a client names can't take a name another kind of session has, such as a loop's `loop-…` or a scheduled automation's `cron:…`: `POST /api/chat/sessions` refuses it with `chat_name_refused` and says why, and nothing is made or opened. A chat's own names and `personalclaw run --session` are taken as before.**
+- **`POST /api/chat/sessions` takes an optional `title`, the chat's own title as a rename gives one, so auto-title leaves it alone. Until a chat has a title, its header names it by its first message instead of "Untitled chat".**
 
 ### Security
 

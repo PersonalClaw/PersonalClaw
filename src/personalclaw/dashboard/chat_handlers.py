@@ -52,7 +52,7 @@ from personalclaw.dashboard.chat_runner import (
     run_chat,
     started_by_app,
 )
-from personalclaw.dashboard.chat_title import title_needs_model
+from personalclaw.dashboard.chat_title import own_title, title_needs_model
 from personalclaw.dashboard.chat_utils import (
     STEER_ACTIVITY_KIND,
     _build_stream_chunk,
@@ -1191,6 +1191,26 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
     )
 
 
+def _refused_before_create(body: dict) -> web.Response | None:
+    """Why ``POST /api/chat/sessions`` makes nothing, or ``None``: refused before anything is made
+    or opened. A name another kind of session has would be judged as that kind's, and one a live
+    session of it holds would open that session as a chat (``session_keys.chat_name_refusal``)."""
+    name = body.get("name")
+    if isinstance(name, str) and name and (refusal := session_keys.chat_name_refusal(name)):
+        return json_error("chat_name_refused", message=refusal, status=400)
+    title = body.get("title")
+    if title is not None and not isinstance(title, str):
+        return json_error("invalid_request", message="title must be a string", status=400)
+    return None
+
+
+def _title_as_made(state: DashboardState, session: Any, title: str | None) -> None:
+    """The chat's own title, given as it is made, as a rename gives one: auto-title leaves it alone.
+    A chat opened again by its name that has a title of its own keeps it."""
+    if title and title.strip() and not session._titled:
+        own_title(state, session, title.strip())
+
+
 async def api_chat_session_create(request: web.Request) -> web.Response:
     """POST /api/chat/sessions — create a new chat session."""
     state: DashboardState = request.app["state"]
@@ -1203,10 +1223,8 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
     name = body.get("name")
     if name is not None and not isinstance(name, str):
         return web.json_response({"error": "name must be a string"}, status=400)
-    # Before anything is made or opened: a name another kind of session has would be judged as
-    # that kind's, and one a live session of it holds would open that session as a chat.
-    if name and (refusal := session_keys.chat_name_refusal(name)):
-        return json_error("chat_name_refused", message=refusal, status=400)
+    if (refused := _refused_before_create(body)) is not None:
+        return refused
     agent = body.get("agent", "")
     model = body.get("model", "")
     project_id = str(body.get("project_id", "") or "")
@@ -1253,6 +1271,7 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
         )
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=409)
+    _title_as_made(state, session, body.get("title"))
     if session.is_restricted:
         logger.info("Session %s created with memory_mode=%s", session.key, session.memory_mode)
     elif (
