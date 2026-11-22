@@ -28,6 +28,12 @@ import { join } from 'node:path'
 // family's remedy for this shape is to TELL, not to fight input the user is still editing — and these
 // calls are deliberately fire-and-forget so the composer never blocks on a round-trip. Recorded so the
 // next pass does not "finish the job" by adding a revert.
+//
+// The permission mode and the task mode are the stated exception, because they decide what runs without
+// asking: a control showing Trust over a chat the gateway kept in Normal claims a posture that does not
+// hold. A pick of either is shown once the gateway takes it (`chooseApproval`, `chooseTaskMode`), and one
+// set as a chat is made is read back from the gateway when its write fails (`readBackOnFailure`), still
+// through the one reporter. `aPermissionModeRefusedAtTheChatsStartIsNotShown.test.tsx` drives that.
 
 const SRC = readFileSync(join(process.cwd(), 'src/pages/ChatPage.tsx'), 'utf8')
 const strip = (s: string) => s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -86,6 +92,12 @@ describe('a selection that fails to persist tells the user', () => {
     // If this ever awaits the round-trip, the composer stalls on every pick and the reasoning in the
     // header ("deliberately fire-and-forget") is stale.
     expect(COMPOSER).toMatch(/const nextSel = \{ \.\.\.selection, \.\.\.patch \}\s*\n\s*setSelection\(nextSel\)/)
+  })
+
+  it('a mode set as a chat is made is read back when its write fails, and still reported', () => {
+    for (const [call, control] of [['setApprovalMode', 'approval'], ['setTaskMode', 'taskMode']]) {
+      expect(COMPOSER, `${call} at the chat's start`).toMatch(new RegExp(`persistSelection\\('[^']+', api\\.${call}\\(selection\\.\\w+, created\\.key\\)\\.catch\\(readBackOnFailure\\('${control}', created\\.key, `))
+    }
   })
 
   it('and it does NOT revert the selection — the deliberate non-fix', () => {

@@ -643,8 +643,11 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
       // Same contract at session START: the composer already shows these picks, so a swallowed failure
       // means the brand-new session runs under settings the user can see but does not have.
       if (acp) await persistSelection('this agent', api.setSessionAcpAgent(created.key, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: selection.model && selection.model !== 'Auto' ? selection.model : undefined }))
-      if (selection.approval !== 'normal') await persistSelection('this approval mode', api.setApprovalMode(selection.approval, created.key))
-      if (selection.taskMode !== 'agent') await persistSelection('this task mode', api.setTaskMode(selection.taskMode, created.key))
+      // The two modes are shown only as the gateway holds them, here as on a pick (`chooseApproval`):
+      // a mode it refuses at the start (an operator ceiling refuses Trust and YOLO) leaves the chat in
+      // the mode it was made in, so a failed write reads the chat's mode back, and the control says it.
+      if (selection.approval !== 'normal') await persistSelection('this approval mode', api.setApprovalMode(selection.approval, created.key).catch(readBackOnFailure('approval', created.key, adoptApproval)))
+      if (selection.taskMode !== 'agent') await persistSelection('this task mode', api.setTaskMode(selection.taskMode, created.key).catch(readBackOnFailure('taskMode', created.key, adoptTaskMode)))
       // Persist a pre-start reasoning-effort pick (applySelection couldn't, since the
       // session didn't exist yet).
       if (selection.reasoning) await persistSelection('this reasoning effort', api.setReasoningEffort(created.key, selection.reasoning))
@@ -1339,7 +1342,10 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   //
   // These are deliberately fire-and-forget (the composer must not block on a round-trip), so the remedy
   // is the family's: TELL the user. Reverting `setSelection` was considered and rejected — the rail's own
-  // fix for this shape is to report, not to fight the input the user is still editing.
+  // fix for this shape is to report, not to fight the input the user is still editing. The two modes are
+  // the exception, because they decide what runs without asking: a pick is shown once the gateway takes
+  // it (`chooseApproval`, `chooseTaskMode`), and one set as a chat is made is read back if it fails
+  // (`readBackOnFailure`), so the control never claims a mode the chat does not have.
   //
   // It is one helper rather than eleven catch blocks because eleven is how one gets missed.
   const persistSelection = <T,>(what: string, p: Promise<T>): Promise<T | void> =>
@@ -1378,15 +1384,22 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
    *  the pick, and it is set when the chat is made (`ensureSession`). Resolves `null` once taken,
    *  else the gateway's reason, or that it did not answer (`sendModePick`). */
   function chooseApproval(mode: ApprovalMode): Promise<string | null> {
-    return sendModePick('approval', 'permission mode', (s, n) => api.setApprovalMode(mode, s, n), () => setSelection((sel) => ({ ...sel, approval: mode })),
-      (d) => setSelection((sel) => ({ ...sel, approval: (d.approval || 'normal') as ApprovalMode })))
+    return sendModePick('approval', 'permission mode', (s, n) => api.setApprovalMode(mode, s, n), () => setSelection((sel) => ({ ...sel, approval: mode })), adoptApproval)
   }
+  /** Show the permission mode the chat is in, as the gateway reads it. */
+  function adoptApproval(d: ChatDetail) { setSelection((sel) => ({ ...sel, approval: (d.approval || 'normal') as ApprovalMode })) }
 
   /** The task mode, the same way (`POST /api/chat/task-mode`): the gateway refuses to take a chat
    *  out of Plan while its plan waits on her review, and the pill then stays on Plan and says so. */
   function chooseTaskMode(mode: TaskMode): Promise<string | null> {
-    return sendModePick('taskMode', 'task mode', (s, n) => api.setTaskMode(mode, s, n), () => setSelection((sel) => ({ ...sel, taskMode: mode })),
-      (d) => setSelection((sel) => ({ ...sel, taskMode: (d.task_mode || 'agent') as TaskMode })))
+    return sendModePick('taskMode', 'task mode', (s, n) => api.setTaskMode(mode, s, n), () => setSelection((sel) => ({ ...sel, taskMode: mode })), adoptTaskMode)
+  }
+  /** Show the task mode the chat is in, as the gateway reads it. */
+  function adoptTaskMode(d: ChatDetail) { setSelection((sel) => ({ ...sel, taskMode: (d.task_mode || 'agent') as TaskMode })) }
+  /** A `.catch` for a mode's write that did not go through: the chat `s` is read back and its mode
+   *  shown on `control`, and the failure goes on to its reporter. */
+  function readBackOnFailure(control: 'approval' | 'taskMode', s: string, adopt: (detail: ChatDetail) => void) {
+    return (e: unknown): never => { readModeBack(control, s, adopt); throw e }
   }
 
   /** The mode picks, one at a time: a pick is sent once the one before it is answered, or once its
