@@ -311,6 +311,34 @@ def test_the_view_is_for_the_thread_whoever_asked_is_on():
     assert "therapy" not in said, view
 
 
+def test_the_turn_engine_builds_his_carried_on_turn_for_the_thread_he_asked_on():
+    """The turn engine (``chat_runner._turn_history``) builds a turn that carries on work he asked
+    for, a helper's report handed back whose row names no thread, for the thread whoever asked is
+    on: the asker's, not the in-flight row's. A view built for the report's row would stub all of
+    it, his own thread's messages and answers too."""
+    from personalclaw import memory_writes
+    from personalclaw.dashboard.chat_runner import _turn_history
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL, arrived_on
+
+    thread = "1790800000.000100"
+    session = _moved_from_her_dm(thread)
+    session.messages += [
+        _row(
+            "assistant",
+            "The venue opens at nine.",
+            meta={SHOWN_ON_CHANNEL: _shown_on("slack", thread)},
+        ),
+        _row("subagent", REPORT),
+    ]
+    with memory_writes.derived_from("dashboard:offsite"):
+        memory_writes.asked_for(arrived_on(thread, "U0JONAS", "slack"))
+        history, apart = _turn_history(session, REPORT, 0)
+    said = json.dumps(history)
+    assert apart, "the control: his turn is answered apart from her DM's"
+    assert "What's the plan for the offsite?" in said and "The venue opens at nine." in said
+    assert "therapy" not in said, history
+
+
 def test_an_answer_marked_before_marks_named_a_thread_is_a_stub():
     """Closed: an answer whose mark names no thread (one written while marks were a plain yes) is
     a stub, since nothing says which thread it was shown on."""
