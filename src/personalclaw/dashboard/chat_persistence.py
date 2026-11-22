@@ -302,16 +302,51 @@ def save_all_sessions_to_history(state: DashboardState) -> None:
             logger.error("Shutdown: failed to save session %s", session.key, exc_info=True)
 
 
-def _redact_version_row(row: dict) -> dict:
-    """A row a version keeps of its answer, redacted as a saved transcript row is: what is not
-    the owner's (a reply, a tool's output) has its credentials and exfiltration links masked."""
-    out = dict(row)
-    if out.get("role") not in ("user", "system") and isinstance(out.get("content"), str):
-        text, _ = redact_exfiltration_urls(out["content"])
-        out["content"], _ = redact_credentials(text)
-    if isinstance(out.get("meta"), dict):
-        out["meta"] = _redact_meta(out["meta"])
-    return out
+def _saved_row(m: dict) -> dict:
+    """One transcript row as it is saved. What is not the owner's (a reply, a tool's output) has
+    its credentials and exfiltration links masked, its meta and a permission row's decision are
+    redacted, and it keeps where it came from as that was recorded when the row was taken in
+    (``turn_source``): a save writes no source of its own. It used to write the dashboard's on
+    every row, so a channel's turns read as typed in the dashboard. The rows a version of an
+    answer keeps (``chat_regenerate._show_version``) are saved by it too, so they are masked as
+    the transcript's are and a version switched in after a reload reads as its rows did."""
+    role = m.get("role", "assistant")
+    content = m.get("content", "")
+    if role not in ("user", "system"):
+        content, _ = redact_exfiltration_urls(content)
+        content, _ = redact_credentials(content)
+    entry: dict = {"role": role, "content": content, "ts": m.get("ts", ""), **source_of(m)}
+    if m.get("variants"):
+        entry["variants"] = [_saved_version(v) for v in m["variants"] if isinstance(v, dict)]
+        entry["variant_idx"] = m.get("variant_idx", 0)
+    # Rewind tails (the retained discarded messages from an edit-and-replay). Redacted like
+    # variants; tolerant of the pre-rewind shape. Clean-break field under the pre-1.0 banner:
+    # old sessions simply lack it.
+    if m.get("rewound"):
+        rewound = _redact_rewound(m["rewound"])
+        if rewound:
+            entry["rewound"] = rewound
+    cls_val = m.get("cls", "")
+    if role == "system" and cls_val:
+        entry["cls"] = cls_val
+    elif role == "permission":
+        # The decision lives in `cls` (request id, tool input, risk, `resolved`), so a
+        # permission row without it would come back as a bare title.
+        entry["cls"] = json.dumps(_redact_meta(json.loads(cls_val)))
+    if m.get("meta"):
+        entry["meta"] = _redact_meta(m["meta"])
+    return entry
+
+
+def _saved_version(v: dict) -> dict:
+    """A version of an answer as it is saved: its text masked as a reply's is, and each row it
+    keeps of its answer (``chat_regenerate._show_version``) saved as a transcript row is."""
+    vc, _ = redact_exfiltration_urls(v.get("content", ""))
+    vc, _ = redact_credentials(vc)
+    kept = {**v, "content": vc}
+    if isinstance(v.get("rows"), list):
+        kept["rows"] = [_saved_row(r) for r in v["rows"] if isinstance(r, dict)]
+    return kept
 
 
 def _attach_variants(session: _ChatSession, m: dict) -> None:
@@ -1180,52 +1215,7 @@ def save_session_to_history(
         if not outgoing and not (set(meta_line) - _CREATE_TIME_META_KEYS):
             logger.debug("metadata-only save skipped for %s: nothing set since create", history_key)
             return
-        lines: list[str] = []
-        for m in outgoing:
-            role = m.get("role", "assistant")
-            content = m.get("content", "")
-            if role not in ("user", "system"):
-                content, _ = redact_exfiltration_urls(content)
-                content, _ = redact_credentials(content)
-            # Where the line came from, as it was recorded when the line was taken in
-            # (`turn_source`): a save writes no source of its own. It used to write the
-            # dashboard's on every line, so a channel's turns read as typed in the dashboard.
-            entry: dict = {"role": role, "content": content, "ts": m.get("ts", ""), **source_of(m)}
-            if m.get("variants"):
-                redacted_variants: list[dict] = []
-                for v in m["variants"]:
-                    if not isinstance(v, dict):
-                        continue
-                    vc = v.get("content", "")
-                    vc, _ = redact_exfiltration_urls(vc)
-                    vc, _ = redact_credentials(vc)
-                    kept = {**v, "content": vc}
-                    # A version's own rows (`chat_regenerate._show_version`), each redacted as
-                    # the transcript's own rows are.
-                    if isinstance(v.get("rows"), list):
-                        kept["rows"] = [
-                            _redact_version_row(r) for r in v["rows"] if isinstance(r, dict)
-                        ]
-                    redacted_variants.append(kept)
-                entry["variants"] = redacted_variants
-                entry["variant_idx"] = m.get("variant_idx", 0)
-            # Rewind tails (the retained discarded messages from an edit-and-replay).
-            # Redacted like variants; tolerant of the pre-rewind shape. Clean-break
-            # field under the pre-1.0 banner — old sessions simply lack it.
-            if m.get("rewound"):
-                rewound = _redact_rewound(m["rewound"])
-                if rewound:
-                    entry["rewound"] = rewound
-            cls_val = m.get("cls", "")
-            if role == "system" and cls_val:
-                entry["cls"] = cls_val
-            elif role == "permission":
-                # The decision lives in `cls` (request id, tool input, risk, `resolved`),
-                # so a permission row without it would come back as a bare title.
-                entry["cls"] = json.dumps(_redact_meta(json.loads(cls_val)))
-            if m.get("meta"):
-                entry["meta"] = _redact_meta(m["meta"])
-            lines.append(json.dumps(entry) + "\n")
+        lines = [json.dumps(_saved_row(m)) + "\n" for m in outgoing]
         # The REAL count, recorded with the lines it counts, so the chat list can show it
         # for a chat that is not in memory without guessing from the file size (it showed
         # `size / 200`: "8 messages" for a five-message chat). `message_bytes` lets the

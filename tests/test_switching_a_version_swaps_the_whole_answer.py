@@ -26,6 +26,8 @@ from chat_test_helpers import _make_app, _make_state
 pytestmark = pytest.mark.asyncio
 
 TOOL = {"tool_call_id": "c1", "kind": "read", "input": "{}", "done": True, "output": "ok"}
+#: A credential as a reply or a tool's output may hold one (AWS's documented example key).
+SECRET = "AKIAIOSFODNN7EXAMPLE"
 
 
 def _shape(session) -> list[tuple[str, str]]:
@@ -33,9 +35,12 @@ def _shape(session) -> list[tuple[str, str]]:
     return [(m["role"], m.get("content", "")) for m in session.messages[1:]]
 
 
-async def _two_versions(tmp_path, monkeypatch, *, fresh_uses_a_tool: bool = False):
+async def _two_versions(
+    tmp_path, monkeypatch, *, fresh_uses_a_tool: bool = False, secret: str = ""
+):
     """A chat whose answer was regenerated: a tool-using answer into one message, or (with
-    *fresh_uses_a_tool*) one message into a tool-using answer."""
+    *fresh_uses_a_tool*) one message into a tool-using answer. A *secret* is in the first
+    answer's last text and in its tool's output."""
     monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
     state = _make_state(tmp_path)
     session = state.get_or_create_session("s1")
@@ -44,8 +49,8 @@ async def _two_versions(tmp_path, monkeypatch, *, fresh_uses_a_tool: bool = Fals
         session.append("assistant", "Probably mild.")
     else:
         session.append("assistant", "Looking it up.")
-        session.append("tool", "read_file", meta=dict(TOOL))
-        session.append("assistant", "It's 18°C and sunny.")
+        session.append("tool", "read_file", meta={**TOOL, "output": f"ok {secret}".strip()})
+        session.append("assistant", f"It's 18°C and sunny. {secret}".strip())
     session.drain()
 
     async def _fresh_answer(_state, _session, _user_msg, regenerate_hint="", **_kw):
@@ -162,3 +167,46 @@ async def test_a_version_kept_whole_survives_a_restart(tmp_path, monkeypatch):
         ("tool", "read_file"),
         ("assistant", "It's 18°C and sunny."),
     ]
+
+
+async def test_a_versions_rows_reach_the_disk_masked(tmp_path, monkeypatch):
+    """A version's rows are saved masked as the transcript's own rows are: a credential in its
+    reply's text and in its tool row's meta is in no saved file, and the rows are saved."""
+    from personalclaw.dashboard.chat_persistence import save_session_to_history
+
+    state, session, _app = await _two_versions(tmp_path, monkeypatch, secret=SECRET)
+    kept = session.messages[1]["variants"][0]["rows"]
+    assert SECRET in str(kept), "precondition: the version keeps the rows that hold it"
+
+    save_session_to_history(state, session, force=True)
+
+    saved = "".join(p.read_text() for p in tmp_path.rglob("*.jsonl"))
+    assert "Looking it up." in saved and '"rows"' in saved, "the version's rows were not saved"
+    assert SECRET not in saved
+
+
+async def test_an_older_text_only_version_comes_in_without_the_channels_mark(tmp_path, monkeypatch):
+    """🔴 Red before a782685be. A version kept as its text alone takes none of the shown answer's
+    meta: an answer the channel thread was shown (``turn_source.SHOWN_ON_CHANNEL``), switched to
+    a version the thread never saw, carries no mark, so a colleague's turn there is not shown it
+    (``chat_persistence.channel_view``)."""
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL
+
+    monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+    state = _make_state(tmp_path)
+    session = state.get_or_create_session("s1")
+    session.append("user", "What's the weather in Lisbon?")
+    session.append("assistant", "It's 18°C and sunny.", meta={SHOWN_ON_CHANNEL: True})
+    session.drain()
+    answer = session.messages[1]
+    answer["variants"] = [
+        {"content": "Probably mild.", "ts": ""},
+        {"content": answer["content"], "ts": answer.get("ts", "")},
+    ]
+    answer["variant_idx"] = 1
+
+    await _switch(_make_app(state), 0)
+
+    shown = session.messages[1]
+    assert shown["content"] == "Probably mild."
+    assert SHOWN_ON_CHANNEL not in (shown.get("meta") or {})
