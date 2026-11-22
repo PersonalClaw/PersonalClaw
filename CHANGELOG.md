@@ -54,6 +54,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An automation's run whose text holds a character UTF-8 cannot write (a lone surrogate, as a payload's `\ud800` decodes to) is recorded in its History like any other. Its row was never written.**
 - **An automation run whose row the run history cannot write, on a full disk or in a history folder that cannot be written, still counts as one of its automation's runs, and the log says once why its runs are not being recorded, where it said nothing above debug.**
 - **An MCP server that never answers one call no longer blocks every call after it. The call is told it may have gone through, as before, and the next one is sent on the same connection, so you don't have to press Reconnect.**
+- **Two connections to one MCP server that start together start one program. The second waits until the first has answered, ended or been left to finish installing, so two installs never run into one folder at once. Switching the server off or removing it, or stopping the gateway, now stops every program left to finish: before, one of the two could run on for up to 10 minutes.**
 
 ### Security
 
