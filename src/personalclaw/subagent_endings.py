@@ -216,8 +216,12 @@ async def thread_a_reply_goes_into(
     or when the thread is the owner's own DM with PersonalClaw. Started anywhere else (the
     dashboard, an internal turn, another thread, a start nothing records), its work was not asked
     for there, and the thread, read by whoever is in it, is shown none of it."""
-    from personalclaw.channel_delivery import channel_of_id, delivery_for
-    from personalclaw.dashboard import channel_links
+    from personalclaw.channel_delivery import (
+        AUDIENCE_WAIT_SECS,
+        channel_of_id,
+        delivery_for,
+        is_the_owners_own_dm,
+    )
     from personalclaw.turn_source import came_from_thread
 
     provider, problem = channel_of_id(channel_id) if channel_id else ("", "")
@@ -228,7 +232,5 @@ async def thread_a_reply_goes_into(
         return None
     if members and all(came_from_thread(m.started_on, provider, thread) for m in members):
         return delivery
-    her_dm = await channel_links.is_the_owners_own_dm(
-        provider, channel_id, delivery, wait=channel_links.AUDIENCE_WAIT_SECS
-    )
+    her_dm = await is_the_owners_own_dm(provider, channel_id, delivery, wait=AUDIENCE_WAIT_SECS)
     return delivery if her_dm else None

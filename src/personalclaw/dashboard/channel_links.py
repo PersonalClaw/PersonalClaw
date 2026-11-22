@@ -25,6 +25,13 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from personalclaw import chat_threads
+
+# Whose DM a channel conversation is: core's (``channel_delivery``), which work outside the
+# dashboard asks too. This module's callers keep reading it here.
+from personalclaw.channel_delivery import (  # noqa: F401 - handed on to the dashboard's callers
+    AUDIENCE_WAIT_SECS,
+    is_the_owners_own_dm,
+)
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -123,11 +130,6 @@ MOVED_WITHIN_THE_CHANNEL = (
 )
 
 
-#: How long a check of whose DM a thread is waits for its channel to say
-#: (:func:`is_the_owners_own_dm`).
-AUDIENCE_WAIT_SECS = 2.0
-
-
 async def the_link_is_the_owners_own_dm(state: DashboardState, name: str) -> bool:
     """Whether the channel thread the chat *name* is linked to is the owner's own DM with
     PersonalClaw (:func:`is_the_owners_own_dm`), waiting :data:`AUDIENCE_WAIT_SECS` for its
@@ -138,34 +140,6 @@ async def the_link_is_the_owners_own_dm(state: DashboardState, name: str) -> boo
     return await is_the_owners_own_dm(
         chat_channel(state, name), channel_id, wait=AUDIENCE_WAIT_SECS
     )
-
-
-async def is_the_owners_own_dm(
-    provider: str, channel_id: str, handle: Any = None, *, wait: float | None = None
-) -> bool:
-    """Whether the conversation *channel_id* on the channel *provider* is the owner's own DM with
-    PersonalClaw, which nobody but the owner reads: the one the channel itself opens for the
-    owner's id (``open_dm(owner_id_for(provider))``), as every message for the owner finds it.
-
-    A channel's conversation is read by every member of the channel, not only by the people who
-    wrote in it, and a group DM, or a DM with anyone else, by them: those are shared. So is one this
-    cannot tell of, an audience that cannot be read being shared: the channel not connected
-    (*handle*, else its connected one), no owner kept for it, or its answer failed, or did not
-    come within *wait* seconds when a wait is given."""
-    from personalclaw.channel_delivery import delivery_for
-    from personalclaw.config.credentials import owner_id_for
-
-    handle = handle if handle is not None else delivery_for(provider)
-    if handle is None or not channel_id:
-        return False
-    try:
-        owner = owner_id_for(provider)
-        opened = asyncio.wait_for(handle.open_dm(owner), wait) if owner else None
-        theirs = str(await opened or "") if opened is not None else ""
-    except Exception:  # noqa: BLE001 - see the docstring: an unread audience is shared
-        logger.warning("could not tell whether a %s conversation is the owner's DM", provider)
-        return False
-    return bool(theirs) and theirs == channel_id
 
 
 def _tell_the_thread_it_left(
