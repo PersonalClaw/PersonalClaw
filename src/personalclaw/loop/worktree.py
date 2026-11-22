@@ -26,6 +26,8 @@ import shutil
 import subprocess
 import threading
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import NamedTuple
 
 from personalclaw.security import mask_child_output
@@ -109,8 +111,30 @@ def _git(
         if errors:
             out += (p.stderr or b"").decode("utf-8", "replace")
         return p.returncode, out
+    except subprocess.TimeoutExpired as e:
+        # Killed at its bound: a git that held a lock (the index's, a ref's) leaves it behind,
+        # and the next git there fails on it, so the step and the folder are named.
+        step = _subcommand(args)
+        logger.warning(
+            "loop git %s in %s was stopped after %ss, still running", step, workspace, timeout
+        )
+        return 1, str(e)
     except (OSError, subprocess.SubprocessError) as e:
         return 1, str(e)
+
+
+def _subcommand(args: tuple[str, ...]) -> str:
+    """The git subcommand *args* run: the first word that is neither an option nor the value of
+    a ``-c`` or ``-C`` before it."""
+    skip = False
+    for arg in args:
+        if skip:
+            skip = False
+        elif arg in ("-c", "-C"):
+            skip = True
+        elif not arg.startswith("-"):
+            return arg
+    return "git"
 
 
 def is_git_repo(workspace: str) -> bool:
@@ -803,7 +827,9 @@ def has_uncommitted_changes(workspace: str, *, untracked: bool = False) -> bool:
     direction that keeps work out of worktrees rather than in them, and keeps it from being
     deleted."""
     shown = "--untracked-files=all" if untracked else "--untracked-files=no"
-    rc, out = _git(workspace, "status", "--porcelain", shown)
+    # A read: it never takes the index lock to refresh the index, so a status git stops at its
+    # bound leaves no lock that fails the next merge there.
+    rc, out = _git(workspace, "--no-optional-locks", "status", "--porcelain", shown)
     return rc != 0 or bool(out.strip())
 
 
@@ -841,6 +867,11 @@ class MergeResult(NamedTuple):
     #: The branch brought nothing the base lacks (its change was already there), so nothing was
     #: merged: no commit and no merge commit, and the task's worktree and branch are removed.
     already: bool = False
+    #: What git said when it refused the merge for anything but a content conflict, masked: the
+    #: start of its output and its errors, where git says what stopped it.
+    error: str = ""
+    #: The lock file git's refusal names, as git named it (a path, never a secret), else ``""``.
+    lock: str = ""
 
     def __bool__(self) -> bool:  # back-compat: callers/tests can still treat it as a bool
         return self.ok
@@ -903,18 +934,77 @@ def merge_worktree(workspace: str, task_id: str, project_id: str = "") -> MergeR
         # conflicted paths BEFORE aborting — the abort clears them, so reading them
         # afterward (in the caller) would always be empty → every conflict misreported.
         conflicts = conflict_paths(workspace)
-        logger.info(
-            "worktree merge %s for %s: %s",
-            "conflict" if conflicts else "failed",
-            task_id,
-            mask_child_output(out),
+        said = mask_child_output(out, limit=_GIT_SAID_CHARS)
+        # A failed merge pauses the loop, so it is logged where the gateway's log keeps it.
+        logger.warning(
+            "worktree merge %s for %s: %s", "conflict" if conflicts else "failed", task_id, said
         )
         if conflicts:
             _git(workspace, "merge", "--abort")
-        return MergeResult(ok=False, conflicts=conflicts)
+            return MergeResult(ok=False, conflicts=conflicts)
+        named = _LOCK_NAMED.search(out)
+        return MergeResult(ok=False, conflicts=[], error=said, lock=named.group(1) if named else "")
     _rc, head = _git(workspace, "rev-parse", "HEAD")
     remove_worktree(workspace, task_id, project_id)
     return MergeResult(ok=True, conflicts=[], head=head.strip())
+
+
+#: A lock file git's error names: ``Unable to create '<path>.lock': File exists.``
+_LOCK_NAMED = re.compile(r"'([^'\n]+\.lock)'")
+#: How much of what git said a refused merge keeps: its first lines, which say what stopped it.
+_GIT_SAID_CHARS = 400
+
+
+def why_not_merged(workspace: str, result: MergeResult) -> str:
+    """What a merge git refused for anything but a content conflict says to its owner: git's own
+    words, and, when they name a lock file that is still there and older than any git step here
+    runs (:data:`_TIMEOUT`), that it was left behind: to remove when no git runs in *workspace*,
+    which is said where it can be told (:func:`_git_runs_in`). ``""`` when git said nothing."""
+    if not result.error:
+        return ""
+    said = f"Git said: {result.error}"
+    if not result.lock:
+        return said
+    lock = Path(result.lock)
+    if not lock.is_absolute():
+        lock = Path(workspace) / lock
+    try:
+        since = lock.stat().st_mtime
+    except OSError:
+        return said
+    running = _git_runs_in(workspace)
+    if time.time() - since <= _TIMEOUT or running:
+        return said
+    real_lock, real_ws = os.path.realpath(lock), os.path.realpath(workspace)
+    inside = real_lock.startswith(real_ws + os.sep)
+    shown = os.path.relpath(real_lock, real_ws) if inside else str(lock)
+    when = datetime.fromtimestamp(since, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    left = f"{said} A git lock file was left at {shown} (since {when})"
+    if running is None:
+        return f"{left}. If no git command is running there, remove it, then resume."
+    return f"{left}, and no git command is running there: remove it, then resume."
+
+
+def _git_runs_in(workspace: str) -> bool | None:
+    """Whether a git process runs with *workspace*, or a folder in it, as its folder, read from
+    ``/proc``; ``None`` where there is none to read (macOS), so a lock is never called left
+    behind on a guess."""
+    proc = Path("/proc")
+    if not (proc / "self" / "cwd").exists():
+        return None
+    root = os.path.realpath(workspace)
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if (entry / "comm").read_text(encoding="utf-8").strip() != "git":
+                continue
+            cwd = os.path.realpath(os.readlink(entry / "cwd"))
+        except OSError:
+            continue  # gone meanwhile, or another user's
+        if cwd == root or cwd.startswith(root + os.sep):
+            return True
+    return False
 
 
 def commit_workspace(workspace: str, message: str) -> str:
