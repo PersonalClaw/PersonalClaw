@@ -223,6 +223,130 @@ async def test_the_chat_says_whether_its_thread_is_shared(
         assert await _linked_to_a_shared_thread(gw.state, own.key) is False
 
 
+@pytest.mark.asyncio
+async def test_a_helpers_report_is_not_posted_into_her_own_dm_either(tmp_path, monkeypatch, thread):
+    """Never anywhere: in her own DM, where her dashboard turns are mirrored, a helper's report's
+    turn is posted no more than in a shared thread. The row the rule needs where every row would
+    count as her dashboard turn."""
+    from personalclaw.dashboard.state import SUBAGENT_COMPLETION_PREFIX
+
+    thread.handle.open_dm = AsyncMock(return_value=CHANNEL)
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        chat = await _a_linked_chat(gw)
+        before = thread.heard()
+        await _run(gw, chat, "subagent", f"{SUBAGENT_COMPLETION_PREFIX}\n{REPORT}")
+    assert thread.heard() == before
+
+
+@pytest.mark.asyncio
+async def test_a_channel_that_never_says_whose_dm_it_is_holds_no_turn(
+    tmp_path, monkeypatch, thread
+):
+    """The check of whose DM the thread is waits a bounded time: a channel that never answers holds
+    her turn no longer than that, and the turn stays in the dashboard. 🔴 Red before: the turn
+    waited on the channel for as long as it took."""
+    import asyncio
+
+    from personalclaw.dashboard import channel_links
+
+    async def _never(_owner):
+        await asyncio.Event().wait()
+
+    thread.handle.open_dm = AsyncMock(side_effect=_never)
+    monkeypatch.setattr(channel_links, "AUDIENCE_WAIT_SECS", 0.05)
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        chat = await _a_linked_chat(gw)
+        before = thread.heard()
+        await asyncio.wait_for(_run(gw, chat, "user", NOTE), timeout=20)
+    assert thread.heard() == before
+
+
+#: What a compaction says of a conversation in the chat: the model's account of it.
+SUMMARY = "Her therapist moved Thursday's session to four, and the offsite is in Lisbon."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dm", "summarised"),
+    [(HER_DM, False), (CHANNEL, True), (ConnectionError("no answer"), False)],
+    ids=["a shared thread", "her DM", "an audience that can't be read"],
+)
+async def test_a_compactions_summary_goes_only_to_her_own_dm(
+    tmp_path, monkeypatch, thread, dm, summarised
+):
+    """A compaction's summary is the model's account of the whole conversation: a thread others
+    read is told only that the conversation was compacted. 🔴 Red before: every linked thread was
+    posted the summary."""
+    from personalclaw.dashboard.chat_utils import _broadcast_compaction_result
+    from personalclaw.llm.events import EVENT_COMPACTION_STATUS, AgentEvent
+
+    if isinstance(dm, BaseException):
+        thread.handle.open_dm = AsyncMock(side_effect=dm)
+    else:
+        thread.handle.open_dm = AsyncMock(return_value=dm)
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        chat = await _a_linked_chat(gw)
+        before = thread.heard()
+        await _broadcast_compaction_result(
+            gw.state,
+            chat,
+            AgentEvent(kind=EVENT_COMPACTION_STATUS, text="completed", title=SUMMARY),
+        )
+    posted = " ".join(thread.heard()[len(before) :])
+    assert ("Lisbon" in posted) is summarised, posted
+    assert "Conversation compacted" in posted
+
+
+async def _moved_by(gw, route: str, body: dict) -> None:
+    """The dashboard's own link or handoff handler, as the chat's menu calls it."""
+    from unittest.mock import patch
+
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.chat_channel import (
+        api_chat_session_channel_link,
+        api_chat_session_handoff,
+    )
+    from personalclaw.dashboard.request_boundary import request_boundary_middleware
+
+    chat = gw.state.get_or_create_session("chat-on-the-dashboard")
+    chat.append("user", NOTE, "msg msg-u")
+    chat.append("assistant", "Booked: Thursday at four.", "msg msg-a")
+    from personalclaw.dashboard.chat_persistence import save_session_to_history
+
+    save_session_to_history(gw.state, chat, force=True)
+    app = web.Application(middlewares=[request_boundary_middleware()])
+    app.router.add_post("/api/chat/sessions/{session}/channel-link", api_chat_session_channel_link)
+    app.router.add_post("/api/chat/sessions/{session}/handoff", api_chat_session_handoff)
+    app["state"] = gw.state
+    with patch("personalclaw.dashboard.chat_channel.sel", MagicMock()):
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(f"/api/chat/sessions/{chat.key}/{route}", json=body)
+            assert resp.status == 200, await resp.text()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["channel-link", "handoff"])
+@pytest.mark.parametrize(
+    ("dm", "shared"), [(HER_DM, True), (CHANNEL, False)], ids=["a channel", "her DM"]
+)
+async def test_a_chat_moved_to_a_thread_others_read_posts_none_of_it_there(
+    tmp_path, monkeypatch, thread, route, dm, shared
+):
+    """A link or handoff of a dashboard chat into a thread others read opens it saying only that a
+    conversation continues there: not its title, not her last message, not the messages a link
+    posts as context. Into her own DM, as before. 🔴 Red before: the shared thread was posted them.
+    """
+    thread.handle.open_dm = AsyncMock(return_value=dm)
+    thread.handle.deliver_text = AsyncMock(return_value="1790800000.000999")
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        await _moved_by(gw, route, {"provider": PROVIDER, "channel": CHANNEL})
+    posted = " ".join(thread.heard())
+    assert ("therapist" in posted or "Thursday" in posted) is not shared, posted
+    assert ("Session linked" in posted) or ("continues here" in posted) or not shared, posted
+
+
 # ── whose DM it is ──────────────────────────────────────────────────────────────────────────
 
 

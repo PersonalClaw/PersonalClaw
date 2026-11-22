@@ -107,6 +107,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The same holds when the chat runs on an agent CLI: a colleague's turn is sent to a CLI session of its own, handed the conversation as the channel showed it, instead of the session that holds the owner's turns. The owner's next turn goes back to her own session.**
 - **A chat linked to a channel thread other people read no longer posts what you write on the dashboard there, nor its answer, nor any helper's report or scheduled result the chat receives. Only your own DM with PersonalClaw shows your dashboard messages, and the composer of a chat on a shared thread says that what you write there stays there.**
 - **A chat you move from your DM with PersonalClaw into a shared thread, by linking it to a channel or handing it off there, shows a colleague's turn there nothing said or answered in your DM: only what that thread itself showed.**
+- **A thread other people read is told only that a chat was compacted, linked or moved there: not the compaction's summary of the conversation, not the chat's title or last messages, and not a move of a turn the thread never saw. Your own DM with PersonalClaw is told as before.**
 
 ## [0.3.9] — 2026-11-16
 

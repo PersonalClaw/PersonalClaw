@@ -28,7 +28,6 @@
 {"site": "src/personalclaw/config/loader.py::AppConfig.load_with_migration_state", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 1228, "complexity": 150}
 {"site": "src/personalclaw/context.py::ContextBuilder.build_message", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 550, "complexity": 82}
 {"site": "src/personalclaw/context.py::ContextBuilder.build_session_context", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 431, "complexity": 62}
-{"site": "src/personalclaw/dashboard/chat_channel.py::api_chat_session_channel_link", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 117, "complexity": 35}
 {"site": "src/personalclaw/dashboard/chat_fork.py::api_chat_session_fork", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 165, "complexity": 34}
 {"site": "src/personalclaw/dashboard/chat_handlers.py::_switch_posture", "reason": "split out of api_chat_mode in #5638, still over complexity 30 when the rail came (#4015): split it below both, then delete this line", "lines": 151, "complexity": 35}
 {"site": "src/personalclaw/dashboard/chat_handlers.py::api_chat", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 366, "complexity": 69}

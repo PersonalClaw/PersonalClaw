@@ -386,8 +386,12 @@ async def say_moved(
     answered: bool,
     send_again: Callable[[], None],
     attempt: Callable[[], tuple[dict[str, Any], list[dict[str, Any]]]],
+    *,
+    told: bool = True,
 ) -> bool:
     """End a turn she moved, where the conversation is. False when the turn was not moved.
+    The chat's channel thread is told only when it was *told* of the turn
+    (``chat_runner._the_thread_told``): a thread that never saw it hears nothing of its move.
 
     An answer the turn gave (*answered*: its runtime ended it with an answer, not a cancel) stands,
     and the change applies from her next message. Otherwise her message is asked again on the new
@@ -411,7 +415,8 @@ async def say_moved(
                 to, len(asked.steps), running=any(s.running for s in asked.steps)
             )
             turn_endings.say_the_turn_has_no_answer(state, session, note)
-            _tell_channel(state, session_key, note)
+            if told:
+                _tell_channel(state, session_key, note)
             return True
         send_again()
     note = (
@@ -419,7 +424,8 @@ async def say_moved(
     )
     session.append("notice", note, "msg msg-notice")
     state.broadcast_ws("chat_message", {"session": session.key, "role": "notice", "content": note})
-    _tell_channel(state, session_key, note)
+    if told:
+        _tell_channel(state, session_key, note)
     return True
 
 

@@ -28,6 +28,7 @@ from personalclaw import channel_delivery, channel_transports
 from personalclaw.channel_transports.base import ChannelTransportProvider
 from personalclaw.config.credentials import owner_id_credential
 from personalclaw.config.loader import CRED_OWNER_ID
+from personalclaw.dashboard.chat_utils import COMPACTED
 from personalclaw.llm.events import (
     EVENT_COMPACTION_STATUS,
     EVENT_COMPLETE,
@@ -225,7 +226,9 @@ async def test_a_linked_chat_is_answered_told_and_continued_in_its_thread(
     notice = await _broadcast_compaction_result(
         state, session, AgentEvent(kind=EVENT_COMPACTION_STATUS, text="completed", title=SUMMARY)
     )
-    assert slack.deliver_text.await_args.args[:3] == (where, notice, THREAD)
+    # A channel's thread hears only that the conversation was compacted; her DM hears it all.
+    told = notice if answered_there else COMPACTED
+    assert slack.deliver_text.await_args.args[:3] == (where, told, THREAD)
 
     assert state.get_linked_session(THREAD) is session, "a reply in the thread opens a new chat"
 

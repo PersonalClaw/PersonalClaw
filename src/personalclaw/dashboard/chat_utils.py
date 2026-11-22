@@ -517,15 +517,31 @@ def _broadcast_auto_tool(state: DashboardState, session: _ChatSession, event: "L
     return title
 
 
+#: What a shared thread is told of a compaction: that it happened, and nothing of the summary.
+COMPACTED = "Conversation compacted."
+
+
 async def _say_compaction_notice(state: DashboardState, session: _ChatSession, text: str) -> None:
     """Say a compaction's outcome where the conversation is: its dashboard chat, and the channel
-    thread it is linked to (``DashboardState.tell_linked_channel``), where its replies go."""
+    thread it is linked to (``DashboardState.tell_linked_channel``), where its replies go.
+
+    The summary is the model's account of the whole conversation, the owner's turns in it, so a
+    thread is told it only when it is the owner's own DM with PersonalClaw
+    (``channel_links.the_link_is_the_owners_own_dm``). A thread others read is told that the
+    conversation was compacted (:data:`COMPACTED`), and nothing of a compaction that failed or
+    found nothing to fold."""
+    from personalclaw.dashboard import channel_links
+
     session.append("assistant", text, "msg msg-a")
     state.broadcast_ws(
         "chat_message",
         {"session": session.key, "role": "assistant", "content": text},
     )
-    await state.tell_linked_channel(_history_key_for(session.key), text)
+    key = _history_key_for(session.key)
+    if await channel_links.the_link_is_the_owners_own_dm(state, key):
+        await state.tell_linked_channel(key, text)
+    elif text.startswith(COMPACTED.rstrip(".")):
+        await state.tell_linked_channel(key, COMPACTED)
 
 
 #: What a compaction that found nothing to reclaim says, of a conversation that is short.

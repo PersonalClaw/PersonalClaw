@@ -841,7 +841,7 @@ async def _the_thread_told(
     ):
         return delivery, thread, channel, False
     if _the_owners_dashboard_turn(turn_row) and await channel_links.is_the_owners_own_dm(
-        provider, channel, delivery
+        provider, channel, delivery, wait=channel_links.AUDIENCE_WAIT_SECS
     ):
         return delivery, thread, channel, True
     return None, None, None, False
@@ -5094,15 +5094,16 @@ async def run_chat(
             except Exception:
                 logger.debug("Stream cleanup failed", exc_info=True)
         # Below the channel's progress lines, which the stream just finalized.
+        _told = arrived_from_channel or bool(_mirror_delivery)  # was the thread told of it?
         if not await running_turn.say_moved(
-            state, session, session_key, _answered, _send_again, _this_attempt
+            state, session, session_key, _answered, _send_again, _this_attempt, told=_told
         ):
             say_how_an_unanswered_turn_ended(
                 state,
                 session,
                 session_key,
                 _turn_outcome,
-                told=arrived_from_channel or bool(_mirror_delivery),
+                told=_told,
                 after_deny=_deny_note,
                 # How its wait on her answer ended, when the gateway stopped while it waited.
                 waited=parked_chat_turns.how_the_wait_ended(session),
