@@ -348,6 +348,16 @@ def _newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for _at, row in timed] + untimed[::-1]
 
 
+def _line(row: dict[str, Any]) -> str:
+    """*row* as one line of a history file, every character past ASCII escaped.
+
+    Escaped, not written as UTF-8: a run's text can hold a lone surrogate (a JSON ``\\ud800`` in a
+    payload decodes to one), which UTF-8 cannot encode, and the write raised. Its row was never
+    written, so its History lost it and the hourly cap's count (`count_since`) passed over it.
+    Escaped, the row is plain JSON that reads back to the same text."""
+    return json.dumps(row, ensure_ascii=True) + "\n"
+
+
 @dataclass
 class _Lines:
     """One read of a history file (`ScheduleRunStore._read`): its rows, and the lines in it that
@@ -463,7 +473,7 @@ class ScheduleRunStore:
         """Write *rows* to *path*, after the lines *kept* as they were: lines that are not UTF-8
         (:meth:`_read`) hold no row and no time, so they go first and are written back byte for
         byte, never decoded and never dropped by a rewrite or a trim."""
-        content = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+        content = "".join(_line(row) for row in rows)
         if not kept:
             atomic_write(path, content, mode=0o600)
             return
@@ -505,14 +515,14 @@ class ScheduleRunStore:
                 run.trigger = _exit_after(run.trigger, early)
             # Full record (with trace) on the per-job file.
             with job_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(run.to_dict(include_trace=True), ensure_ascii=False) + "\n")
+                fh.write(_line(run.to_dict(include_trace=True)))
             try:
                 job_path.chmod(0o600)
             except OSError:
                 pass
             # Lightweight row (no trace) on the cross-job index.
             with self._index.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(run.to_dict(include_trace=False), ensure_ascii=False) + "\n")
+                fh.write(_line(run.to_dict(include_trace=False)))
             try:
                 self._index.chmod(0o600)
             except OSError:
