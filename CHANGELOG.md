@@ -24,6 +24,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A notice wraps a word wider than it, such as a folder's path, where it ran past the notice's edge and was cut off.**
 - **A chat's permission and task mode controls show the mode it runs in when it was set elsewhere: a pick in another tab or on another device, or YOLO turned on, off or running out. An open chat's Execution Boundary reads its sandbox again once a switch of its agent has been taken, and a project's start box never shows a permission mode this computer's operator settings would refuse: it keeps Normal and says why.**
 - **A gateway started outside the desktop app and added in the Gateways window by its address, `http://127.0.0.1:10000` say, is used as This computer: Buddy, the menu bar's Show Buddy and the app's own update work with it, and the Gateways window lists it once. While no gateway of this computer's is in use, Show Buddy says the buddy shows only with one.**
 - **The buddy no longer stays on a failure: a click on a floating orb opens its alert's card, an approval or a question shows over an error, and an error leaves once its work or its chat has gone on, after it has shown. A second click on the orb, Esc, a click outside or a minute untouched closes the buddy's card. Opening PersonalClaw from the buddy, the menu bar or a notification on macOS brings it to the front.**
@@ -77,7 +78,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A Library search or filter that leaves the open item out of the list keeps it in its pane and says the search hides it, rather than saying nothing in your library has its address.**
 - **A Projects address with `?peek=` opens the project it names: the value is one part of the address, so one carrying path characters no longer lands on another page.**
 - **Switching an answer that used a tool to another version shows that version whole, its tool calls included, and a reload shows the same. It used to keep the other version's tool calls and text around the one you picked.**
-- **A file automation whose folder is not on this machine says so on the Triggers page, where it read active and never fired, as one restored from another machine does with that machine's paths. Its row's warning names the folder, and Resume all says it as it switches one back on. A folder that is there with no file in it yet is not flagged.**
+- **A file automation whose folder is not on this machine says so on the Triggers page, where it read active and never fired, as one restored from another machine does with that machine's paths. Its row's warning names the folder, its badge reads "folder missing" rather than "check schedule", and Resume all says it as it switches one back on. A folder that is there with no file in it yet is not flagged.**
 
 ### Security
 

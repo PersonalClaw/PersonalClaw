@@ -8,9 +8,9 @@ matches no file, so it never fires, and nothing said why: the watch reads "no fi
 changes".
 
 Now a pattern whose fixed folder (the part before its first wildcard) is not there is said: on the
-row in the Triggers list answer, the list's warning advisory, and in Resume all's answer for each
-automation it switched back on. A folder that is there with no match in it yet is not flagged: the
-file may still come.
+row in the Triggers list answer, the list's warning advisory (its badge reads "folder missing", from
+the row's `folders_not_here`), and in Resume all's answer for each automation it switched back on.
+A folder that is there with no match in it yet is not flagged: the file may still come.
 
 Driven through the real Triggers list route, the real Resume all route and the real store, in a
 home of the test's own. The row Resume all resumes is held the way a replace restore leaves it
@@ -68,6 +68,19 @@ def test_a_watch_whose_folder_is_not_here_says_so_on_its_row(home, tmp_path, mon
     _watching(home, "file:notes", [f"{gone}/**/*.md"])
     (warning,) = _warned(home, monkeypatch, "file:notes")
     assert str(gone) in warning and "so it never fires" in warning, warning
+
+
+def test_the_row_names_the_folders_its_badge_says_are_missing(home, tmp_path, monkeypatch):
+    """The list's badge reads "folder missing" off them (`advisoryBadge`), not "check schedule"."""
+    there, gone = tmp_path / "here", tmp_path / "gone"
+    there.mkdir()
+    _watching(home, "file:two", [f"{there}/*.txt", f"{gone}/*.txt"])
+    _watching(home, "file:here", [f"{there}/*.md"])
+    T = _page_on(monkeypatch, home)
+    resp = asyncio.run(T.api_triggers(_req("GET", "/api/triggers?type=store")))
+    rows = {r["raw_id"]: r for r in json.loads(resp.body)["triggers"]}
+    assert rows["file:two"]["folders_not_here"] == [str(gone)]
+    assert rows["file:here"]["folders_not_here"] == []
 
 
 def test_a_folder_that_is_there_with_no_match_yet_is_not_flagged(home, tmp_path, monkeypatch):

@@ -508,3 +508,14 @@ export function relPast(ts?: number | string | null): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
   return `${Math.floor(s / 86400)}d ago`
 }
+
+/** The word a row's warning badge says on the list: "can't fire" for a web watch its last check
+ *  left unable to fire, "folder missing" for a file automation watching a folder that is not on
+ *  this machine (`folders_not_here`), "check schedule" for every other advisory. A badge sending
+ *  the owner to a cadence that is not the problem is a wrong lead, not a hint. */
+export function advisoryBadge(t: Pick<Trigger, 'store'>): string {
+  if (t.store?.last_check?.can_fire === false) return "can't fire"
+  const gone = t.store?.folders_not_here?.length ?? 0
+  if (gone > 0) return gone === 1 ? 'folder missing' : 'folders missing'
+  return 'check schedule'
+}
