@@ -376,11 +376,13 @@ async def _events(items):
         yield item
 
 
-async def _chat_turn(state, session):
+async def _chat_turn(state, session, *, arrived_from_channel: bool = False):
     from personalclaw.dashboard.chat_runner import run_chat
 
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
-        await run_chat(state, session, "draft my standup")
+        await run_chat(
+            state, session, "draft my standup", arrived_from_channel=arrived_from_channel
+        )
 
 
 @pytest.mark.asyncio
@@ -412,7 +414,9 @@ def _outcomes(state) -> list[str]:
 async def test_a_breaker_stop_is_said_once_in_its_own_words_where_the_conversation_is(tmp_path):
     """Nobody asked for the stop, and the breaker said why: the turn ended in that error. Told as
     a stop nobody explained, the chat and its channel also got "Send your message again to retry",
-    which is false here: the same message loops the same way."""
+    which is false here: the same message loops the same way. The turn came from the channel's
+    thread, which is told how it ended; a thread that was not told of a turn hears nothing of its
+    ending (``chat_runner._the_thread_told``, ``say_how_an_unanswered_turn_ended``'s ``told``)."""
     state, client = _chat_state(tmp_path, "native")
     state.tell_linked_channel = AsyncMock()
     stopped = lb.repeat_circuit_message(lb.REPEAT_CIRCUIT_THRESHOLD + 1)
@@ -423,9 +427,54 @@ async def test_a_breaker_stop_is_said_once_in_its_own_words_where_the_conversati
     )
     session = _ChatSession("chat-6-loop")
 
-    await _chat_turn(state, session)
+    await _chat_turn(state, session, arrived_from_channel=True)
 
     assert [c.args[1] for c in state.tell_linked_channel.call_args_list] == [stopped]
+    assert [m.get("content") for m in session.messages if m.get("role") == "error"] == [stopped]
+    assert _outcomes(state) == ["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("arrived_from_channel", "her_dm", "told"),
+    [(True, False, True), (False, False, False), (False, True, True)],
+    ids=[
+        "a turn its thread started",
+        "her dashboard turn, a shared thread",
+        "her dashboard turn, her DM",
+    ],
+)
+async def test_a_breaker_stop_follows_its_turn_into_the_thread(
+    tmp_path, arrived_from_channel, her_dm, told
+):
+    """The breaker's stop is part of answering the turn, so it goes where the turn is answered: into
+    the linked thread when the turn came from that thread's own message, or when the thread is her
+    own DM with PersonalClaw, and nowhere else (``chat_runner._the_thread_told``). Her dashboard
+    turn in a shared thread is stopped in the chat alone. 🔴 Red before the mirror's rule: every
+    ending was said in the thread."""
+    from personalclaw.dashboard import channel_links
+
+    state, client = _chat_state(tmp_path, "native")
+    state.tell_linked_channel = AsyncMock()
+    delivery = AsyncMock()
+    state.channel_provider_for = lambda _key: "teamchat"
+    state.delivery_for = lambda provider: delivery if provider == "teamchat" else None
+    state.sessions.get_channel_link = MagicMock(return_value=("1790800000.000100", "C0SHARED01"))
+    stopped = lb.repeat_circuit_message(lb.REPEAT_CIRCUIT_THRESHOLD + 1)
+    client.stream = MagicMock(
+        side_effect=lambda *a, **kw: _events(
+            [AgentEvent(kind=EVENT_COMPLETE, stop_reason="cancelled", text=stopped)]
+        )
+    )
+    session = _ChatSession("chat-8-loop")
+    if not arrived_from_channel:
+        session.append("user", "draft my standup")  # her message, typed in the dashboard
+
+    with patch.object(channel_links, "is_the_owners_own_dm", AsyncMock(return_value=her_dm)):
+        await _chat_turn(state, session, arrived_from_channel=arrived_from_channel)
+
+    said = [c.args[1] for c in state.tell_linked_channel.call_args_list]
+    assert said == ([stopped] if told else []), said
     assert [m.get("content") for m in session.messages if m.get("role") == "error"] == [stopped]
     assert _outcomes(state) == ["error"]
 
