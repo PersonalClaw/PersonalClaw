@@ -49,7 +49,7 @@ function detail() {
  *  address the image was asked for by. */
 async function pinTheChat(page: Page, delayMs: number): Promise<string[]> {
   const body = JSON.stringify(detail())
-  await page.route(`**/api/chat/sessions/${KEY}`, (route) =>
+  await page.route(`**/api/chat/sessions/${KEY}?all=1`, (route) =>
     route.request().method() === 'GET'
       ? route.fulfill({ status: 200, contentType: 'application/json', body })
       : route.fallback())
@@ -228,7 +228,7 @@ test.describe('an image waiting for its signature has the box it keeps', () => {
           { role: 'assistant', content: SHAPES, ts: '2026-11-01T09:00:20+00:00' },
         ],
       })
-      await page.route(`**/api/chat/sessions/${BOX_KEY}`, (route) =>
+      await page.route(`**/api/chat/sessions/${BOX_KEY}?all=1`, (route) =>
         route.request().method() === 'GET'
           ? route.fulfill({ status: 200, contentType: 'application/json', body })
           : route.fallback())
@@ -300,7 +300,7 @@ test.describe("a reply's image stays as the reply finishes", () => {
     const send = (type: string, data: Record<string, unknown>) => {
       for (const ws of sockets) ws.send(JSON.stringify({ type, data: { session: LIVE_KEY, ...data } }))
     }
-    await page.route(`**/api/chat/sessions/${LIVE_KEY}`, (route) =>
+    await page.route(`**/api/chat/sessions/${LIVE_KEY}?all=1`, (route) =>
       route.request().method() === 'GET'
         ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(sessionDetail()) })
         : route.fallback())

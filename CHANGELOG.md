@@ -24,6 +24,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The plan panel offers Cancel plan mode while a plan drafts and while it waits for a turn to end, not only once a draft is ready for review.**
 - **The desktop app runs on Electron 45, packed by electron-builder 26.18.**
 - **The chat's agent orb draws a tool step as what its call does: reading for a call that reads, editing for one that edits, and running a command for one that runs or doesn't say. Each step's drawing holds at least 1.2 s, so a read or an edit over in milliseconds is still seen. Settings › Design's gallery shows the two new ones.**
+- **A read of a chat (`GET /api/chat/sessions/{session}`) that asks for no page is served its newest 200 messages, with `has_more` and `total`, and `before` pages back from there; `?all=1` serves the whole history, which the dashboard's chat page asks for. Its messages are redacted off the event loop, so reading a long chat no longer holds every other chat and the rest of the API: a script reading 28 chats a minute held health checks for up to 86 s. For apps: a read of your own chat that needs all of it asks `?all=1`.**
 
 ### Fixed
 

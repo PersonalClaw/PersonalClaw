@@ -43,7 +43,7 @@ const PHONES = [320, 360, 390, 412, 600, 768] as const
 const MAX_COMPOSER_H: Record<number, number> = { 390: 276, 1280: 156 }
 
 async function pinTheChat(page: Page, measured = false, detail: object = measured ? MEASURED : DETAIL): Promise<void> {
-  await page.route(`**/api/chat/sessions/${KEY}`, (route) =>
+  await page.route(`**/api/chat/sessions/${KEY}?all=1`, (route) =>
     route.request().method() === 'GET'
       ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) })
       : route.fallback())

@@ -129,7 +129,9 @@ def _shape(messages: list[dict]) -> list[tuple]:
 
 
 async def _served(http: TestClient, key: str) -> list[tuple]:
-    resp = await http.get(f"/api/chat/sessions/{key}")
+    # The whole history, as the dashboard's chat page reads it (a read that asks for no page is
+    # served the newest 200: test_a_chat_read_serves_its_newest_page.py).
+    resp = await http.get(f"/api/chat/sessions/{key}?all=1")
     assert resp.status == 200, await resp.text()
     return _shape((await resp.json())["messages"])
 
@@ -461,7 +463,7 @@ async def test_pagination_serves_each_message_once(tmp_path, monkeypatch):
                 ),
             )
             await _send(http, state, key, f"question {i}")
-        whole = await (await http.get(f"/api/chat/sessions/{key}")).json()
+        whole = await (await http.get(f"/api/chat/sessions/{key}?all=1")).json()
         page = await (await http.get(f"/api/chat/sessions/{key}?limit=50")).json()
     expected = [c for i in range(3) for c in (f"question {i}", f"answer {i}")]
     assert [m["content"] for m in whole["messages"]] == expected

@@ -68,7 +68,7 @@ async function recordSends(page: Page): Promise<string[]> {
 
 /** The chat answers from here with *content* as its widget message, and every send is kept. */
 async function pinTheChat(page: Page, content: string | (() => unknown)): Promise<string[]> {
-  await page.route(`**/api/chat/sessions/${KEY}`, (route) =>
+  await page.route(`**/api/chat/sessions/${KEY}?all=1`, (route) =>
     route.request().method() === 'GET'
       ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(typeof content === 'string' ? detail(content) : content()) })
       : route.fallback())

@@ -49,7 +49,7 @@ const DETAIL = {
 }
 
 async function pinTheChat(page: Page): Promise<void> {
-  await page.route(`**/api/chat/sessions/${KEY}`, (route) =>
+  await page.route(`**/api/chat/sessions/${KEY}?all=1`, (route) =>
     route.request().method() === 'GET'
       ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DETAIL) })
       : route.fallback())

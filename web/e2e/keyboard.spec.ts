@@ -336,7 +336,7 @@ test.describe('the approval key', () => {
   test('nothing is answered from the composer of the chat that shows the card', async ({ page }) => {
     // The chat's own pending permission row, so its card is on the page beside the composer.
     const chatDecisions: Request[] = []
-    await page.route('**/api/chat/sessions/e2e-keys-chat', (route) =>
+    await page.route('**/api/chat/sessions/e2e-keys-chat?all=1', (route) =>
       route.request().method() === 'GET'
         ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
           key: 'e2e-keys-chat', title: 'Keys', queue: [], task_mode: 'agent', approval: 'normal', memory_mode: 'persistent',
