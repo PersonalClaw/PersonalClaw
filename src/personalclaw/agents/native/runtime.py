@@ -2220,6 +2220,24 @@ class NativeAgentRuntime(
         self._staged_images.append(data_url)
         return True
 
+    def _history_for_turn(self) -> list[dict]:
+        """The history the running turn is answered from: all of ``_messages`` for the owner's
+        own turn, and for a turn someone else asked for only the turn itself, from its message on.
+
+        What came before holds what the channel never showed them: each earlier turn's message as
+        its model got it (the context it was built with, which for the owner's turn can carry her
+        memory), the tool calls with their arguments and results, and the turns a helper's report
+        or a scheduled result started. Such a turn's message is built with the conversation as the
+        channel showed it instead (``chat_persistence.channel_view``). Closed: a turn whose message
+        is not in the history is answered from nothing before it either. ``_messages`` keeps it all,
+        and the owner's next turn reads it as before."""
+        from personalclaw import memory_writes
+
+        if not memory_writes.asker():
+            return self._messages
+        at = next((i for i, m in enumerate(self._messages) if m is self._turn_message), -1)
+        return self._messages[at:] if at >= 0 else []
+
     def _request_messages(self, mode: PromptCache) -> list[dict]:
         """The message list one inference sends: the cache hint, the turn's images, and the
         request for a reply the turn still owes.
@@ -2230,10 +2248,14 @@ class NativeAgentRuntime(
         the pass's ``request``), so they ride every inference of the turn. The request for
         the reply (`owed_reply`) is a volatile note at the tail, like the correction note, so it
         rides every attempt of that one inference and never enters the history.
+
+        A turn someone other than the owner asked for (``memory_writes.asker``: a colleague's in a
+        shared thread) is answered apart from the history before it (:meth:`_history_for_turn`).
         """
-        out = mark_cacheable_prefix(self._messages, mode, generation=self._cache_generation)
+        history = self._history_for_turn()
+        out = mark_cacheable_prefix(history, mode, generation=self._cache_generation)
         if self._turn_images and self._turn_message is not None:
-            idx = next((i for i, m in enumerate(self._messages) if m is self._turn_message), -1)
+            idx = next((i for i, m in enumerate(history) if m is self._turn_message), -1)
             if idx >= 0:
                 out = list(out)
                 target = out[idx]

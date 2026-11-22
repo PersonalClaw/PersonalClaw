@@ -1293,6 +1293,52 @@ def prior_turns_transcript(
     ]
 
 
+#: What the channel view (:func:`channel_view`) shows of a turn the channel never showed: what
+#: started it, by kind, and none of what it held.
+_NOT_SHOWN_TURNS = {
+    "subagent": "A helper's report arrived here",
+    "inject": "A scheduled run's result arrived here",
+    "nudge": "A loop's nudge arrived here",
+}
+#: The same for a row of words taken in from outside (``turn_source.FROM_OUTSIDE``), and for a
+#: message of the owner's that no channel took in.
+_FROM_OUTSIDE_TURN = "Words taken in from outside arrived here"
+_OUTSIDE_THE_THREAD = "The owner wrote here outside this thread"
+
+
+def channel_view(session: _ChatSession, in_flight: str, *, nested: bool = False) -> list[dict]:
+    """THIS session's conversation before the turn now being sent, as the channel showed it: the
+    messages a channel took in, as they were sent, and the assistant's replies, each with where it
+    came from (``turn_source.provenance``). A turn the channel never showed (one a helper's
+    report, a scheduled run's result or a loop's nudge started, words taken in from outside, a
+    message of the owner's no channel took in) is a stub that names what it was and holds none of
+    it; tool rows, approvals and cards are not in it at all.
+
+    What a turn someone other than the owner asked for is built with: such a turn is answered
+    apart from the runtime's history (``NativeRuntime._history_for_turn``), whose earlier turns
+    hold what the channel never showed them. Closed: a user row is shown only when a channel took
+    it in. Cut at the in-flight message, as :func:`prior_turns_transcript` is."""
+    from personalclaw.turn_source import FROM_OUTSIDE, provenance
+
+    msgs = session.messages
+    at = in_flight_index(session, in_flight, nested=nested)
+    out: list[dict] = []
+    for m in msgs[: len(msgs) if at is None else at]:
+        role = m.get("role")
+        meta = m.get("meta")
+        stub = _NOT_SHOWN_TURNS.get(str(role))
+        if role == "user" and isinstance(meta, dict) and meta.get(FROM_OUTSIDE):
+            stub = _FROM_OUTSIDE_TURN
+        elif role == "user" and not source_of(m).get("source_channel"):
+            stub = _OUTSIDE_THE_THREAD
+        if stub:
+            said = f"[{stub}. It is not shown: someone other than the owner asked for this turn.]"
+            out.append({"role": "summary", "content": said})
+        elif role in ("user", "assistant"):
+            out.append({"role": role, "content": m.get("content", ""), **provenance(m)})
+    return out
+
+
 def background_summary(state: DashboardState, session: _ChatSession) -> dict | None:
     """The background-compression record of *session*'s persisted transcript, or ``None``.
 

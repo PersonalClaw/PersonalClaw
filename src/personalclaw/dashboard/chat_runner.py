@@ -55,6 +55,7 @@ from personalclaw.dashboard import (
 from personalclaw.dashboard.chat_followups import _maybe_followups, maybe_offer_check_work
 from personalclaw.dashboard.chat_persistence import (
     background_summary,
+    channel_view,
     in_flight_index,
     prior_turns_transcript,
     save_session_to_history,
@@ -1492,6 +1493,24 @@ def _as_quoted(name: str) -> str:
     return " ".join(name.split()).replace("`", "'")[:80]
 
 
+def _turn_history(
+    session: _ChatSession, in_flight: str, depth: int, provider_kind: str
+) -> tuple[list[dict], bool]:
+    """What *session*'s turn now being sent is built with of the conversation before it, and
+    whether it is answered apart from its runtime's history. A turn someone other than the owner
+    asked for (``memory_writes.asker``), on the built-in runtime, is: the runtime's earlier turns
+    hold what the channel never showed them (``NativeRuntime._history_for_turn``), so it is built
+    as a fresh runtime's turn is, from the conversation as the channel showed it
+    (``channel_view``). Any other turn, from the session's own prior turns."""
+    from personalclaw.providers import model_efforts
+
+    apart = bool(memory_writes.asker()) and model_efforts.native_runtime(provider_kind)
+    transcript = (channel_view if apart else prior_turns_transcript)(
+        session, in_flight, nested=depth > 0
+    )
+    return transcript, apart
+
+
 @memory_writes.runs_as_its_session
 @_says_its_phases
 async def run_chat(
@@ -2331,17 +2350,19 @@ async def run_chat(
         # transcript the bootstrap consumes (one source, so the label cannot drift
         # from the behaviour it names): THIS session's turns before the one being
         # sent — never the in-flight message, never another session's.
-        _prior_transcript = prior_turns_transcript(
-            session, _in_flight_text, nested=_prompt_depth > 0
+        # Built as a fresh runtime's turn when someone else asked for it (`_turn_history`).
+        _prior_transcript, _apart = _turn_history(
+            session, _in_flight_text, _prompt_depth, provider_kind
         )
+        _fresh = is_new or _apart
         _restores = (
-            is_new
+            _fresh
             and not resumed
             and not is_command
             and not _carrying_on
             and bool(state.context_builder)
         )
-        if _restores and _prior_transcript:
+        if _restores and _prior_transcript and not _apart:
             # What the fresh runtime is handed of those turns: while the chat's background
             # summary (`bg_compress`) still describes its oldest span, the summary stands in
             # for that span. The chat itself — the buffer and the file — is never shortened.
@@ -2671,7 +2692,7 @@ async def run_chat(
                 assemble_context,
                 state.context_builder,
                 message,
-                is_new_session=is_new,
+                is_new_session=_fresh,
                 session_key=session_key,
                 agent=provider_agent or session.agent or None,
                 resumed=resumed,
