@@ -479,3 +479,37 @@ async def test_two_starts_that_begin_together_start_one_program_that_a_stop_reac
                 os.killpg(proc.pid, signal.SIGKILL)
         mcp_stdio.forget_left("pair")
         await _all_finished()
+
+
+@pytest.mark.asyncio
+async def test_a_start_that_begins_after_another_starts_program_has_spoken_goes_on_at_once(
+    tmp_path,
+) -> None:
+    """A program that has said a word is a running server, not one still installing: a second
+    connection to it starts its own program at once. (A start that waited for it, as for one still
+    starting, would wait until the first program ended, and a second connection to a running
+    server would hang to its deadline.)"""
+    script = _write_script(
+        tmp_path / "talks_server.py",
+        """
+        _send({"jsonrpc": "2.0", "method": "notifications/message",
+               "params": {"level": "info", "data": "up"}})
+        import time
+        time.sleep(120)
+        """,
+    )
+    spec = {"command": str(script), "args": ["--fixture"]}
+    first, second = mcp_stdio.StdioRun(), mcp_stdio.StdioRun()
+
+    async def second_start() -> bool:
+        async with mcp_stdio.stdio_streams("talks", spec, run=second):
+            return True
+
+    async with mcp_stdio.stdio_streams("talks", spec, run=first):
+        deadline = time.monotonic() + 30
+        while not first.spoke:
+            assert time.monotonic() < deadline, "the first program never said a word"
+            await asyncio.sleep(0.05)
+
+        assert await asyncio.wait_for(second_start(), 10.0)
+        assert not second.waiting, "it waited for a program that had already spoken"
