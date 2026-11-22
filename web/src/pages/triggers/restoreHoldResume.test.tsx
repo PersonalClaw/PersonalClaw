@@ -123,9 +123,9 @@ describe('the notice above the Triggers list', () => {
   it('badges a file automation whose folder is not here "folder missing", not "check schedule"', async () => {
     API.storeTriggers.mockImplementation(() => Promise.resolve([storeRow({
       store_kind: 'file', id: 'store:file:notes', raw_id: 'file:notes', name: 'New notes',
-      spec: { paths: ['/Users/someone-else/notes/*.md'] },
-      warnings: ['It watches /Users/someone-else/notes, which is not on this machine, so it never fires.'],
-      folders_not_here: ['/Users/someone-else/notes'],
+      spec: { paths: ['/Users/ada/notes/*.md'] },
+      warnings: ['It watches /Users/ada/notes, which is not on this machine, so it never fires.'],
+      folders_not_here: ['/Users/ada/notes'],
     })]))
     await mountTriggers()
     expect(await screen.findByText('· folder missing')).toBeInTheDocument()
@@ -133,7 +133,7 @@ describe('the notice above the Triggers list', () => {
   })
 
   it('says, as it switches one back on, that a watch whose folder is not here can never fire', async () => {
-    const said = 'It watches /Users/someone-else/notes, which is not on this machine, so it never fires. '
+    const said = 'It watches /Users/ada/notes, which is not on this machine, so it never fires. '
       + "Make the folder, or change the pattern: a home restored from another machine keeps that machine's paths."
     API.resumeRestoredTriggers.mockImplementationOnce(() => Promise.resolve({
       ok: true,
