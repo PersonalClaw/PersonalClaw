@@ -9,9 +9,10 @@ colleague's turn in the same thread was answered from all of it. His turn reads 
 
 Now a turn someone other than the owner asked for is answered apart from the runtime's history
 (``NativeRuntime._history_for_turn``), and built from the conversation as the channel showed it
-(``chat_persistence.channel_view``): what was said in the thread and the assistant's replies, with a
-stub that names each turn the channel never showed and holds none of it. Her own next turn reads
-everything as before.
+(``chat_persistence.channel_view``): what was said in the thread and the answers the thread was
+shown (``turn_source.SHOWN_ON_CHANNEL``, written once an answer's mirror is posted), with a stub
+that names each turn the channel never showed, and each answer it was not shown, and holds none of
+it. Her own next turn reads everything as before.
 
 Every turn here crosses the channel's real door into the real turn engine, on a real native
 runtime whose model is scripted.
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from test_a_standing_grant_answers_only_the_owners_own_asks import (  # noqa: F401 — autouse
@@ -28,7 +30,13 @@ from test_a_standing_grant_answers_only_the_owners_own_asks import (  # noqa: F4
     _gateway,
 )
 from test_a_turn_someone_else_asked_for_reads_none_of_your_memory import FACT, _her_memory
-from test_a_turn_someone_else_started_changes_no_memory_on_its_own import COLLEAGUE, OWNER
+from test_a_turn_someone_else_started_changes_no_memory_on_its_own import (
+    COLLEAGUE,
+    OWNER,
+    PROVIDER,
+)
+
+from personalclaw import channel_delivery
 
 #: What a file of hers holds, which her own turn's call read.
 NOTED = "the spare key is under the blue pot"
@@ -39,6 +47,33 @@ REPORT = "Helper report: the landlord's number is 555-0142"
 def _handed(gw) -> str:
     """Everything the model was handed for the last step it took."""
     return json.dumps(gw.agent.handed[-1])
+
+
+#: An answer the thread's mirror fails to post (:func:`_the_thread_is_shown_its_answers`).
+LOST = "the mirror of this answer failed"
+
+
+@pytest.fixture(autouse=True)
+def _the_thread_is_shown_its_answers():
+    """The channel is connected: the chat's answers are mirrored to the thread its messages came
+    on (``chat_runner._mirror_the_answer``), except one that says :data:`LOST`, whose post fails.
+    Returns the handle, which hears everything sent there."""
+
+    async def mirror(_channel: str, text: str, _thread: str = "") -> None:
+        if LOST in text:
+            raise ConnectionError("the channel refused the post")
+
+    handle = MagicMock()
+    handle.deliver_text = AsyncMock(return_value="")
+    handle.deliver_chat_mirror = AsyncMock(side_effect=mirror)
+    handle.start_stream = AsyncMock(return_value="")
+    handle.append_stream_task = AsyncMock()
+    handle.stop_stream = AsyncMock()
+    channel_delivery.register(handle, provider=PROVIDER)
+    try:
+        yield handle
+    finally:
+        channel_delivery.register(None, provider=PROVIDER)
 
 
 @pytest.mark.asyncio
@@ -124,25 +159,59 @@ async def test_a_colleagues_turn_holds_none_of_a_helpers_report(tmp_path, monkey
         assert "A helper's report arrived here" in his
 
 
+@pytest.mark.asyncio
+async def test_a_reply_the_thread_was_not_shown_is_not_in_his_turn(tmp_path, monkeypatch):
+    """The answer to a helper's report repeats it, and its mirror to the thread failed: his turn
+    is shown a stub where it was. 🔴 Red before: every answer was in the view his turn was built
+    with, the ones the thread was never shown too."""
+    from test_a_turn_someone_else_started_changes_no_memory_on_its_own import _settled
+
+    from personalclaw.dashboard.chat_runner import run_chat
+    from personalclaw.dashboard.state import SUBAGENT_COMPLETION_PREFIX
+
+    async with _gateway(tmp_path, monkeypatch) as gw:
+        gw.agent.calls.append([])
+        await gw.say(OWNER, "Morning! I'll keep the offsite notes in this thread.")
+        chat = gw.chat()
+        delivered = f"{SUBAGENT_COMPLETION_PREFIX}\n{REPORT}"
+        chat.append("subagent", delivered)
+        gw.agent.calls.append([])
+        gw.agent.answer = f"The helper says the landlord's number is 555-0142 ({LOST})."
+        await run_chat(gw.state, chat, delivered)
+        await _settled(gw.state)
+
+        gw.agent.answer = "Noted."
+        gw.agent.calls.append([])
+        await gw.say(COLLEAGUE, "What did the helper find?")
+        his = _handed(gw)
+        assert "555-0142" not in his
+        assert "A reply the channel was not shown was here" in his
+        # The answer the thread was shown is in it.
+        assert "Noted." in his
+
+
 def _row(role: str, content: str, **extra) -> dict:
     return {"role": role, "content": content, **extra}
 
 
 def test_the_channel_view_shows_what_the_channel_showed_and_stubs_the_rest():
-    """The view a turn someone else asked for is built with: the messages a channel took in and the
-    replies, and a stub for each turn the channel never showed. 🔴 Red before: there was no such
-    view; the history handed on was every turn the runtime kept."""
+    """The view a turn someone else asked for is built with: the messages a channel took in, the
+    answers the thread was shown, and a stub for each turn the channel never showed and each answer
+    it was not shown. 🔴 Red before: the answer to the helper's report, which the thread was never
+    shown, was in it."""
     from personalclaw.dashboard.chat_persistence import channel_view
-    from personalclaw.turn_source import FROM_OUTSIDE, arrived_on
+    from personalclaw.turn_source import FROM_OUTSIDE, SHOWN_ON_CHANNEL, arrived_on
 
     hers = arrived_on("1790800000.000100", "U0OWNER", "slack")
     his = arrived_on("1790800000.000100", "U0JONAS", "slack")
+    shown = {"meta": {SHOWN_ON_CHANNEL: True}}
     session = SimpleNamespace(
         messages=[
             _row("user", "Morning! Notes go here.", **hers),
-            _row("assistant", "Noted."),
+            _row("assistant", "Noted.", **shown),
             _row("tool", "read_file: the spare key is under the blue pot"),
             _row("subagent", REPORT),
+            _row("assistant", "The helper found the landlord's number: 555-0142."),
             _row("inject", "Scheduled digest: 3 new invoices"),
             _row("user", "a typed note", source_thread="dashboard", source_user="dashboard"),
             _row("user", "Weather today: rain", meta={FROM_OUTSIDE: {"what": "a check-in"}}),
@@ -162,6 +231,7 @@ def test_the_channel_view_shows_what_the_channel_showed_and_stubs_the_rest():
         "summary",
         "summary",
         "summary",
+        "summary",
     ], view
     assert "Morning! Notes go here." in said and "Noted." in said
     for hidden in ("spare key", "555-0142", "invoices", "a typed note", "rain", "offsite plan"):
@@ -172,6 +242,7 @@ def test_the_channel_view_shows_what_the_channel_showed_and_stubs_the_rest():
         "The owner wrote here outside this thread",
         "Words taken in from outside arrived here",
         "A loop's nudge arrived here",
+        "A reply the channel was not shown was here",
     ):
         assert stub in said, stub
     assert "What's the plan?" not in said, "the in-flight message is cut off"

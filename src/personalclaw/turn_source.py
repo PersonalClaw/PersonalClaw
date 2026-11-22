@@ -70,6 +70,12 @@ MERGED = "merged"
 #: (:func:`model_text`). The row keeps its words as a person reads them.
 FROM_OUTSIDE = "from_outside"
 
+#: The ``meta`` key of an answer row the chat's channel thread was shown: the turn's answer, once
+#: it was mirrored there (``dashboard.chat_runner``'s ``_mirror_the_answer``). A turn someone
+#: other than the owner asked for is built with only the answers that carry it
+#: (``dashboard.chat_persistence.channel_view``).
+SHOWN_ON_CHANNEL = "shown_on_channel"
+
 #: The roles of the row a turn starts with: a person's message, and the row an automation's result,
 #: a subagent's report or a loop's nudge starts one with. Every row after it, up to the next such
 #: row, is that turn's (:func:`by_turn`): its calls, its approvals, its answer.

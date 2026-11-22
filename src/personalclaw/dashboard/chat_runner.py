@@ -747,6 +747,32 @@ def _flush_segment(
         )
 
 
+async def _mirror_the_answer(
+    session: _ChatSession, delivery: Any, channel: str, thread: str, text: str
+) -> None:
+    """Mirror the turn's answer *text* to the channel *thread* *session* is linked to, and mark
+    the answer row the thread was shown (``turn_source.SHOWN_ON_CHANNEL``): the answers a turn
+    someone other than the owner asked for is built with (``channel_view``). Only the turn's last
+    segment is mirrored, and a mirror that failed marks nothing. The 5 s flush writes the mark."""
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL
+
+    try:
+        await delivery.deliver_chat_mirror(channel, text, thread)
+    except Exception:
+        logger.debug("Failed to mirror response to channel", exc_info=True)
+        return
+    # The row `_flush_segment` settled this text as, redacted as it is kept.
+    kept = redact_credentials(redact_exfiltration_urls(text)[0])[0]
+    for row in reversed(session.messages):
+        if row.get("role") != "assistant":
+            continue
+        if row.get("content") == kept:
+            meta = row.get("meta")
+            row["meta"] = {**(meta if isinstance(meta, dict) else {}), SHOWN_ON_CHANNEL: True}
+            session._dirty = True
+        return
+
+
 def _log_turn_failure(session_key: str, exc: BaseException) -> None:
     """Log a chat turn that ended in an error, once, in the form that helps.
 
@@ -4762,12 +4788,9 @@ async def run_chat(
         # Rendering (mrkdwn, OPTIONS blocks) is the channel's concern — delegate to
         # the active ChannelDelivery so the dashboard imports no channel code.
         if assistant_text and _mirror_delivery and _mirror_thread and _mirror_chan:
-            try:
-                await _mirror_delivery.deliver_chat_mirror(
-                    _mirror_chan, assistant_text, _mirror_thread
-                )
-            except Exception:
-                logger.debug("Failed to mirror response to channel", exc_info=True)
+            await _mirror_the_answer(
+                session, _mirror_delivery, _mirror_chan, _mirror_thread, assistant_text
+            )
     # Every handler below settles the answer streamed so far BEFORE it appends its own row,
     # so the partial answer the user was reading is kept, and sits ahead of the error that
     # explains why it stops.

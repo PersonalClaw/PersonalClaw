@@ -30,6 +30,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from scripted_acp_agent import OWN_SESSIONS, PLAIN_ANSWER, own_session_id
+from test_a_colleagues_turn_sees_what_the_channel_showed import (  # noqa: F401 — autouse
+    _the_thread_is_shown_its_answers,
+)
 from test_a_standing_grant_answers_only_the_owners_own_asks import (  # noqa: F401 — autouse
     _a_shared_channel,
     _Gateway,
