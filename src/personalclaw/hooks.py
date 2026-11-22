@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from personalclaw import filled_secrets, lasting_work, record_files
 from personalclaw.atomic_write import atomic_write
@@ -862,7 +863,8 @@ class ScriptHook:
     # "blocked" (the exit-2 block was HONORED, or guardrails refused the action) | "advisory" (the
     # script asked to block and the seam could not honor it) | "blocked_injection" (the
     # injection screen refused the text it was handed, so it did not run) | "withheld" (it ran,
-    # and the screen refused what it printed). Every literal must have a key in
+    # and the screen refused what it printed) | "declined" (a fire its rung held, which you declined
+    # to run when it asked). Every literal must have a key in
     # `triggers.history.HOOK_STATUS_TO_OUTCOME`, which reports an unmapped one as a failure.
     last_status: str = ""
     run_count: int = 0
@@ -1172,6 +1174,68 @@ def held_owner_id(hook_id: str) -> str:
     return f"{LIFECYCLE_TRIGGER_PREFIX}{hook_id}"
 
 
+def _withhold(
+    hook: ScriptHook, route: Any, handed: HandedOn, *, label: str, can_wait: bool
+) -> None:
+    """Say that *hook*'s action did not run on its own: its rung (*route*) holds it.
+
+    🔴 An action that asks first (`one_tap`) filed "<hook> is waiting for you", which registered no
+    question, so nothing on it ran the action. Now, on an event that can wait (*can_wait*), the
+    hold is the hook's question, as a stored trigger's held fire is (`parks.hold_fire`): one Inbox
+    row, keyed by the hook's trigger id, whose Approve runs its action once for the event it held,
+    as your run (`trigger_runs.api_trigger_answer`, then :meth:`ScriptHookStore.answer_held`), and
+    whose Deny records that you declined. A later event before you answer keeps the one question,
+    and Approve runs the newest.
+
+    A check made before a tool call (a gating fire) cannot wait: the call was let through or
+    blocked as it was made, and a check run later would judge nothing. Its hold is explained, not
+    asked, and so is a Test's. An action that only drafts files its proposal.
+    """
+    from personalclaw.guardrails.rungs import ROUTE_ASK, announce_withheld
+    from personalclaw.triggers import parks
+
+    name = hook.name or hook.provider
+    refs = {"hook": hook.id, "provider": hook.provider}
+    if route.route == ROUTE_ASK and can_wait:
+        parks.hold_fire(
+            _HeldHook(id=f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}", name=name),
+            handed.payload,
+            provider=hook.provider,
+            reason=route.reason,
+            label=label,
+            context=handed.context,
+            refs={"action_type": route.key, "rung": route.rung, **refs},
+        )
+        return
+    if route.route == ROUTE_ASK:
+        title = f"{name} did not run"
+        body = (
+            f"The {hook.provider!r} action on the {hook.event} event asks first, and a check made "
+            f"before a tool call cannot wait for an answer, so it did not run: {route.reason}."
+        )
+    else:
+        title = f"{name} is waiting for you"
+        body = (
+            f"The {hook.provider!r} action on the {hook.event} event did not run: {route.reason}."
+        )
+    announce_withheld(
+        route,
+        title=title,
+        body=body,
+        refs=refs,
+        dedup_key=f"autonomy_hold:{route.key}:hook:{hook.id}",
+    )
+
+
+@dataclass(frozen=True)
+class _HeldHook:
+    """A lifecycle trigger as a held fire's question names it (`parks.hold_fire`): by its trigger
+    id (``lifecycle:<id>``), which no stored trigger's id is, and its name."""
+
+    id: str
+    name: str
+
+
 async def run_script_hook(
     hook: ScriptHook,
     context: str = "",
@@ -1180,9 +1244,16 @@ async def run_script_hook(
     enforced: bool = False,
     test: bool = False,
     cwd: str = "",
+    answered: Any = None,
 ) -> ScriptHookResult:
     """Dispatch hook execution through its registered ActionProvider, in the folder *cwd* names
     (:func:`hook_folder`).
+
+    ``answered`` is a held fire you approved (a `triggers.parks.TriggerPark`, from the question
+    :func:`_withhold` asked): its action runs once, now, for the event it held, with that event as
+    this door left it then (the park's payload and context, screened and fenced, so not again),
+    in the folder it was told then. Past the rung that held it, since your yes is what the rung
+    asked for; every other gate holds.
 
     ``enforced`` declares that THIS fire's result is consumed as a gate — the caller reads the
     exit-2 signal and rejects the tool. It decides which status an exit 2 records: ``blocked``
@@ -1206,8 +1277,13 @@ async def run_script_hook(
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
 
     _ensure_default_providers_registered()
-    folder, no_folder = hook_folder(cwd)
-    hook_event = _hook_payload(hook, hook_event, folder, test=test)
+    if answered is not None:
+        held_event = dict(getattr(answered, "payload", None) or {})
+        folder, no_folder = hook_folder(str(held_event.get("cwd", "") or ""))
+        hook_event = {**held_event, "cwd": folder}
+    else:
+        folder, no_folder = hook_folder(cwd)
+        hook_event = _hook_payload(hook, hook_event, folder, test=test)
 
     def _record(status: str) -> None:
         # Every terminal branch records through here so the rehearsal rule cannot
@@ -1235,6 +1311,7 @@ async def run_script_hook(
                 "skipped_incident",
                 "blocked_injection",
                 "withheld",
+                "declined",
             )
             else "error"
         )
@@ -1281,7 +1358,11 @@ async def run_script_hook(
     # What the event carried leaves the gateway here, so its words are screened and fenced on the
     # way out (`hand_on`). A refusal is a `blocked_injection` fire, said in a sentence that names
     # the pattern class and never the text, as the trigger fire's row does.
-    handed = hand_on(hook, context, hook_event)
+    handed = (
+        HandedOn(context=str(getattr(answered, "context", "") or ""), payload=hook_event)
+        if answered is not None
+        else hand_on(hook, context, hook_event)
+    )
     if handed.refused:
         groups = ", ".join(handed.refused)
         logger.warning(
@@ -1350,20 +1431,17 @@ async def run_script_hook(
     # The route comes from the provider NAME alone — the name→type mapping lives on the
     # declaration (`ActionTypeSpec.providers`), so an app-contributed provider is routed by
     # these same lines with no branch of its own here.
-    from personalclaw.guardrails.rungs import announce_withheld, record_execution
+    from personalclaw.guardrails.rungs import record_execution
     from personalclaw.guardrails.rungs import route_provider_action as _route_action
 
     route = _route_action(hook.provider, session_key=_session_key)
-    if not route.executes:
-        announce_withheld(
+    if not route.executes and answered is None:
+        _withhold(
+            hook,
             route,
-            title=f"{hook.name or hook.provider} is waiting for you",
-            body=(
-                f"The {hook.provider!r} action on the {hook.event} event did not run: "
-                f"{route.reason}."
-            ),
-            refs={"hook": hook.id, "provider": hook.provider},
-            dedup_key=f"autonomy_hold:{route.key}:hook:{hook.id}",
+            handed,
+            label=str(getattr(provider, "display_name", "") or hook.provider),
+            can_wait=not enforced and not test,
         )
         _record("held_for_rung")
         return ScriptHookResult(
@@ -1883,6 +1961,34 @@ class ScriptHookStore:
             # outcome: a gating hook's verdict stands whether or not its status lands.
             logger.debug("hooks.json cannot be read; the hooks' status is not recorded")
         return results
+
+    async def answer_held(
+        self, hook_id: str, park: Any, *, approved: bool
+    ) -> ScriptHookResult | None:
+        """Your answer to the question a held fire of *hook_id* asked (:func:`_withhold`), its park
+        already claimed (`triggers.parks.claim`): Approve runs the hook's action once, now, for the
+        event it held (``run_script_hook(answered=park)``); Deny runs nothing and records that you
+        declined. The hook's status is written as a fire's is. None when the hook is gone."""
+        self._take_in()
+        hook = self._hooks.get(hook_id)
+        if hook is None:
+            return None
+        if approved:
+            result = await run_script_hook(hook, answered=park)
+        else:
+            hook.last_status = "declined"
+            result = ScriptHookResult(
+                hook_id=hook.id,
+                hook_name=hook.name,
+                event=hook.event,
+                error="You declined to run this held fire.",
+            )
+        snapshot = [h.to_dict() for h in self._hooks.values()]
+        try:
+            await asyncio.to_thread(self._save_snapshot, snapshot)
+        except record_files.Unreadable:
+            logger.debug("hooks.json cannot be read; the answered hook's status is not recorded")
+        return result
 
     def _save_snapshot(self, hooks_data: list[dict]) -> None:
         """Thread-safe save using pre-captured hook snapshot, under the file's lock and with

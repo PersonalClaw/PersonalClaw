@@ -765,6 +765,7 @@ async def api_trigger_answer(request: web.Request) -> web.Response:
     """
 
     from personalclaw.dashboard.handlers.triggers import _split_id, _trigger_store
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
     from personalclaw.triggers import parks
     from personalclaw.triggers import tools as T
 
@@ -777,6 +778,8 @@ async def api_trigger_answer(request: web.Request) -> web.Response:
     body = await json_object_body(request)
     answer = require_bool(body, "answer")
     token = str(body.get("resume_token", "") or "")
+    if raw.startswith(LIFECYCLE_TRIGGER_PREFIX):
+        return await _answer_held_hook(request, raw, answer=answer, token=token)
     row = _trigger_store().get(raw)
     if row is None:
         # Deleted since it asked: there is nothing left to run, so the question goes too.
@@ -825,13 +828,61 @@ async def api_trigger_answer(request: web.Request) -> web.Response:
     )
 
 
+async def _answer_held_hook(
+    request: web.Request, raw: str, *, answer: bool, token: str
+) -> web.Response:
+    """The answer to a lifecycle trigger's held fire (`hooks._withhold`), whose park is keyed by
+    the hook's trigger id (``lifecycle:<id>``), which no stored trigger's id is. Approve runs the
+    hook's action once for the event it held, as your run, and Deny records that you declined
+    (`hooks.ScriptHookStore.answer_held`). The refusals a Run button honours are read before the
+    token is spent, as for a stored trigger, so a refused answer leaves the question answerable."""
+    from personalclaw.dashboard.handlers.triggers import _hook_store, _redact
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+    from personalclaw.triggers import parks
+    from personalclaw.triggers import tools as T
+
+    state = request.app["state"]
+    hooks = _hook_store(state)
+    hook_id = raw[len(LIFECYCLE_TRIGGER_PREFIX) :]
+    hook = hooks.get(hook_id)
+    if hook is None:
+        parks.withdraw(raw, state=state)
+        return json_error(
+            "not_found",
+            message="This lifecycle trigger no longer exists, so there is nothing to run.",
+            status=404,
+        )
+    name = hook.name or hook.provider
+    if answer:
+        refusal = T.manual_refusal()
+        if refusal:
+            return web.json_response({"ok": False, "name": name, "refused": refusal})
+    asked = parks.load(raw)
+    park = parks.claim(raw, token)
+    if park is None:
+        return await _park_gone(None, asked)
+    parks.close_row(state, raw)
+    result = await hooks.answer_held(hook_id, park, approved=answer)
+    if not answer:
+        return web.json_response(
+            {"ok": True, "approved": False, "name": name, "result": "declined"}
+        )
+    ran = result is not None and not result.error
+    note = "ran" if ran else f"failed: {_redact(result.error if result else 'it is gone')}"
+    return web.json_response(
+        {"ok": ran, "approved": True, "name": name, "result": note, "waiting": False}
+    )
+
+
 async def _park_gone(trigger: Any, asked: Any) -> web.Response:
-    """The answer to a question that no longer takes one. A held fire's that lapsed unanswered is
-    recorded in its history, so the fire it held does not just vanish."""
+    """The answer to a question that no longer takes one. A stored trigger's held fire that lapsed
+    unanswered is recorded in its history, so the fire it held does not just vanish (a lifecycle
+    trigger's, *trigger* None, keeps no history of runs to record it in)."""
     from personalclaw.triggers import parks
 
     if asked is not None and asked.held and parks.expired(asked):
-        await _record_held(trigger, why="It waited for your yes, and nobody answered in time.")
+        if trigger is not None:
+            await _record_held(trigger, why="It waited for your yes, and nobody answered in time.")
         return json_error(
             "trigger_park_gone",
             message=(
