@@ -236,6 +236,44 @@ def test_a_stop_of_the_loop_stops_each_fire_under_way_first(tmp_path):
     assert seen["stopped_when_the_loop_ended"] == {"slow": 1}
 
 
+def test_a_fire_that_never_leaves_still_lets_the_stop_finish(tmp_path, monkeypatch):
+    """🔴 The loop's stop waited for each fire it cancelled with no bound, so an action that caught
+    its cancel, or whose child's pipes a grandchild held, held the gateway's stop forever. The
+    wait now gives up after the grace (`cancellation.cancel_and_wait`), and the stop goes on."""
+    from personalclaw import cancellation
+
+    monkeypatch.setattr(cancellation, "CANCEL_GRACE_SECS", 0.2)
+    stubborn = _clock("stubborn")
+    stubborn.next_fire_at = SVC.to_iso(time.time() - 1)
+    store = _store(tmp_path, stubborn)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def _ignores_its_cancel(_payload: dict[str, Any]) -> Any:
+        started.set()
+        while True:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                if release.is_set():
+                    raise
+
+    seen: dict[str, Any] = {}
+
+    async def _drive() -> None:
+        loop = asyncio.ensure_future(
+            L.run_forever(store, runner=_ignores_its_cancel, sessions=_manager(), base_dir=tmp_path)
+        )
+        await asyncio.wait_for(started.wait(), timeout=10)
+        loop.cancel()
+        done, _pending = await asyncio.wait({loop}, timeout=5)
+        seen["stopped"] = loop in done
+        release.set()
+
+    asyncio.run(_drive())
+
+    assert seen["stopped"], "the stop finished, without the fire that never left"
+
+
 def test_a_tick_with_no_set_of_fires_runs_each_to_its_end(tmp_path):
     """One iteration driven on its own (a test, the doctor) still reads every fire's outcome."""
     store = _store(tmp_path, _clock("a"), _clock("b"))

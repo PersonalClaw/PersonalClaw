@@ -128,12 +128,16 @@ async def run_forever(
 
 async def _stop_fires(fires: set[asyncio.Task[Any]]) -> None:
     """Stop each fire still under way, and wait while each records itself as a run a stop cut
-    off (`gateway._record_stopped_fire`), before the loop's own stop goes on its way."""
-    under_way = [task for task in fires if not task.done()]
-    for task in under_way:
-        task.cancel()
-    if under_way:
-        await asyncio.gather(*under_way, return_exceptions=True)
+    off (`gateway._record_stopped_fire`), before the loop's own stop goes on its way.
+
+    The wait is bounded (`cancellation.cancel_and_wait`): a fire whose action does not leave on
+    its cancel (one that catches it, or a child whose pipes a grandchild holds) must not hold the
+    gateway's stop forever. One still under way past the grace keeps running until the process
+    exits, and is named in the log.
+    """
+    from personalclaw.cancellation import cancel_and_wait
+
+    await cancel_and_wait(list(fires), what="the clock's fires under way")
 
 
 async def tick_once(
