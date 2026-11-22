@@ -205,7 +205,9 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
                   twice. The card itself must stay exposed — it contains the focusable Dismiss
                   button, and hiding an ancestor of a focusable control is `aria-hidden-focus`
                   (serious). Doing that produced exactly that violation. */}
-              <div className="min-w-0 flex-1">
+              {/* `break-words`: a word wider than the card (a folder's path) wraps inside it;
+                  it ran past the card's edge, where the card cut it off. */}
+              <div className="min-w-0 flex-1 break-words">
                 <span aria-hidden data-type="body-m" className="text-on-surface">{t.markdown ? <MarkdownLine text={t.message} /> : t.message}</span>
                 {/* The DESTINATION, when the dispatcher named one. `ink="emphasis"` because the
                     card's ground is `.glass`, not `--color-surface` (see TextLink's contrast

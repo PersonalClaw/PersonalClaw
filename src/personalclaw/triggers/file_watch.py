@@ -144,17 +144,25 @@ def missing_folders(
     return missing
 
 
-def watch_warnings(trigger: Any) -> list[str]:
-    """What a `file` trigger's list row and its resume say when a folder it watches is not on this
-    machine (:func:`missing_folders`); none for another kind, or when every folder is there."""
+def folders_not_here(trigger: Any) -> list[str]:
+    """The folders a `file` trigger watches that are not on this machine (:func:`missing_folders`);
+    none for another kind, which is not polled for files whatever its spec carries."""
     if getattr(trigger, "kind", "") != "file":
         return []
     from personalclaw.triggers.models import watched_paths
 
-    paths = watched_paths(getattr(trigger, "spec", None))
-    missing = missing_folders(paths)
+    return missing_folders(watched_paths(getattr(trigger, "spec", None)))
+
+
+def watch_warnings(trigger: Any) -> list[str]:
+    """What a `file` trigger's list row and its resume say when a folder it watches is not on this
+    machine (:func:`folders_not_here`); none when every folder is there."""
+    missing = folders_not_here(trigger)
     if not missing:
         return []
+    from personalclaw.triggers.models import watched_paths
+
+    paths = watched_paths(getattr(trigger, "spec", None))
     named = missing[0] if len(missing) == 1 else ", ".join(missing[:-1]) + " and " + missing[-1]
     are = "is" if len(missing) == 1 else "are"
     # Every pattern looking in a missing folder is a watch that cannot fire at all; one pattern of

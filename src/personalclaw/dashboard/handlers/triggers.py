@@ -451,6 +451,7 @@ def _serialize_store(row: Any, *, owner: str = "", served_by: str | None = None)
     """
     from personalclaw.inbound import webhook
     from personalclaw.triggers import run_source
+    from personalclaw.triggers.file_watch import folders_not_here
     from personalclaw.triggers.schedule_view import _inline_action, _last_run_ts
 
     trigger = row.trigger
@@ -502,6 +503,9 @@ def _serialize_store(row: Any, *, owner: str = "", served_by: str | None = None)
         "broken": errors,
         "warnings": warnings,
         "last_check": check,
+        # The folders a file automation watches that are not on this machine, which its warning
+        # names (`file_watch.folders_not_here`): the list's badge says so, not "check schedule".
+        "folders_not_here": folders_not_here(trigger),
         "needs_review": _needs_review(trigger),
         "needs_grant": _needs_grant(trigger),
         "held_back": _held_back(trigger),

@@ -3758,6 +3758,9 @@ export interface Trigger extends ListPlace {
   // A web watch's last check of its page; null for any other kind, or a watch not checked yet. While
   // its `can_fire` is false, `warnings` carries its `said` (`dashboard/handlers/triggers.py`).
   last_check?: TriggerCheck | null
+  // A file automation's folders that are not on this machine, which a sentence among its `warnings`
+  // names (`triggers/file_watch.py` `folders_not_here`); empty for any other kind.
+  folders_not_here?: string[]
   // A webhook automation's address and its sender tokens; null for any other kind.
   webhook?: WebhookDoor | null
   // schedule fields (kind=schedule)
