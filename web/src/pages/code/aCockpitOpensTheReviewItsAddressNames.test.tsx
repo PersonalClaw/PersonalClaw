@@ -104,6 +104,22 @@ describe('a code cockpit opens the review its address names', () => {
     expect(h.calls).toContain('fileGitOriginal')
   })
 
+  it('🔴 opens what the address names as a restore, which leaves following the worker on', async () => {
+    // An open without `_follow` was a user's, so a link or a reload that named a diff, a commit or a
+    // file the tab strip did not hold stopped following the worker (`takesTheWheel`).
+    const opened: Record<string, unknown>[] = []
+    const keep = (e: Event) => { opened.push((e as CustomEvent).detail) }
+    window.addEventListener('ne:code-open-diff', keep)
+    try {
+      render(<Cockpit initial={{ pane: 'changes', diff: 'src/a.py' }} />)
+      await screen.findByText('Diff — a.py')
+      expect(opened.length).toBeGreaterThan(0)
+      expect(opened.every((d) => d._restore === true), JSON.stringify(opened)).toBe(true)
+    } finally {
+      window.removeEventListener('ne:code-open-diff', keep)
+    }
+  })
+
   it('writes what is clicked in each region back to the address', async () => {
     render(<Cockpit initial={{ pane: 'changes', diff: 'src/a.py', task: 't-3' }} />)
     await steerBox()

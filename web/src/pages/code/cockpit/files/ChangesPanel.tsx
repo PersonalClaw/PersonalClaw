@@ -101,7 +101,7 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
           <Eyebrow className="px-3 pt-1 pb-1">
             Changes ({entries.length})
           </Eyebrow>
-          <ChangeList ws={ws} changes={entries} />
+          <ChangeList ws={ws} changes={entries} root={repoRoot} />
         </div>
       )}
       {/* per-stage commit history — the reviewable timeline (supervisor + worker
@@ -120,7 +120,8 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
             <button key={c.hash} type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('ne:code-open-commit', { detail: { hash: c.hash, subject: c.subject, path: ws } }))}
               data-type="body-s" className="flex w-full items-baseline gap-2 px-3 py-1 text-left transition-colors hover:bg-surface-high">
-              <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{c.hash}</span>
+              {/* The full hash travels (the address and links take it), shown short. */}
+              <span data-type="caption" className="shrink-0 font-mono text-on-surface-low" title={c.hash}>{c.hash.slice(0, 7)}</span>
               <span className="min-w-0 flex-1 truncate text-on-surface-var" title={c.subject}>{c.subject}</span>
               <span data-type="caption" className="shrink-0 text-on-surface-low">{c.relative}</span>
             </button>
@@ -133,19 +134,20 @@ export function ChangesPanel({ ws, running, isProjectDir = false, merges = [] }:
 
 /** The uncommitted changes, each opening its diff in the review pane. `shown` is the one the pane
  *  shows, marked as the current row. */
-export function ChangeList({ ws, changes, shown, className = '' }: {
-  ws: string; changes: [string, string][]; shown?: string; className?: string
+export function ChangeList({ ws, changes, shown, root = '', className = '' }: {
+  /** *root*: git's resolved root for the workspace's repository, read as a form of the workspace. */
+  ws: string; changes: [string, string][]; shown?: string; root?: string; className?: string
 }) {
   return (
     <ul aria-label="Uncommitted changes" className={`flex flex-col ${className}`}>
       {changes.map(([path, code]) => {
         const l = changeLabel(code)
-        const rel = changePath(ws, path)
+        const rel = changePath(ws, path, root)
         const on = rel === shown
         return (
           <li key={path} className="flex flex-col">
             {/* Raw: a full-row clickable list item, which no primitive draws. */}
-            <button type="button" onClick={() => openChange(ws, path, code)} aria-current={on ? 'true' : undefined}
+            <button type="button" onClick={() => openChange(ws, path, code, root)} aria-current={on ? 'true' : undefined}
               data-type="body-s" className={`flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface-high ${on ? 'bg-primary/15' : ''}`}>
               <span data-type="caption" className="w-[58px] shrink-0" style={{ color: l.color }}>{l.text}</span>
               <span className="min-w-0 truncate font-mono text-on-surface-var" title={path}>{rel}</span>

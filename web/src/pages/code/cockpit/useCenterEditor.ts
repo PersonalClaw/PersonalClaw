@@ -9,6 +9,7 @@ import type { RouteProps } from '../../../app/useQueryState'
 import { useWorkspaceChanges } from './files/useWorkspaceChanges'
 import { closeReviewInTab, useReviewOnOpen } from './useReviewOnOpen'
 import { centerFromQuery, centerPatch, fromReviewPath, isReviewCommit, toReviewPath, type Center } from './reviewState'
+import { inWorkspace, underWorkspace } from './workspacePath'
 
 /** A center's identity, for comparing what the address names with what is shown. */
 const centerKey = (c: Center | null | 'invalid'): string =>
@@ -137,12 +138,10 @@ export function useCenterEditor({ ws, isProjectDir = false, running = false, sho
   // the workspace's last segment too (same approach as the Changes panel's `rel`).
   useEffect(() => {
     if (!ws) return
-    const wsBase = ws.replace(/\/$/, '').split('/').pop() || ''
-    const underWs = (p: string) => p.startsWith(ws) || (!!wsBase && p.includes(`/${wsBase}/`))
     for (const t of tabs) {
       // Purge the draft with the tab (issue 2279): a ws-switch close is programmatic,
       // and a kept entry would resurrect the edit if the path reopens under a later ws.
-      if (!underWs(t.path)) { draftStore.delete(t.path); closeNow(t.path) }
+      if (!underWorkspace(ws, t.path)) { draftStore.delete(t.path); closeNow(t.path) }
     }
   }, [ws, tabs, closeNow])
   // Canonicalize an incoming path to the workspace (`ws`) form. Different sources
@@ -151,13 +150,7 @@ export function useCenterEditor({ ws, isProjectDir = false, running = false, sho
   // (/tmp/…). useFileTabs dedups by exact string, so without this the same file
   // opened from two sources becomes two tabs. Splice at the workspace's last
   // segment and re-root under `ws`.
-  const canonPath = useCallback((p: string): string => {
-    if (!ws || p.startsWith(ws)) return p
-    const wsBase = ws.replace(/\/$/, '').split('/').pop() || ''
-    const marker = `/${wsBase}/`
-    const i = wsBase ? p.lastIndexOf(marker) : -1
-    return i >= 0 ? `${ws.replace(/\/$/, '')}/${p.slice(i + marker.length)}` : p
-  }, [ws])
+  const canonPath = useCallback((p: string): string => (ws ? inWorkspace(ws, p) : p), [ws])
   // A working-vs-HEAD diff shown over the editor (Changes tab). Opening a plain
   // file (tree) clears it; closing it returns to the editor.
   const [diff, setDiff] = useState<{ path: string; name: string; deleted?: boolean } | null>(null)
@@ -269,8 +262,14 @@ export function useCenterEditor({ ws, isProjectDir = false, running = false, sho
     // Clear any in-progress reveal too: it renders ABOVE diff/commit (the body branch
     // order is reveal → commit → diff), so a user opening a diff/commit mid-reveal would
     // otherwise stay hidden behind the lingering animation.
-    const onDiff = (e: Event) => { const d = (e as CustomEvent).detail as { path: string; name: string; deleted?: boolean }; if (d?.path) { setReveal(null); setCommit(null); setDiff(d) } }
-    const onCommit = (e: Event) => { const c = (e as CustomEvent).detail as { hash: string; subject: string }; if (c?.hash) { setReveal(null); setDiff(null); setCommit(c) } }
+    // Kept as what is shown, without the open's own flags (`_restore`, `_follow`).
+    const onDiff = (e: Event) => {
+      const d = (e as CustomEvent).detail as { path: string; name: string; deleted?: boolean }
+      if (!d?.path) return
+      setReveal(null); setCommit(null)
+      setDiff(d.deleted === undefined ? { path: d.path, name: d.name } : { path: d.path, name: d.name, deleted: d.deleted })
+    }
+    const onCommit = (e: Event) => { const c = (e as CustomEvent).detail as { hash: string; subject: string }; if (c?.hash) { setReveal(null); setDiff(null); setCommit({ hash: c.hash, subject: c.subject }) } }
     // The worker deleted a file → play an erase (autonomous-backspace) animation of
     // its last content, then close any tab for it. detail carries {path,name,text}.
     const onErase = (e: Event) => {
@@ -408,7 +407,9 @@ export function useCenterEditor({ ws, isProjectDir = false, running = false, sho
       setQueryRef.current?.(centerPatch(null), { replace: true })
       return
     }
-    const send = (name: string, detail: unknown) => window.dispatchEvent(new CustomEvent(name, { detail }))
+    // A restore: what the address or a link names opens without taking the wheel (`takesTheWheel`),
+    // so following the worker stays on.
+    const send = (name: string, detail: object) => window.dispatchEvent(new CustomEvent(name, { detail: { ...detail, _restore: true } }))
     if (wanted.kind === 'commit') send('ne:code-open-commit', { hash: wanted.hash, subject: '' })
     else {
       const path = fromReviewPath(ws, wanted.path)

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Loader2, RotateCcw } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { api } from '../../lib/api'
+import { workspaceRelative } from './cockpit/workspacePath'
 import { MONACO_THEME } from '../../design/editorTheme'
 import { monacoLang } from '../files/fileMeta'
 
@@ -88,11 +89,7 @@ export function DiffView({ path, name, ws, deleted = false, onSelectLines }: {
   if (original === null || modified === null) {
     return <div className="flex h-full items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>
   }
-  const rel = (() => {
-    const base = ws.replace(/\/$/, '').split('/').pop() || ''
-    const marker = `/${base}/`; const i = base ? path.lastIndexOf(marker) : -1
-    return i >= 0 ? path.slice(i + marker.length) : name
-  })()
+  const rel = workspaceRelative(ws, path) || name
   return (
     <div className="flex h-full flex-col">
       <div data-type="body-s" className="shrink-0 border-b border-outline-variant/40 bg-surface-low/40 px-3 py-1.5 text-on-surface-var">

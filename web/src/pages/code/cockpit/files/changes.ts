@@ -1,3 +1,5 @@
+import { workspaceRelative } from '../workspacePath'
+
 // ── A workspace's uncommitted changes, as the cockpit lists them ──────────────────────────────
 //
 // What the Changes tab and the review pane both say about a change: its status in a word and a
@@ -19,24 +21,22 @@ export function changeLabel(code: string): { text: string; color: string } {
 }
 
 /** A git status path inside the workspace. Git-status keys are absolute paths whose root may differ
- *  from `ws` by a realpath prefix (e.g. /tmp vs /private/tmp on macOS), so the workspace is found by
- *  its LAST path segment. */
-export function changePath(ws: string, gitPath: string): string {
-  const wsBase = ws.replace(/\/$/, '').split('/').pop() || ''
-  const marker = `/${wsBase}/`
-  const i = wsBase ? gitPath.lastIndexOf(marker) : -1
-  return i >= 0 ? gitPath.slice(i + marker.length) : gitPath
+ *  from `ws` as git resolves it (/tmp vs /private/tmp on macOS, or the status's own `repoRoot`,
+ *  *root*), so the workspace is read in each of its forms (`workspacePath`). A path outside it is
+ *  shown as git names it. */
+export function changePath(ws: string, gitPath: string, root = ''): string {
+  return workspaceRelative(ws, gitPath, root) ?? gitPath
 }
 
 /** The diff a change opens: working copy against HEAD, under `ws` rather than the git realpath so
  *  the editor's workspace-scoped guards apply. A deleted file has no working copy, so the diff is
  *  told to read its missing side as expected (all removed) rather than as a load error. */
-export function changeDiff(ws: string, gitPath: string, code: string): { path: string; name: string; deleted: boolean } {
-  const rel = changePath(ws, gitPath)
+export function changeDiff(ws: string, gitPath: string, code: string, root = ''): { path: string; name: string; deleted: boolean } {
+  const rel = changePath(ws, gitPath, root)
   return { path: `${ws.replace(/\/$/, '')}/${rel}`, name: rel.split('/').pop() || rel, deleted: code.includes('D') }
 }
 
 /** Opens a change's diff in the review pane. */
-export function openChange(ws: string, gitPath: string, code: string) {
-  window.dispatchEvent(new CustomEvent('ne:code-open-diff', { detail: changeDiff(ws, gitPath, code) }))
+export function openChange(ws: string, gitPath: string, code: string, root = '') {
+  window.dispatchEvent(new CustomEvent('ne:code-open-diff', { detail: changeDiff(ws, gitPath, code, root) }))
 }

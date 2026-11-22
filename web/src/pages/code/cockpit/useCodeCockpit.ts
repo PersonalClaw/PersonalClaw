@@ -13,6 +13,7 @@ import { useRuntimeGroups } from '../../../lib/agents'
 import { type CodeToastState } from '../CodeToast'
 import { useQueryFlag, type RouteProps } from '../../../app/useQueryState'
 import { PROJECT_DIR_HIDDEN, PROJECT_DIR_HIDDEN_PREFIXES } from './files/WorkspaceTree'
+import { takesTheWheel } from './workspacePath'
 import { type ActivityItem, resolveTouchedPath } from './cockpitShared'
 import { loopToCodeProject } from './codeProject'
 
@@ -190,7 +191,7 @@ export function useCodeCockpit({ id, query, setQuery }: { id: string } & Pick<Ro
   // A MANUAL file/diff/commit open (not our auto-follow) means the user has taken
   // the wheel → stop following the worker. They can re-engage from the empty state.
   useEffect(() => {
-    const onManual = (e: Event) => { if (!(e as CustomEvent).detail?._follow) followRef.current = false }
+    const onManual = (e: Event) => { if (takesTheWheel((e as CustomEvent).detail)) followRef.current = false }
     // Editing a file (dirty draft) also pauses follow — don't yank the user off
     // their unsaved changes when the worker writes its next file.
     const onEditing = () => { followRef.current = false }
