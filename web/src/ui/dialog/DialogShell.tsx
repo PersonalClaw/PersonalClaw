@@ -179,8 +179,19 @@ export function DialogShell({ request, onClose }: {
     }
   }
 
+  // A key pressed before this dialog opened never answers it. A prompt opened by the Enter that
+  // answered the one before it (New collection's name, then its search) mounts while that Enter is
+  // still on its way to the window, and took it as its own answer. The window's keys count from the
+  // next turn of the event loop after the dialog opens.
+  const opened = useRef(false)
+  useEffect(() => {
+    const t = window.setTimeout(() => { opened.current = true }, 0)
+    return () => window.clearTimeout(t)
+  }, [])
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
+      if (!opened.current) return
       if (e.key === 'Escape') { e.preventDefault(); cancel() }
       else if (e.key === 'Enter' && !danger && !deliberate) {
         // In a textarea, Enter inserts a newline — don't submit.
