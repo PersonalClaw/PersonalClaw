@@ -139,7 +139,9 @@ def capture_run_end(ctl: RunController) -> None:
 _UNREPORTED_ENDINGS: frozenset[RunStatus] = frozenset({RunStatus.CANCELLED, RunStatus.DECLINED})
 
 
-def report_to_its_trigger(services: Any, run: WorkflowRun, status: RunStatus) -> None:
+def report_to_its_trigger(
+    services: Any, run: WorkflowRun, status: RunStatus, *, held: bool = False
+) -> None:
     """Say how a run a trigger started went, on the trigger's run and route, now that it has ended.
 
     The fire that started it only said it launched the run, or queued it, which is not news yet
@@ -176,6 +178,7 @@ def report_to_its_trigger(services: Any, run: WorkflowRun, status: RunStatus) ->
             status,
             error=error,
             summary=summary,
+            held=held,
             on_attention=getattr(services, "on_attention", None),
         )
         report = getattr(services, "report_to_trigger", None)

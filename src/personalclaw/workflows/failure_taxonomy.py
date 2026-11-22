@@ -173,6 +173,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
             failure_class=FailureClass.BUDGET,
             cause_plain=exc.headline(),
             remediation=f"{exc.fix()}, then Retry",
+            budget_scope=str(getattr(exc, "scope", "") or ""),
         )
     if isinstance(exc, PromptExceedsWindow):
         return Failure(
@@ -422,6 +423,11 @@ def classify_action_result(result: Any, output: Any = None) -> Failure:
             remediation=fix or _CLASS_FIX[cls],
             recoverable=retryable,
             retry_at=time.time() + wait if retryable and wait > 0 else None,
+            # Which ceiling, when it says (`ActionResult.budget_scope`): a step the day's ceiling
+            # refused holds its automation's run rather than counting a failure.
+            budget_scope=(
+                str(getattr(result, "budget_scope", "") or "") if cls is FailureClass.BUDGET else ""
+            ),
         )
     failure = _by_text("", cause, timed_out=False)
     if fix:

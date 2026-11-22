@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **An automation's workflow run, or its action, that the day's spend ceiling refused no longer counts toward pausing the automation: its run is held, as an agent the ceiling ended is, with the refusal's own sentence. A run its own spend cap stopped still counts, since nothing resets that cap. For apps, `personalclaw.sdk.action.ActionResult` has `budget_scope`: `"day"` on a failure classed `"budget"` that the day's ceiling refused, `"run"` for a run's own cap, and `""` when not said, which counts as before.**
+
 ## [0.4.2] — 2026-11-27
 
 This release holds a turn, a run and a file to where they belong: a stopped turn runs nothing more, a rewound or regenerated answer and a run's history keep what happened, a tool call, a command or a fetch that reaches past what you allowed is asked about first, and a file the agent sends shows only in its own chat. Each app capability has its own switch, every incident is kept with why and who, and Settings › Updates splits the desktop app from its gateway.

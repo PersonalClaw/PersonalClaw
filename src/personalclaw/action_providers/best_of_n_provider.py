@@ -154,6 +154,7 @@ def _model_failure(error: str, failure: dict[str, Any], *, stdout: str = "") -> 
         error=error,
         stdout=stdout,
         failure_class=str(failure.get("class") or ""),
+        budget_scope=str(failure.get("budget_scope") or ""),
         retry_after=max(0.0, wait),
         agent_error=(
             AgentError(

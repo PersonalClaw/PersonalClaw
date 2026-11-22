@@ -191,7 +191,10 @@ def _row(
     if _held_by_a_spend_ceiling(result, exc):
         status = "needs_input"
         cap = budget_refusal(exc)
-        summary = trace = cap.sentence() if cap is not None else error
+        # The refusal's own sentence: the raised one's, or what the result said of it.
+        summary = trace = (
+            cap.sentence() if cap is not None else (error or failure_for_result(result))
+        )
     elif _failed(result, exc):
         status = "failure"
         why = error or (f"{type(exc).__name__}: {exc}" if exc is not None else "")
@@ -232,13 +235,21 @@ def _row(
 
 def _held_by_a_spend_ceiling(result: Any, exc: BaseException | None) -> bool:
     """Whether the day's spend ceiling refused a call the action made: it raised that refusal
-    (`guardrails.failure.budget_refusal`, its ``scope`` "day"). A run's own cap resets with
-    nothing, so its refusal is the automation's failure; and a result that only says "budget"
-    (`ActionResult.failure_class`) does not say which ceiling, so it is not held either."""
+    (`guardrails.failure.budget_refusal`, its ``scope`` "day"), or returned a failure classed
+    "budget" that says the day's ceiling refused it (`ActionResult.budget_scope`). A run's own cap
+    resets with nothing, so its refusal is the automation's failure; and a result that says
+    "budget" and not which ceiling is not held either."""
     from personalclaw.guardrails.failure import budget_refusal
 
     cap = budget_refusal(exc) if exc is not None else None
-    return cap is not None and cap.scope == "day"
+    if cap is not None:
+        return cap.scope == "day"
+    return (
+        exc is None
+        and _failed(result, None)
+        and str(getattr(result, "failure_class", "") or "") == "budget"
+        and str(getattr(result, "budget_scope", "") or "") == "day"
+    )
 
 
 def _failed(result: Any, exc: BaseException | None) -> bool:

@@ -202,6 +202,12 @@ class ActionResult:
     # (`schedule_history.ScheduleRunStore.settle_sync`, `triggers.settle`). Empty for everything
     # else.
     work_id: str = ""
+    # Which spend ceiling refused, for a `failure_class` "budget": "day" (the day's, which lifts
+    # tomorrow or when it is raised) or "run" (the run's own cap, which nothing resets). A provider
+    # that saw the refusal says which (`guardrails.failure.BudgetExceededError.scope`); "" = not
+    # said. An automation's run the day's ceiling refused is held, not counted toward pausing it
+    # (`triggers.run_record`). Last, so a caller that passes the fields in order is unaffected.
+    budget_scope: str = ""
 
 
 def provider_failure(provider_name: str, exc: BaseException) -> AgentError:

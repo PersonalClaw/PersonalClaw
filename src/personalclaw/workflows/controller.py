@@ -2371,6 +2371,20 @@ class RunController:
         self._woken.set()
         self._resume_loop()
 
+    def _held_by_the_day_ceiling(self) -> bool:
+        """Whether this run failed only on the day's spend ceiling: every failed step's failure is
+        a refusal of that ceiling (`Failure.budget_scope` "day"). The ceiling lifts tomorrow or
+        when it is raised, so the automation that started the run waits rather than counts a
+        failure (`triggers.settle.settle_workflow_run`); a run's own cap is the run's failure."""
+        failed = [
+            inst.failure
+            for inst in self.instances.values()
+            if inst.state == InstanceState.FAILED and inst.failure is not None
+        ]
+        return bool(failed) and all(
+            f.failure_class == FailureClass.BUDGET and f.budget_scope == "day" for f in failed
+        )
+
     def _spend_refused(self) -> bool:
         """Whether a step of this run failed because a spend ceiling refused its model call."""
         return any(
@@ -2443,7 +2457,12 @@ class RunController:
             if status == RunStatus.COMPLETE:
                 run_finish.revise_project_overview(self)
             run_finish.capture_run_end(self)
-            run_finish.report_to_its_trigger(self.services, self.run, status)
+            run_finish.report_to_its_trigger(
+                self.services,
+                self.run,
+                status,
+                held=status == RunStatus.FAILED and self._held_by_the_day_ceiling(),
+            )
             run_finish.report_to_its_chat(self.services, self.run, status)
             run_finish.chain_after_run(self.services, self.run, status)
         self._publish("workflow_run_update", {"status": status.value, "error": error})
