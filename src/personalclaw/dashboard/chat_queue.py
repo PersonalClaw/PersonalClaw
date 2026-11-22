@@ -145,6 +145,7 @@ class ChatQueue:
         regenerate_hint: str = "",
         asked_for_by: Mapping[str, str] | None = None,
         attended: bool = False,
+        steered: Sequence[str] = (),
     ) -> str:
         """Queue the turn that just ended to run again, ahead of everything. Returns the queue ID.
 
@@ -156,7 +157,8 @@ class ChatQueue:
         hint, so the retry is asked the same way, and ``asked_for_by`` who asked for the work it
         carries on (``turn_source.ASKED_FOR_BY``), so it runs as asked for by them again.
         ``attended`` says the attempt it repeats ran unbounded (:data:`ATTENDED`), so it runs
-        unbounded again; a bounded attempt's retry is bounded the same.
+        unbounded again; a bounded attempt's retry is bounded the same. ``steered`` holds the
+        steers the attempt took, in order, which the retry is asked after her message.
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {
@@ -170,6 +172,8 @@ class ChatQueue:
             item[ASKED_FOR_BY] = dict(asked_for_by)
         if attended:
             item[ATTENDED] = True
+        if steered:
+            item["steered"] = list(steered)
         self._queue.insert(0, item)
         return qid
 

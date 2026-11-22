@@ -308,5 +308,6 @@ async def test_a_move_does_not_send_a_turn_whose_write_was_still_running_again(s
 async def test_a_move_sends_a_turn_that_only_read_again(state):
     session, send_again = await _move(state, _call_row("c1", *READ))
 
-    send_again.assert_called_once_with()
+    # With the steers the attempt took, after her message: it took none.
+    send_again.assert_called_once_with([])
     assert session.messages[-1]["role"] == "notice"

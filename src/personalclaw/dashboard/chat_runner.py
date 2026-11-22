@@ -1721,6 +1721,7 @@ async def run_chat(
     resume: Mapping[str, Any] | None = None,
     resume_allowed: bool = False,
     resume_why: str = "",
+    steered: Sequence[str] = (),
 ) -> None:
     """Stream LLM response into *session*.  Survives browser disconnect.
 
@@ -1744,6 +1745,7 @@ async def run_chat(
     ``_retry`` says this run sends the turn that just ended again (``_send_again`` below, drained
     by the queue): the same message, whose row is already in the transcript, and the same turn,
     so it opens no new checkpoint turn and is handed the same context the first attempt was.
+    ``steered`` are the steers that attempt took: it is asked her message followed by them.
 
     ``resume`` is a turn the last gateway stopped while it waited on her answer to a call, kept
     on disk (``parked_turns``) and answered since (``parked_chat_turns``): this run carries it on
@@ -1766,6 +1768,7 @@ async def run_chat(
     # below rewrites ``message`` (attachments, @prompt expansion, preambles). It is how
     # the history restore finds — and leaves out — the message now being sent.
     _in_flight_text = message
+    message = "\n\n".join([message, *steered]) if steered else message
     # Whether a person's own message started this turn, rather than the row an automation, a
     # subagent's report or an auto-nudge dispatched it with: a turn with no answer says how to
     # retry it (`turn_endings.no_answer_notice`). A turn with no row of its own was asked for
@@ -1796,7 +1799,7 @@ async def run_chat(
     # back: a retry of the turn (`_send_again`) is handed the same context the first attempt was.
     _taken_once: list[Callable[[], None]] = []
 
-    def _send_again() -> None:
+    def _send_again(steered: Sequence[str] = ()) -> None:
         """Queue this turn to run again: the same message, as the same turn.
 
         It re-sends the text the dispatcher appended (its row is already in the transcript), not
@@ -1814,6 +1817,7 @@ async def run_chat(
             asked_for_by=asked_for_by,
             # Bounded again only if this attempt was (`turn_deadline.bounded`).
             attended=not turn_deadline.bounded(),
+            steered=steered,
         )
 
     #: An agent CLI whose connection was lost before any step is sent again up to this many times.
@@ -5233,6 +5237,7 @@ async def run_chat(
                     arrived_from_channel=retry == "channel",
                     asked_for_by=consumed[0].get(ASKED_FOR_BY),
                     _retry=True,
+                    steered=consumed[0].get("steered", ()),
                 )
             elif consumed[0].get(ON_RECORD):  # her steer an agent refused: its row is written
                 next_turn = run_chat(state, session, next_msg)
