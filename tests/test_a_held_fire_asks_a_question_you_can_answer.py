@@ -101,6 +101,10 @@ def test_the_hold_is_a_question_with_an_answer(home):
         "acme-do-thing",
     )
     assert refs["trigger_held"] == "acme-do-thing", "the card says Approve runs it, not again"
+    # The question names the action as its app does, and says why once.
+    assert row["title"].startswith(f"Run {TID} now? Its "), row["title"]
+    assert row["title"].count("asks first") == 1, row["title"]
+    assert "Its Acme Do Thing action" in row["title"], row["title"]
     park = parks.load(TID)
     assert park is not None and park.held == "acme-do-thing" and park.fires == 1
     assert refs.get("resume_token") == park.token
