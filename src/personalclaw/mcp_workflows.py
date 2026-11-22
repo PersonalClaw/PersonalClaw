@@ -1041,8 +1041,12 @@ def gateway_answer(reply: dict[str, Any], *, doing: str, summary: str = "") -> s
             "it, so look before you ask again.",
             code="WF_GATEWAY_UNANSWERED",
         )
-    if reply.get("error"):
+    from personalclaw.mcp_core import call_failed
+
+    if call_failed(reply):
         return tool_failure(f"Could not {doing}: {reply['error']}", code="WF_GATEWAY_UNANSWERED")
+    # 🔴 An answer's own `error` is its field, not the call's failure: a failed run's status
+    # says why it ended, and read as "Could not read the run" its status never reached the agent.
     return _fmt({**reply, "ok": True}, summary=summary)
 
 
@@ -1054,10 +1058,10 @@ def saved_by_the_gateway(fields: dict[str, Any], *, needs_her_allow: bool = Fals
     which only the owner's own Allow saves and only the gateway can ask her for, so it is not
     saved whatever became of the call; and every save the tool server an agent CLI runs makes,
     which holds no definitions."""
-    from personalclaw.mcp_core import _post
+    from personalclaw.mcp_core import _post, call_failed
 
     answer = _post("/api/workflows/agent-saves", fields)
-    unanswered = answer.get("error") and not isinstance(answer.get("error_detail"), dict)
+    unanswered = call_failed(answer) and not isinstance(answer.get("error_detail"), dict)
     if unanswered and needs_her_allow:
         return tool_failure(
             f"{fields['name']!r} was not saved: a save that lets a step do more is made only on "
@@ -1065,7 +1069,7 @@ def saved_by_the_gateway(fields: dict[str, Any], *, needs_her_allow: bool = Fals
             f"could not be reached ({answer['error']})",
             code="WF_DEF_NEEDS_OWNER_YES",
         )
-    if answer.get("error") or answer.get("status") != "awaiting_approval":
+    if call_failed(answer) or answer.get("status") != "awaiting_approval":
         return gateway_answer(answer, doing=f"save the workflow {fields['name']!r}")
     steps = [f"“{label}”" for label in answer.get("steps") or []]
     lets = (

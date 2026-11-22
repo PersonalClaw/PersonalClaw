@@ -93,7 +93,13 @@ def test_a_structured_refusal_is_its_sentence_and_keeps_its_object(gateway, call
 
 @pytest.mark.parametrize("call", sorted(_CALLS))
 def test_a_refusal_sentence_is_kept_as_the_route_wrote_it(gateway, call):
-    assert _CALLS[call]("/sentence") == {"ok": False, "error": "unknown session"}
+    # Marked as the call's own failure, so a caller never reads a refusal as the gateway's answer
+    # (`mcp_core.call_failed`).
+    assert _CALLS[call]("/sentence") == {
+        "ok": False,
+        "error": "unknown session",
+        mcp_core.CALL_FAILED: True,
+    }
 
 
 def test_an_answer_that_names_no_error_is_kept_whole_and_still_reads_failed(gateway):
@@ -103,12 +109,19 @@ def test_an_answer_that_names_no_error_is_kept_whole_and_still_reads_failed(gate
 
 
 def test_a_body_that_is_not_json_is_kept_as_text_capped(gateway):
-    assert mcp_core._get("/not-json") == {"error": "HTTP 502: <html>Bad Gateway</html>"}
-    assert mcp_core._get("/long") == {"error": "HTTP 502: " + "x" * mcp_core._ERROR_TEXT_CAP}
+    failed = {mcp_core.CALL_FAILED: True}
+    assert mcp_core._get("/not-json") == {"error": "HTTP 502: <html>Bad Gateway</html>", **failed}
+    assert mcp_core._get("/long") == {
+        "error": "HTTP 502: " + "x" * mcp_core._ERROR_TEXT_CAP,
+        **failed,
+    }
 
 
 def test_an_empty_body_still_names_the_status(gateway):
-    assert mcp_core._get("/empty") == {"error": "HTTP 500: Internal Server Error"}
+    assert mcp_core._get("/empty") == {
+        "error": "HTTP 500: Internal Server Error",
+        mcp_core.CALL_FAILED: True,
+    }
 
 
 def test_an_answer_that_is_not_an_error_is_unchanged(gateway):
