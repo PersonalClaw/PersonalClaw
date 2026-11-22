@@ -151,7 +151,15 @@ def _workflow_drop(tmp_path, monkeypatch) -> SimpleNamespace:
             "file_drop": {"auto_accept_mimes": ["text/plain"]},
         },
     )
-    app = web.Application()
+
+    @web.middleware
+    async def as_the_owner(request: web.Request, handler):
+        # What the auth middleware sets for her signed-in session: only her drop lands on the
+        # workflow's auto-accept list without asking (`handlers._held_for_her`).
+        request["user"] = "owner"
+        return await handler(request)
+
+    app = web.Application(middlewares=[as_the_owner])
     workflow_handlers.register_workflow_routes(app)
 
     async def send(client, data: bytes):

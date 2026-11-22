@@ -488,6 +488,13 @@ step runs reaches the next. A step's file tools do not reach the `dropped/` zone
 so this is the one way in. Its value is already fenced: don't pipe it through
 `fenced`. A workflow that declares no drop has no `run.dropped`.
 
+Who lets a file into the drop (`handlers.api_run_drop`): she does, by confirming it or by
+dropping a type the workflow auto-accepts. An app's file never lands on its word: its `confirm`
+is no approval, and the auto-accept list does not apply to it. An agent's `confirm` is no
+approval either, and its file follows the auto-accept list only in its own chat's run (one whose
+origin, at its tree's root, is that chat or a helper of it); in any other run, or one whose
+origin cannot be read, it waits for her (`handlers._held_for_her`).
+
 A pipe's arguments are **literals** — a quoted string, a number, `true`/`false` or
 `null` — so an argument can never name a variable. That makes `| default([])` not an
 expression at all (`[]` is not a literal); "an empty list when the value is null" is
