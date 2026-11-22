@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { X } from 'lucide-react'
 import { chatLaunchPath } from '../../app/linkState'
-import type { MemoryMode } from '../../lib/api'
+import { failureSentence } from '../../app/reportingWrite'
+import { api, type ApprovalMode, type MemoryMode } from '../../lib/api'
 import { stageNewChat, type NewChatPicks } from '../../lib/newChatHandoff'
 import { useComposerData } from '../../lib/useComposerData'
 import { Composer } from '../../ui/Composer'
@@ -35,6 +36,23 @@ const START_CONTROLS: ComposerControls = {
 }
 
 const NEW_SELECTION: ComposerValue = { agent: '', model: 'Auto', approval: 'normal', taskMode: 'agent', reasoning: '' }
+
+/** Why the gateway would refuse permission mode *mode* for a chat made now, or null. The box holds
+ *  its pick until the chat is made, so it asks the gateway's own rule first, as the pick is made
+ *  (a new chat's boundary reading says the modes the operator ceiling refuses), and never shows a
+ *  mode the chat would not run in. Normal is never refused, and asks nothing. */
+async function refusalOf(mode: ApprovalMode): Promise<string | null> {
+  if (mode === 'normal') return null
+  let reading
+  try {
+    reading = await api.chatBoundary()
+  } catch (e) {
+    return failureSentence('check whether this computer allows this permission mode', e)
+  }
+  const p = reading?.permission
+  if (!p || !Array.isArray(p.refused) || !p.refused.includes(mode)) return null
+  return typeof p.said === 'string' && p.said ? p.said : "This computer's operator settings don't allow this permission mode."
+}
 
 export function ProjectStartBox({ projectId, name, folder, offReason, folderMissing, navigate, fill, focusOnMount = false }: {
   projectId: string
@@ -97,7 +115,11 @@ export function ProjectStartBox({ projectId, name, folder, offReason, folderMiss
             <ChatPreferencesGear wrapRef={gearWrap} open={preferencesOpen} changed={changedHere(replyStyle.pill, explain.choice)}
               onOpen={() => setPreferencesOpen(true)} />
             <TaskModePill value={selection.taskMode ?? 'agent'} onChoose={async (m) => { pick({ taskMode: m }); return null }} />
-            <ExecutionBoundary approval={selection.approval ?? 'normal'} onApproval={async (a) => { pick({ approval: a }); return null }}
+            <ExecutionBoundary approval={selection.approval ?? 'normal'} onApproval={async (a) => {
+              const refused = await refusalOf(a)
+              if (!refused) pick({ approval: a })
+              return refused
+            }}
               memoryMode={memoryMode} onMemoryMode={setMemoryMode} folder={folder} reading={reading} />
           </>
         )} />

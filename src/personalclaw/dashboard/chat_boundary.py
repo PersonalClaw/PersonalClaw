@@ -14,6 +14,10 @@ other read serves a chat, so ``GET /api/chat/boundary`` reads them here:
 * **Reach**: the egress tier of the chat's run, read through ``guardrails.policy.
   profile_for_session``, the reader the egress guard and a command's launch ask.
 
+A chat not made yet (a project's start box) holds its permission mode until the chat is made, so
+its reading also says which modes the operator ceiling refuses (**Permission**): the box shows a
+pick only if the gateway would take it.
+
 Each reading carries a short label and the sentence that says it, written here, so the control
 says what the gateway does and works nothing out in the browser. Nothing here changes anything:
 the control changes the permission mode and the folder through the routes it always used.
@@ -186,6 +190,23 @@ def sandbox_reading(runtime: str) -> dict[str, object]:
     return _on_this_computer(mode, subject="its agent CLI and the commands it starts")
 
 
+def permission_reading() -> dict[str, object]:
+    """The permission modes the operator ceiling refuses for a chat made now, for a pick held
+    until the chat is made (a project's start box): each mode that approves on its own
+    (``chat_handlers._MODE_GRANTS``) the ceiling does not let stand, under ``refused``, and the
+    sentence the mode route refuses it with (``approval_grants.refusal_sentence``), under
+    ``said``. A reading asks for no grant, so it writes no refusal row."""
+    from personalclaw import approval_grants
+    from personalclaw.dashboard.chat_handlers import _MODE_GRANTS
+
+    refused = [
+        mode
+        for mode, grant in _MODE_GRANTS.items()
+        if not approval_grants.stands(grant, caller="dashboard:boundary", audit=False)
+    ]
+    return {"refused": refused, "said": approval_grants.refusal_sentence() if refused else ""}
+
+
 async def api_chat_boundary(request: web.Request) -> web.Response:
     """GET /api/chat/boundary — the sandbox and the reach of a chat's next turn.
 
@@ -196,7 +217,8 @@ async def api_chat_boundary(request: web.Request) -> web.Response:
     sessions get, which is its Mode's, except a kind that runs as a workflow run
     (``workflows.service.PORTED_LOOP_KINDS``), whose stages run unattended whatever its Mode. (A
     loop's gate checks are held to unattended work's tier too, whatever its Mode.) Answers
-    ``{sandbox: {confined, label, said}, reach: {tier, label, said}}``. An unknown ``session`` is
+    ``{sandbox: {confined, label, said}, reach: {tier, label, said}}``, and a new chat's
+    ``permission: {refused, said}`` too (:func:`permission_reading`). An unknown ``session`` is
     refused rather than read as a new chat, whose reading may differ."""
     state: DashboardState = request.app["state"]
     key = request.query.get("session", "")
@@ -220,7 +242,13 @@ async def api_chat_boundary(request: web.Request) -> web.Response:
         if session is None:
             return json_error("session_not_found", status=404)
         runtime = str(getattr(session, "acp_provider", "") or "")
-        run = session.key
-    else:
-        run = ""
-    return web.json_response({"sandbox": sandbox_reading(runtime), "reach": reach_reading(run)})
+        return web.json_response(
+            {"sandbox": sandbox_reading(runtime), "reach": reach_reading(session.key)}
+        )
+    return web.json_response(
+        {
+            "sandbox": sandbox_reading(runtime),
+            "reach": reach_reading(""),
+            "permission": permission_reading(),
+        }
+    )
