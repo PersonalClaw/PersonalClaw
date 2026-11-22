@@ -1764,7 +1764,7 @@ class GatewayOrchestrator:
         if not route.executes:
             label = str(getattr(provider, "display_name", "") or provider_name)
             return await self._hold_fire(
-                trigger, payload, route, provider_name, label, source=source
+                trigger, payload, route, provider_name, label, source=source, held=fired
             )
 
         # 🔴 THE DAY-BUDGET PAUSE, at the seam that never had one.
@@ -1983,6 +1983,7 @@ class GatewayOrchestrator:
         label: str,
         *,
         source: str,
+        held: Any = None,
     ) -> str:
         """Hold a fire whose action's rung does not let it run on its own, ask you, and record it.
         Returns the id of the history row it wrote.
@@ -1990,6 +1991,8 @@ class GatewayOrchestrator:
         An action that asks first (`one_tap`) is asked as a question you can answer: Approve runs
         this fire once, as your run, with its payload (`parks.hold_fire`). One that only drafts
         (`draft_only`) files a proposal of what it would have done (`rungs.announce_withheld`).
+        *held* is what the fire's door handed on (`fire_facts.HandedOn`): its `$CONTEXT` line and
+        its account of what started it are kept with the payload, so Approve hands them on too.
         """
         from personalclaw.guardrails.rungs import ROUTE_ASK, announce_withheld
         from personalclaw.triggers import parks
@@ -2002,6 +2005,8 @@ class GatewayOrchestrator:
                 provider=provider_name,
                 reason=route.reason,
                 label=label,
+                context=str(getattr(held, "context", "") or ""),
+                facts=getattr(held, "facts", None),
                 refs={"action_type": route.key, "rung": route.rung, **refs},
                 state=getattr(self, "dashboard_state", None),
             )

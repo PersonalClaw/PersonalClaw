@@ -810,6 +810,7 @@ async def api_trigger_answer(request: web.Request) -> web.Response:
         event="manual.answer",
         answer=None if park.held else True,
         state=request.app["state"],
+        held=park if park.held else None,
     )
     return web.json_response(
         {
@@ -872,6 +873,7 @@ async def _dispatch_store_action(
     late: str = "",
     answer: Any = None,
     state: Any = None,
+    held: Any = None,
 ) -> tuple[bool, str]:
     """Run a store trigger's declared action through the action-provider registry, for YOU: a run
     of yours by hand (`triggers.run_source.YOU`). Every caller has established that you asked —
@@ -976,7 +978,11 @@ async def _dispatch_store_action(
     # to its trigger exactly as a scheduled one does.
     ctx = ActionContext(
         event=event,
-        context="",
+        # An approved held fire's own (`parks.hold_fire`): its `$CONTEXT` line, what started it and
+        # the files it is about, as its door left them. A run of yours otherwise has none.
+        context=str(getattr(held, "context", "") or ""),
+        fire_facts=str(getattr(held, "fire_facts", "") or ""),
+        fire_files=tuple(getattr(held, "fire_files", ()) or ()),
         payload=payload,
         status_url=status_url(trigger_id=str(getattr(trigger, "id", "") or "")),
         trigger_id=str(getattr(trigger, "id", "") or ""),
