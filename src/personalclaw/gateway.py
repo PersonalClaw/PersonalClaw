@@ -1762,7 +1762,10 @@ class GatewayOrchestrator:
         # here with no branch of its own.
         route = _route_action(provider_name, session_key=dispatch_key)
         if not route.executes:
-            return await self._hold_fire(trigger, payload, route, provider_name, source=source)
+            label = str(getattr(provider, "display_name", "") or provider_name)
+            return await self._hold_fire(
+                trigger, payload, route, provider_name, label, source=source
+            )
 
         # 🔴 THE DAY-BUDGET PAUSE, at the seam that never had one.
         # `_day_budget_exceeded` was WRITTEN to be this gate — its own docstring says it is "used as
@@ -1972,7 +1975,14 @@ class GatewayOrchestrator:
         return run_id
 
     async def _hold_fire(
-        self, trigger: Any, payload: dict[str, Any], route: Any, provider_name: str, *, source: str
+        self,
+        trigger: Any,
+        payload: dict[str, Any],
+        route: Any,
+        provider_name: str,
+        label: str,
+        *,
+        source: str,
     ) -> str:
         """Hold a fire whose action's rung does not let it run on its own, ask you, and record it.
         Returns the id of the history row it wrote.
@@ -1991,6 +2001,7 @@ class GatewayOrchestrator:
                 payload,
                 provider=provider_name,
                 reason=route.reason,
+                label=label,
                 refs={"action_type": route.key, "rung": route.rung, **refs},
                 state=getattr(self, "dashboard_state", None),
             )

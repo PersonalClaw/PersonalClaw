@@ -253,6 +253,7 @@ def hold_fire(
     *,
     provider: str,
     reason: str,
+    label: str = "",
     refs: dict[str, Any] | None = None,
     state: Any = None,
 ) -> TriggerPark | None:
@@ -278,7 +279,11 @@ def hold_fire(
         park = load(trigger_id)
         if park is None or expired(park) or not park.held:
             name = str(getattr(trigger, "name", "") or trigger_id)
-            question = f"Run {name}? Its {provider} action asks you first: {reason}."
+            # The action by the name its app gives it (*label*), and why it did not run: the
+            # rung's own words, which say more than "it asks first" when a profile narrowed it.
+            question = (
+                f"Run {name} now? Its {label or provider} action did not run on its own: {reason}."
+            )
             park = TriggerPark(
                 token=secrets.token_urlsafe(24),
                 trigger_id=trigger_id,
