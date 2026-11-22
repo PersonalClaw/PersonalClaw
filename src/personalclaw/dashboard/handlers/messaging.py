@@ -24,7 +24,7 @@ from personalclaw.request_validation import RequestValidationError, bool_field
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel_log_async
 from personalclaw.subagent_persistence import _agent_dir, read_state
-from personalclaw.subagent_reach import reader_of
+from personalclaw.subagent_reach import asked_by_someone_else, reader_of, report_withheld
 from personalclaw.validation import (
     SPAWN_RUN_SCHEMA,
     ValidationError,
@@ -158,7 +158,9 @@ async def api_spawn_status(request: web.Request) -> web.Response:
     Read for the caller's own chat's subagents, and every one for you (`subagent_reach`): from the
     gateway's table while it holds the agent, then from the agent's folder (one a restart stopped,
     or whose report was not handed on), then from the copy of its report kept in its chat. Another
-    chat's reads as not found, as an id that never existed does."""
+    chat's reads as not found, as an id that never existed does. Work someone other than you asked
+    for reads no report (``subagent_reach.report_withheld``): its status and task, and why the
+    report was not read (``withheld``)."""
     state: DashboardState = request.app["state"]
     if not state.subagents:
         return web.json_response({"error": "subagents not available"}, status=503)
@@ -167,6 +169,8 @@ async def api_spawn_status(request: web.Request) -> web.Response:
     info = state.subagents.get(agent_id)
     if info and not await asyncio.to_thread(reader.reads, info.parent_session_key):
         return _not_theirs(reader.work, agent_id)
+    asked = await asyncio.to_thread(asked_by_someone_else, reader)
+    withheld = {"result": "", "withheld": report_withheld(asked)} if asked else {}
     if not info:
         # Fall back to persistence layer (orphaned/recovered agents)
         try:
@@ -195,6 +199,7 @@ async def api_spawn_status(request: web.Request) -> web.Response:
                 # _redact() defined at line 82 of this file; calls both
                 # redact_exfiltration_urls() and redact_credentials() per security guidelines.
                 disk_data["result"] = _redact(result) if result else "_No result._"
+                disk_data.update(withheld)
                 # Check for tombstone
                 tombstone_path = _agent_dir(agent_id) / "tombstone.json"
                 if tombstone_path.exists() and not is_sensitive_path(str(tombstone_path)):
@@ -216,7 +221,7 @@ async def api_spawn_status(request: web.Request) -> web.Response:
         report = await asyncio.to_thread(lambda: kept(reader.chat, agent_id))
         if report:
             return web.json_response(
-                {"id": agent_id, "done": True, "result": _redact(report), "error": ""}
+                {"id": agent_id, "done": True, "result": _redact(report), "error": "", **withheld}
             )
         return _no_such_agent()
     data = {
@@ -230,6 +235,7 @@ async def api_spawn_status(request: web.Request) -> web.Response:
     if info.done:
         # Its report, whole (`SubagentInfo.result`).
         data["result"] = _redact(info.result)
+        data.update(withheld)
         data["error"] = _redact(info.error) if info.error else ""
         # Stopped, not failed: a stop ends it with its reason as its error.
         data["stopped"] = info.cancelled is True

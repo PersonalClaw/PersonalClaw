@@ -316,6 +316,39 @@ async def test_after_a_restart_another_chats_helper_still_reads_as_never_existed
         assert stopped[0] == 200 and stopped[1]["task"] == TASK[A_RUNNING]
 
 
+# ── a turn someone else asked for reads no helper's report ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", PATHS)
+async def test_a_turn_someone_else_asked_for_reads_no_helpers_report(gateway, path):
+    """A colleague's message in the chat's shared thread starts a turn there, marked as his. A
+    helper that worked for the owner's own turn may hold what it read of her memory in its report,
+    and his turn reads none of her memory: it reads the helper's status and task, and no report,
+    while the gateway holds the helper and from the copy kept in the chat after a restart. 🔴 Red
+    before: it read the whole report."""
+    from personalclaw import session_restrictions
+    from personalclaw.turn_source import arrived_on
+
+    colleague = arrived_on("1790800000.000100", "U0JONAS", "slack")
+    token = session_restrictions.mark_asked_by(KEY[A], colleague)
+    try:
+        live = await gateway.read(path, KEY[A], A_DONE)
+        gateway.restart()
+        kept = await gateway.read(path, KEY[A], A_DONE)
+    finally:
+        session_restrictions.unmark_asked_by(KEY[A], token)
+
+    for answer in (live, kept):
+        said = json.dumps(answer) if path == "route" else str(answer)
+        assert REPORT[A_DONE] not in said and "plumber" not in said, said
+        assert "The helper's report was not read" in said and "U0JONAS" in said, said
+    if path == "route":
+        assert live[0] == 200 and live[1]["result"] == "" and live[1]["task"] == TASK[A_DONE]
+    # The owner's own turn, once his is over, reads the report as before.
+    assert REPORT[A_DONE] in str(await gateway.read(path, KEY[A], A_DONE))
+
+
 # ── whose chat a helper's own call, a batch's task and a call naming no chat are ─────────────
 
 

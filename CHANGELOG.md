@@ -95,7 +95,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Large merged ranges in a workbook are read within the cell cap.**
 - **A long conversation that other people write in is condensed from your messages and the agent's only. Each message someone else sent follows the summary word for word, as theirs, so a summary never words their request as yours. A summary written before this is not read for a span that holds one.**
 - **An agent's command that gives git an author or committer of its own, such as `git -c user.email=…`, `git commit --author`, `GIT_AUTHOR_EMAIL=…` or a change to git's settings, is asked about whatever the chat or its agent allows, and refused in an unattended run. And a helper's report names each commit it made whose author, committer or sign-off is anyone but who git commits as in its folder, so the chat that started it tells you instead of calling the commit signed.**
-- **A turn someone other than you asked for, such as a colleague's message in a shared thread, reads nothing of your Inbox, as it reads none of your memory. It is told who asked and that your Inbox is read only for your own requests, on the built-in agent, the tool route and an agent CLI alike.**
+- **A turn someone other than you asked for, such as a colleague's message in a shared thread, reads nothing of your Inbox and no helper's report, as it reads none of your memory: a helper that worked for your own turn may hold what it read of your memory. It is told who asked, on the built-in agent, the tool route and an agent CLI alike.**
 
 ## [0.3.9] — 2026-11-16
 

@@ -121,15 +121,11 @@ def reads(reader: Reader, item: Any) -> bool:
 
 
 def asked_by_someone_else(reader: Reader) -> dict[str, str]:
-    """Who asked for the work *reader* reads as, when it was someone other than you, read as a
-    memory read reads it (``memory_writes.asker``, else ``asker_of_sessions`` for the work and the
-    chat at its top): ``{}`` when you did or nothing says, and for a read you make from your own
-    pages. Walks the chat's records, so call it off the event loop."""
-    if reader.everyone:
-        return {}
-    from personalclaw import memory_writes
+    """Who asked for the work *reader* reads as, when it was someone other than you
+    (``subagent_reach.asked_by_someone_else``). Walks the chat's records: off the event loop."""
+    from personalclaw import subagent_reach
 
-    return memory_writes.asker() or memory_writes.asker_of_sessions([reader.work, reader.chat])
+    return subagent_reach.asked_by_someone_else(reader)
 
 
 def readable(reader: Reader, items: Iterable[_Item]) -> list[_Item]:

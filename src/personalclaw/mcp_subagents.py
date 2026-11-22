@@ -536,6 +536,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         d = _get(f"/api/spawn/{agent_id}")
         if d.get("error"):
             return tool_failure(f"{d['error']}")
+        if d.get("withheld"):
+            return str(d["withheld"])  # someone other than the owner asked for this turn
         result = d.get("result")
         if not result:
             return "_No result._"
