@@ -136,6 +136,7 @@ from personalclaw.dashboard.chat_title import (  # noqa: F401
     _persist_title,
     api_chat_session_generate_title,
     api_chat_session_rename,
+    owe_untitled_chats,
 )
 from personalclaw.dashboard.chat_undo import api_chat_session_undo  # noqa: F401
 from personalclaw.dashboard.chat_utils import (  # noqa: F401

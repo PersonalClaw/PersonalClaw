@@ -34,6 +34,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An agent can edit a file that holds two hidden values side by side. Before, every edit of such a file was refused, however far from the hidden values, and the refusal said the file had changed though it hadn't. A file whose masked view still can't be mapped back now says so plainly.**
 - **When the model watchdog's record of your model bindings can't be read, it revokes every standing autonomy grant and queues the re-benchmarks, as a rebind does, and its one notice names the record and the copy kept of it. It used to read the damaged record as a first run and revoke nothing.**
 - **Regenerating an answer that used a tool keeps every earlier answer, each whole: the switcher counts them all, and a version holds the whole answer's text rather than its last paragraph.**
+- **A chat whose generated title came back without a title line is asked for it again, and a restart no longer forgets a title owed: the start asks again for every restored chat with a turn and no title.**
 
 ### Security
 

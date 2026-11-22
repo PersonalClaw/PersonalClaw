@@ -9,6 +9,7 @@ from aiohttp import web
 from personalclaw import chores, memory_writes, owed_chores
 from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.state import DashboardState, _ChatSession
+from personalclaw.guardrails.failure import OutputContractError
 from personalclaw.llm_helpers import failure_clause, is_model_call_failure
 from personalclaw.request_validation import require_string
 from personalclaw.sel import sel
@@ -287,7 +288,9 @@ async def _maybe_auto_title(state: DashboardState, session: _ChatSession) -> Non
         # is said in one line — its traceback holds only the HTTP client's frames — and a
         # defect keeps its traceback.
         if is_model_call_failure(exc):
-            owed = owed_chores.no_model_answered(exc)
+            # A reply with no title line is owed too: unlike a prompt too large to run, the next
+            # answer to the same request may hold one. A second such reply settles it.
+            owed = owed_chores.no_model_answered(exc) or isinstance(exc, OutputContractError)
             logger.warning(
                 "Auto-title failed for session %s: %s%s",
                 session.key,
@@ -296,13 +299,30 @@ async def _maybe_auto_title(state: DashboardState, session: _ChatSession) -> Non
             )
             logger.debug("Auto-title failure for session %s", session.key, exc_info=exc)
             if owed:
-                owed_chores.owe(
-                    f"title:{session.key}",
-                    f"the title of {session.key}",
-                    partial(_owed_title, state, session.key),
-                )
+                _owe_title(state, session.key)
         else:
             logger.warning("Auto-title failed for session %s", session.key, exc_info=True)
+
+
+def _owe_title(state: DashboardState, key: str) -> None:
+    """Owe the title of the chat *key* (``owed_chores``): asked for again on the heartbeat."""
+    owed_chores.owe(f"title:{key}", f"the title of {key}", partial(_owed_title, state, key))
+
+
+def owe_untitled_chats(state: DashboardState) -> int:
+    """Owe the title of every chat here that has a turn of the owner's and no title: how many.
+
+    The gateway's start runs it on the chats it restored. The owed list is the running gateway's
+    own, so a title owed before a restart was forgotten, and the chat waited for a next turn that
+    may never come. Owing one already owed changes nothing."""
+    untitled = [
+        s
+        for s in list(state._sessions.values())
+        if not s._titled and any(m.get("role") == "user" for m in s.messages)
+    ]
+    for session in untitled:
+        _owe_title(state, session.key)
+    return len(untitled)
 
 
 async def _owed_title(state: DashboardState, key: str) -> bool:
