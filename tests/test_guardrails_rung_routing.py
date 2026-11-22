@@ -153,7 +153,10 @@ def test_an_app_declared_floor_HOLDS_a_real_event_trigger_fire(_isolated_home):
     rows = _inbox_rows(_isolated_home)
     assert rows, "a held action must leave a standing attention item"
     held = rows[-1]
-    assert held["item_kind"] == "agent_request"
+    # A question you can answer, whose Approve runs this fire once
+    # (`test_a_held_fire_asks_a_question_you_can_answer`).
+    assert held["item_kind"] == "needs_input"
+    assert held["refs"]["trigger_park"] == "t-acme"
     assert held["refs"]["action_type"] == APP_KEY
     assert held["refs"]["rung"] == "one_tap"
     assert held["refs"]["trigger"] == "t-acme"
