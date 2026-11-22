@@ -1,0 +1,97 @@
+# Weekly pin refresh (#4585): the one pull request that moves the pins two checks only report.
+#
+# image-pins.yml reports an image a workflow pins whose tag has moved, and action-pins.yml an action
+# SHA its release comment no longer names. This resolves both, read-only, and edits the tree the
+# way a reviewed refresh would (`python -m tools.ci pin-refresh plan --write`, tools/ci/
+# pin_refresh.py): each moved image to its tag's new index and platform manifest, and each action
+# to the newest release on its major line that is at least a week old (Dependabot's cooldown), or
+# to its own tag's commit when that tag has moved. Every copy of an old pin in the tree moves.
+#
+# When something moved, it mints a token from the pin-refresh App (vars.REFRESH_APP_ID,
+# secrets.REFRESH_APP_KEY, held in the pin-refresh environment, which only main may use) and
+# opens the edit as a pull request on a branch of its own, signed off by the App's bot account,
+# closing the App's older open refresh as superseded. The job's own token stays read-only: the
+# repository's token may not open a pull request, and one it opened would start no pull_request
+# run. The App's token asks for contents and pull-requests write, and for workflows write only
+# when a workflow file changed. It pushes one new branch and nothing else: no force push, no
+# ruleset, no bypass. The pull request merges like any other: up to date, the normal verdict green.
+#
+# Its own schedule slot, Tuesdays 08:47 UTC, is clear of every other workflow's.
+name: Pin refresh
+
+on:
+  schedule:
+    - cron: "47 8 * * 2"  # Tuesdays, 08:47 UTC
+  workflow_dispatch:
+
+# One refresh at a time, never cancelled: a second run waits, then supersedes the first's.
+concurrency:
+  group: pin-refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    if: ${{ github.ref == 'refs/heads/main' && github.repository == 'PersonalClaw/PersonalClaw' }}
+    runs-on: ubuntu-24.04
+    environment: pin-refresh
+    # A few API and registry calls per pin, and one push.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Main's own tools/ci, run on the image's python3: standard-library Python, nothing installed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve the pins and write the refresh
+        id: edit
+        # The job's token is here only for the API's rate limit; every call is a GET.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.ci pin-refresh plan --write --body "$RUNNER_TEMP/refresh.md" \
+            --outputs "$GITHUB_OUTPUT" --run-url "$RUN_URL" || echo "unresolved=true" >> "$GITHUB_OUTPUT"
+      - name: The refresh App's token, with workflows write
+        id: app-workflows
+        if: ${{ steps.edit.outputs.changed == 'true' && steps.edit.outputs.workflows == 'true' }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.REFRESH_APP_ID }}
+          private-key: ${{ secrets.REFRESH_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+      - name: The refresh App's token
+        id: app
+        if: ${{ steps.edit.outputs.changed == 'true' && steps.edit.outputs.workflows != 'true' }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.REFRESH_APP_ID }}
+          private-key: ${{ secrets.REFRESH_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open the refresh pull request
+        if: ${{ steps.edit.outputs.changed == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app-workflows.outputs.token || steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app-workflows.outputs.app-slug || steps.app.outputs.app-slug }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.ci pin-refresh publish --repo "$GITHUB_REPOSITORY" \
+            --app-slug "$APP_SLUG" --body "$RUNNER_TEMP/refresh.md" --run-id "$RUN_ID"
+      - name: Fail on a pin that could not be resolved
+        # After the refresh it could make: an unresolved pin is listed in the body and the summary,
+        # never written as current.
+        if: ${{ steps.edit.outputs.unresolved == 'true' }}
+        run: |
+          echo "::error::a pin could not be resolved; see the job summary"
+          exit 1

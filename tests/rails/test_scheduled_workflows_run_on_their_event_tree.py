@@ -97,6 +97,10 @@ SCHEDULED: dict[str, Row] = {
     "image-pins.yml": best_effort(
         "the weekly 'Pinned images to refresh' issue; the refresh is a reviewed pull request",
     ),
+    "pin-refresh.yml": best_effort(
+        "the weekly refresh pull request, which merges on the normal verdict; a missed week's "
+        "pins move in the next one",
+    ),
     "release-rehearsal.yml": best_effort(
         "every release artifact built and smoked weekly; a release reads the newest rehearsal, "
         "and a maintainer dispatches one when it needs a fresher one",
