@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
 
 @dataclass
 class SideMessage:
@@ -28,9 +30,10 @@ class SideState:
     last_run_id: str = ""
     # True once the current turn's final delta has been emitted.
     is_complete: bool = True
-    # What the turn in flight has streamed of its answer so far, as its deltas said it (redacted),
-    # grown in the step each delta is stamped and sent: a chat read mid-answer holds every delta
-    # stamped at or below its ``stream_seq``. Empty once the answer is recorded.
+    # What the turn in flight has streamed of its answer so far, as the model said it, grown in the
+    # step each delta is stamped and sent: a chat read mid-answer holds every delta stamped at or
+    # below its ``stream_seq``. Never served as it is (:meth:`as_read` masks it whole). Empty once
+    # the answer is recorded.
     partial: str = ""
 
     def append(self, role: str, content: str) -> None:
@@ -46,8 +49,12 @@ class SideState:
 
     def as_read(self) -> dict:
         """The buffer as a chat's read serves it: its record (:meth:`to_dict`, what a save keeps)
-        and what the answer in flight has said so far (``partial``), which a save does not keep."""
-        return {**self.to_dict(), "partial": self.partial}
+        and what the answer in flight has said so far (``partial``), which a save does not keep.
+        The answer so far is masked whole, as its record will be, so text split across two deltas
+        is masked too."""
+        partial, _ = redact_exfiltration_urls(self.partial)
+        partial, _ = redact_credentials(partial)
+        return {**self.to_dict(), "partial": partial}
 
     @classmethod
     def from_dict(cls, d: dict) -> "SideState":
