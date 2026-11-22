@@ -153,6 +153,21 @@ def merged_row(
     return out
 
 
+def refuse_a_lifecycle_id(trigger_id: str) -> None:
+    """Refuse a stored trigger whose id names a lifecycle trigger (``lifecycle:<id>``,
+    ``hooks.LIFECYCLE_TRIGGER_PREFIX``): that key space is the hooks', and a held hook's question
+    is answered by it (`trigger_runs.api_trigger_answer`), so a stored row that took such an id
+    would have its question answered by running a hook. A stored id is ``<kind>:<slug>`` and no
+    kind is ``lifecycle``, so nothing mints one today: this keeps it so. Raises ``ValueError``."""
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+
+    if str(trigger_id or "").startswith(LIFECYCLE_TRIGGER_PREFIX):
+        raise ValueError(
+            f"{trigger_id!r} is a lifecycle trigger's id; a stored trigger's id never starts "
+            f"with {LIFECYCLE_TRIGGER_PREFIX!r}"
+        )
+
+
 class TriggerStore(TriggerStoreProvider):
     """`triggers.json`, with the shipped cron store's durability discipline.
 
@@ -358,6 +373,7 @@ class TriggerStore(TriggerStoreProvider):
         """
         from personalclaw.triggers import routing
 
+        refuse_a_lifecycle_id(trigger.id)
         elsewhere = routing.route_upsert(trigger, native=self)
         if elsewhere is not None:
             return elsewhere

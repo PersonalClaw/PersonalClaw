@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import types
 from pathlib import Path
@@ -248,3 +249,49 @@ def test_a_gating_hooks_tool_decision_is_unchanged_and_its_hold_is_explained(hom
     (row,) = [r for r in _inbox_rows(home) if (r.get("refs") or {}).get("hook") == HOOK]
     assert row["message"].startswith("Acme after a write did not run"), row["message"]
     assert "cannot wait for an answer" in row["message"]
+
+
+@pytest.mark.parametrize("since", ["gone", "a link into a credential folder"])
+def test_an_approved_fire_whose_folder_changed_since_it_was_held_runs_nothing(
+    home, folder, tmp_path, monkeypatch, since
+):
+    """Approve runs in the folder the fire was told, checked again as a fire checks it
+    (`hooks.hook_folder`): a folder that has gone, or has since become a link to a credential
+    folder, refuses the run."""
+    action = _install(floor="one_tap", ceiling="one_tap")
+    _wrote(home, folder)
+    token = parks.load(TID).token
+    os.replace(folder, tmp_path / "moved")
+    if since != "gone":
+        yours = tmp_path / "you"
+        (yours / ".ssh").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(yours))
+        os.symlink(yours / ".ssh", folder)
+
+    body = _body(_answer(home, token, True))
+
+    assert (body["approved"], body["ok"]) == (True, False), body
+    assert body["result"].startswith("failed: ") and "not a folder it can run in" in body["result"]
+    assert action.calls == []
+
+
+def test_a_stored_trigger_never_takes_a_lifecycle_triggers_id(home):
+    """The key a held hook's question is answered by is the hooks' alone."""
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import TriggerStore
+
+    store = TriggerStore(base_dir=home)
+    with pytest.raises(ValueError, match="lifecycle trigger's id"):
+        store.upsert(Trigger(id=TID, name="Impostor", kind="clock", spec={"kind": "cron"}))
+    assert store.get(TID) is None
+
+
+def test_a_held_fire_of_another_trigger_under_a_lifecycle_id_asks_nothing(home):
+    """The funnel every held fire is asked through (`parks.hold_fire`), from the gateway for a
+    stored or an app-served row: one whose id is a lifecycle trigger's is not asked under it, so
+    its Approve cannot run the hook that id names."""
+    from types import SimpleNamespace
+
+    served = SimpleNamespace(id=TID, name="An app's row")
+    assert parks.hold_fire(served, {"x": 1}, provider="acme-do-thing", reason="it asks") is None
+    assert parks.load(TID) is None and _held(home) == []
