@@ -1,6 +1,6 @@
 """What ``test_session_acquisition_census.py`` shares with the suite's other tests.
 
-``REACQUIRES, _census, _functions, acquires``.
+``REACQUIRES, _census, _functions, acquires, parents``.
 
 Kept here, beside the suite, so a test that is not a rail can import them without importing
 a rail (rails live in ``tests/rails/``, which only the rails job collects)."""
@@ -41,24 +41,66 @@ def _parsed(source: str | ast.Module) -> ast.Module:
     return source if isinstance(source, ast.Module) else ast.parse(source)
 
 
-def acquires(node: ast.AST) -> bool:
-    """Whether *node* acquires a session: a call of ``….get_or_create(…)``, or one that binds it
-    for later (``functools.partial(….get_or_create, …)``), whose call acquires with what the bind
-    holds. A bound acquisition counts where it is bound, once, however often it is called."""
-    if not isinstance(node, ast.Call):
+def _named(func: ast.AST) -> str:
+    """The bare name *func* calls: ``f`` and ``mod.f`` alike; ``""`` for anything else."""
+    return func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+
+
+def parents(tree: ast.AST) -> dict[int, ast.AST]:
+    """Every node's parent in *tree*, by the child's ``id``."""
+    return {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+
+def acquires(node: ast.AST, parent: ast.AST | None = None) -> bool:
+    """Whether *node* (whose parent is *parent*) acquires a session, once for each way it can:
+
+    - a call of ``….get_or_create(…)``;
+    - one that binds it for later (``functools.partial(….get_or_create, …)``), whose call acquires
+      with what the bind holds;
+    - ``getattr(…, "get_or_create")``, called at once or kept;
+    - any other read of a ``….get_or_create`` attribute: an alias (``acquire =
+      sessions.get_or_create``), a bind under another name (``partial as bind``), the bound method
+      handed on as a callback. Its call acquires with keywords nothing here reads, so it counts as
+      one that names no axis.
+
+    An acquisition counts where it is made or bound, once, however often it is called."""
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "get_or_create":
+            return True
+        first = node.args[0] if node.args else None
+        if (
+            _named(func) == "partial"
+            and isinstance(first, ast.Attribute)
+            and first.attr == "get_or_create"
+        ):
+            return True
+        second = node.args[1] if len(node.args) > 1 else None
+        return (
+            _named(func) == "getattr"
+            and isinstance(second, ast.Constant)
+            and second.value == "get_or_create"
+        )
+    if not (
+        isinstance(node, ast.Attribute)
+        and node.attr == "get_or_create"
+        and isinstance(node.ctx, ast.Load)
+    ):
         return False
-    func = node.func
-    if isinstance(func, ast.Attribute) and func.attr == "get_or_create":
-        return True
-    named = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-    bound = node.args[0] if node.args else None
-    return named == "partial" and isinstance(bound, ast.Attribute) and bound.attr == "get_or_create"
+    # The read a call above already counts: the call's own function, or a partial's first argument.
+    if isinstance(parent, ast.Call):
+        if parent.func is node:
+            return False
+        if _named(parent.func) == "partial" and parent.args and parent.args[0] is node:
+            return False
+    return True
 
 
 def acquisitions(source: str | ast.Module) -> list[str]:
     """The qualified name of the function around each acquisition in *source* (text, or its
     tree): each ``….get_or_create(…)`` call and each bind of it (:func:`acquires`), once each."""
     tree = _parsed(source)
+    up = parents(tree)
     out: list[str] = []
     for qualname, func in _functions(tree).items():
         inner = {
@@ -68,7 +110,7 @@ def acquisitions(source: str | ast.Module) -> list[str]:
             for n in ast.walk(f)
         }
         for node in ast.walk(func):
-            if acquires(node) and id(node) not in inner:
+            if acquires(node, up.get(id(node))) and id(node) not in inner:
                 out.append(qualname)
     return out
 

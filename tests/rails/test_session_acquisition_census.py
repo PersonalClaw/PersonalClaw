@@ -20,14 +20,16 @@ Three halves.
 * Every chore named in :data:`CHORES` reaches its model through the chore helper.
 
 An acquisition bound for a later call (``functools.partial(….get_or_create, …)``) counts where it
-is bound. What the census cannot see: a session acquired through a name other than
-``get_or_create``.
+is bound, and so does every other way to reach it: an alias, a bind under another name,
+``getattr(…, "get_or_create")``, the bound method handed on as a callback. What the census cannot
+see: a session acquired through a name other than ``get_or_create``, spelled at run time.
 """
 
 from __future__ import annotations
 
 import ast
 
+import pytest
 import source_index
 from session_acquisitions import REACQUIRES, SRC, _census, _functions, _parsed, acquisitions
 
@@ -205,6 +207,32 @@ def test_the_census_fails_a_chore_that_binds_a_session_for_later():
         "async def title_the_chat(state, prompt):\n"
         "    again = functools.partial(state.sessions.get_or_create, 'chores')\n"
         "    client, _new, _resumed = await again()\n"
+        "    async for event in client.stream(prompt):\n"
+        "        pass\n"
+    )
+    (site,) = [("planted.py", q) for q in acquisitions(planted)]
+    assert site == ("planted.py", "title_the_chat")
+    assert not _accounted(site)
+
+
+@pytest.mark.parametrize(
+    "reach",
+    [
+        "acquire = state.sessions.get_or_create\n    client, _, _ = await acquire('chores')",
+        "again = bind(state.sessions.get_or_create, 'chores')\n    client, _, _ = await again()",
+        "client, _, _ = await getattr(state.sessions, 'get_or_create')('chores')",
+        "client, _, _ = await later(state.sessions.get_or_create, 'chores')",
+    ],
+    ids=["an alias", "a bind under another name", "getattr", "the bound method as a callback"],
+)
+def test_the_census_fails_a_chore_that_reaches_a_session_another_way(reach):
+    """Every way to reach `get_or_create` is an acquisition where it is reached, once: a chore that
+    takes its session through an alias, a renamed `partial`, `getattr` or a callback is caught as
+    one that calls it is."""
+    planted = (
+        "from functools import partial as bind\n"
+        "async def title_the_chat(state, prompt, later=None):\n"
+        f"    {reach}\n"
         "    async for event in client.stream(prompt):\n"
         "        pass\n"
     )

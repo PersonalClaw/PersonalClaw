@@ -101,6 +101,10 @@ def test_the_resolution_classifier_on_a_planted_call(snippet: str, expected: str
             'model_axis="orchestration")',
             "guarded",
         ),
+        ('acquire = sessions.get_or_create; await acquire("cron:digest")', ""),
+        ('again = bind(sessions.get_or_create, "cron:digest", model_axis="orchestration")', ""),
+        ('await getattr(sessions, "get_or_create")("cron:digest")', ""),
+        ('await run_later(sessions.get_or_create, "cron:digest")', ""),
     ],
     ids=[
         "no axis",
@@ -109,12 +113,18 @@ def test_the_resolution_classifier_on_a_planted_call(snippet: str, expected: str
         "bound for later, no axis",
         "bound for later, replaying what it was asked",
         "bound for later, a guarded axis",
+        "an alias",
+        "a bind under another name",
+        "getattr",
+        "the bound method as a callback",
     ],
 )
 def test_the_classifier_on_a_planted_call(snippet: str, expected: str):
     """The rail's teeth, on code that is not in the tree: an unnamed axis and the chat axis are
     both unmetered, and only a guarded one passes. An acquisition bound for a later call
-    (``functools.partial``) is one, read by what the bind holds: binding it hides no axis."""
+    (``functools.partial``) is one, read by what the bind holds: binding it hides no axis. Any other
+    way to reach `get_or_create` (an alias, a bind under another name, `getattr`, the bound method
+    handed on) is one too, whose keywords nothing reads: it counts as naming no axis."""
     tree = ast.parse(f"async def run_the_nightly_digest(sessions):\n    {snippet}\n")
     (site,) = census(tree, "planted.py")
     assert verdict(site, guarded_axes()) == expected
