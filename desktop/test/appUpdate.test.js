@@ -616,10 +616,14 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     });
     return { ...made, at, timers, states, relaunched, quits, trashed, seen, mac, store, logs };
   }
-  const settle = (u) => new Promise((resolve) => {
-    const wait = () => (["ready", "restarting", "failed"].includes(u.status().phase) ? resolve() : setTimeout(wait, 5));
-    wait();
-  });
+  /** Wait for the update to settle (ready, restarting or failed), for at most ten seconds. A run that
+   *  ends in any other phase (one left available, a gateway step that never answers) fails here,
+   *  naming the phase it got, and never stalls the suite: `node --test` gives a test no timeout. */
+  const settle = async (u) => {
+    const settled = () => ["ready", "restarting", "failed"].includes(u.status().phase);
+    for (let i = 0; i < 2000 && !settled(); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(settled(), `waited ten seconds for the update to settle; its phase is ${u.status().phase}`);
+  };
   /** Wait for *cond*, for at most two seconds. */
   const until = async (cond) => {
     for (let i = 0; i < 400 && !cond(); i++) await new Promise((r) => setTimeout(r, 5));
