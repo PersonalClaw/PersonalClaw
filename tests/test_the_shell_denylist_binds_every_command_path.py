@@ -186,7 +186,13 @@ async def test_a_code_loop_whose_proving_check_is_refused_pauses_instead_of_comp
     monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     _add_pattern()
     published: list[str] = []
-    ctx = SimpleNamespace(publish=lambda lid, event, data=None: published.append(event))
+
+    async def _complete(lid: str, reason: str = "") -> None:
+        published.append("complete")
+
+    ctx = SimpleNamespace(
+        publish=lambda lid, event, data=None: published.append(event), complete=_complete
+    )
     refused = _running(kind="code", kind_config={"verify_command": DENIED})
     assert await CodeKind()._no_stage_done(refused, [{"cycle": 1}], ctx) is False
     assert store.get(refused.id).status == LoopStatus.NEEDS_INPUT.value

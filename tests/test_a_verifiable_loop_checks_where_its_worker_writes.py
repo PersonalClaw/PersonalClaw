@@ -250,9 +250,16 @@ def test_a_code_loop_without_stages_checks_its_own_folder():
     )
     (loop_files.loop_dir(code.id) / "slugify.py").write_text("def slugify(s): ...\n")
     published: list[str] = []
-    ctx = SimpleNamespace(publish=lambda lid, event, data=None: published.append(event))
+    completed: list[str] = []
+
+    async def _complete(lid: str, reason: str = "") -> None:
+        completed.append(lid)
+
+    ctx = SimpleNamespace(
+        publish=lambda lid, event, data=None: published.append(event), complete=_complete
+    )
     assert _run(kinds.get("code")._no_stage_done(code, [{"cycle": 1}], ctx)) is True
-    assert published == []
+    assert published == ["gate_check"] and completed == [code.id]
 
 
 # ── every check is on the loop ──
