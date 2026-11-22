@@ -1395,7 +1395,7 @@ class GatewayOrchestrator:
         if self.dashboard_state is None:
             return
         try:
-            self.dashboard_state.notify(notification_kinds.WARNING, title, body)
+            self.dashboard_state.notify(notification_kinds.BUDGET_PAUSED, title, body)
         except Exception:
             logger.debug("budget notify failed", exc_info=True)
 

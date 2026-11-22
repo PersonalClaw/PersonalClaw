@@ -88,6 +88,17 @@ const KINDS: Record<string, KindMeta> = {
   // of its tools says. Info tone: nothing ran and nothing failed; a description is text the model
   // reads, and the note opens the Tools page on that server.
   mcp_description_changed: { label: 'MCP tool description changed', icon: Server, tone: 'var(--color-info)' },
+  // The four decisions that were plain `warning`s: each waits on her (Allow or Deny, a raised
+  // budget, a sign-in, an approval). The approval tone for the two she answers, warn for the two
+  // where work has stopped.
+  // channel/unknown_sender — an unpaired sender waiting on her Allow or Deny.
+  unknown_sender: { label: 'Someone new wrote to you', icon: UserRound, tone: phaseColor('approval') },
+  // cron/budget_paused — automations paused by the spend ceiling until it resets or she raises it.
+  budget_paused: { label: 'Automations paused by the budget', icon: PauseCircle, tone: 'var(--color-warn)' },
+  // mcp/sign_in_ended — a server's sign-in ended; its tools stop until she signs in again.
+  mcp_sign_in_ended: { label: 'MCP sign-in ended', icon: Server, tone: 'var(--color-warn)' },
+  // guardrails/action_held — an unattended action the denylist held for her approval.
+  action_held: { label: 'Action held for your approval', icon: ShieldQuestion, tone: phaseColor('approval') },
   // knowledge/research_finding. Newspaper like the digest — both are written
   // output — but the primary tone, not the low one: a finding is a thing to read, whereas
   // the digest is the wrapper it may arrive in.

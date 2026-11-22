@@ -19,6 +19,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **For apps: `personalclaw.sdk.channel.MemoryService.lint()` no longer purges unless asked. It only reads, and counts what its purge would remove under the report's `fixable`. A keyword-only `lint(purge=True)` runs the purge, a permanent delete of memories superseded more than 90 days ago. No shipped app calls it; `slack-channel` uses `MemoryService` only to read lessons.**
 - **An agent's settings say its tool list holds for the PersonalClaw tools an agent CLI is offered, and that the CLI's own built-in tools follow its permission mode.**
 - **Saving the tool list of an agent on an agent CLI warns of each entry that lets the CLI call nothing.**
+- **Four notices that wait on you interrupt by default again, as every other question does: someone unpaired writing to you on a chat channel (Allow or Deny), automations paused by the spend budget, an MCP server's sign-in that ended, and an action the denylist held for your approval. Each was a plain warning that only waited in the bell. Each now has its own row in Settings › Notifications, where you can quieten it.**
 
 ### Fixed
 

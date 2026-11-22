@@ -495,7 +495,7 @@ def enforce_action(
             services = get_action_services()
             if services is not None and getattr(services, "state", None) is not None:
                 services.state.notify(
-                    notification_kinds.WARNING,
+                    notification_kinds.ACTION_HELD,
                     "Action needs your approval",
                     f"An automated action via {provider_name!r} was held: {decision.reason}. "
                     f"Review it in Settings → Security → Guardrails.",
