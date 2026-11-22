@@ -8,7 +8,7 @@ import { Button } from '../ui/Button'
 import { fvs } from '../design/fontWeight'
 
 /** The phases in which an update is under way: nothing can be pressed until it ends. */
-const UNDER_WAY: ReadonlySet<AppUpdateState['phase']> = new Set(['downloading', 'verifying', 'placing', 'restarting'])
+const UNDER_WAY: ReadonlySet<AppUpdateState['phase']> = new Set(['downloading', 'verifying', 'gateway', 'placing', 'restarting'])
 
 /** Whether the System popover shows the app's row: while a release is on offer, one is ready to
  *  finish, an update runs, or a ready one the update settings dropped is still to be said. */
@@ -31,6 +31,8 @@ export function appUpdateLine(state: AppUpdateState): string {
       return `Checking PersonalClaw ${v}…`
     case 'ready':
       return `PersonalClaw ${v} is ready. Restart to finish the update.`
+    case 'gateway':
+      return state.sentence || `Updating the gateway to ${v} first…`
     case 'placing':
       return `Putting PersonalClaw ${v} in place…`
     case 'restarting':
@@ -42,15 +44,27 @@ export function appUpdateLine(state: AppUpdateState): string {
   }
 }
 
-/** What the confirm asks: the restart, and whether the gateway goes with it. */
-function confirmWords(version: string, restartsGateway: boolean, running: number, sessions: number, unread: string): string {
+/** What the confirm asks: the restart, and what happens to the gateway with it: the app's own
+ *  restarts with the app, and one it found older than the ready copy (*step*) is updated to that
+ *  release first, through its own update, which restarts it. */
+function confirmWords(
+  version: string,
+  restartsGateway: boolean,
+  step: AppUpdateState['gatewayStep'],
+  running: number,
+  sessions: number,
+  unread: string,
+): string {
   const ask = `Restart PersonalClaw to finish updating to ${version}?`
-  if (!restartsGateway) return ask
-  if (unread) return `${ask} Your gateway restarts with it. ${unread}`
-  if (running <= 0) return `${ask} Your gateway restarts with it.`
+  const what = step
+    ? `The gateway on port ${step.port} is updated from ${step.from} to ${step.to} first, and restarts`
+    : 'Your gateway restarts with it'
+  if (!restartsGateway && !step) return ask
+  if (unread) return `${ask} ${what}. ${unread}`
+  if (running <= 0) return `${ask} ${what}.`
   const agents = `${running} running agent${running === 1 ? '' : 's'}`
   const live = sessions > 0 ? ` and ${sessions} live session${sessions === 1 ? '' : 's'}` : ''
-  return `${ask} Your gateway restarts with it, which interrupts ${agents}${live}.`
+  return `${ask} ${what}, which interrupts ${agents}${live}.`
 }
 
 /** The app's own update, in Settings › Updates › This app (`place="settings"`, with Check now and
@@ -59,7 +73,7 @@ function confirmWords(version: string, restartsGateway: boolean, running: number
  *  once it is ready, Restart to Finish the Update, confirmed, puts it in place and restarts. An
  *  update this copy cannot install here offers the releases page instead, as every failure does. */
 export function AppUpdateControls({ update, place }: { update: AppUpdate; place: 'settings' | 'popover' }) {
-  const [asking, setAsking] = useState<{ running: number; sessions: number; unread: string } | null>(null)
+  const [asking, setAsking] = useState<{ running: number; sessions: number; unread: string; step: AppUpdateState['gatewayStep'] } | null>(null)
   const [refused, setRefused] = useState('')
   const state = update.state
   if (!state) {
@@ -88,17 +102,21 @@ export function AppUpdateControls({ update, place }: { update: AppUpdate; place:
     let running = 0
     let sessions = 0
     let unread = ''
+    // The gateway step as the confirm shows it, which the press then carries: the app refuses a
+    // press whose confirm didn't show a step it needs.
+    const step = state.gatewayStep ?? null
     // The count of what the restart interrupts is asked first; a failed ask is said in the confirm,
     // which still offers the restart.
-    if (state.restartsGateway) {
+    if (state.restartsGateway || step) {
       try { const r = await api.restartProbe(); running = r.running_agents; sessions = r.sessions }
       catch { unread = "What it would interrupt couldn't be read." }
     }
-    setAsking({ running, sessions, unread })
+    setAsking({ running, sessions, unread, step })
   }
   const finish = async () => {
+    const step = asking?.step ?? null
     setAsking(null)
-    const r = await update.finish(readyVersion)
+    const r = await update.finish(readyVersion, step ? { gateway: { from: step.from, to: step.to } } : {})
     if (!r.ok) setRefused(r.sentence || 'The update could not be finished.')
   }
 
@@ -122,12 +140,12 @@ export function AppUpdateControls({ update, place }: { update: AppUpdate; place:
   ) : null
 
   if (asking) {
-    const warn = state.restartsGateway && asking.running > 0
+    const warn = (state.restartsGateway || !!asking.step) && asking.running > 0
     return (
       <div className={popover ? '' : 'flex flex-col gap-2'}>
         <div data-type="caption" className="flex items-start gap-1.5 text-on-surface-var">
           {warn && <AlertTriangle size={13} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden />}
-          <span>{confirmWords(readyVersion, state.restartsGateway, asking.running, asking.sessions, asking.unread)}</span>
+          <span>{confirmWords(readyVersion, state.restartsGateway, asking.step, asking.running, asking.sessions, asking.unread)}</span>
         </div>
         <div className="mt-2 flex items-center gap-2">
           <Button size="xs" variant={warn ? 'danger' : 'primary'} onClick={finish}>Restart the App</Button>

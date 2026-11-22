@@ -75,7 +75,11 @@ function fakeApp(state: AppUpdateState, answer: AppUpdateStart = { ok: true }) {
     status: async () => state,
     check: async () => { asked.push('check'); return state },
     download: async (version) => { asked.push(`download ${version}`); return answer },
-    finish: async (version) => { asked.push(`finish ${version}`); return answer },
+    finish: async (version, shown) => {
+      const step = shown?.gateway ? ` gateway ${shown.gateway.from}→${shown.gateway.to}` : ''
+      asked.push(`finish ${version}${step}`)
+      return answer
+    },
     on: (cb) => { listeners.add(cb); return () => listeners.delete(cb) },
   }
   window.pclawDesktop = { appUpdate } as unknown as DesktopBridge
@@ -130,6 +134,22 @@ describe('the System popover: the app row, only while a new version is on offer'
 
     fireEvent.click(within(card).getByRole('button', { name: 'Restart the App' }))
     await waitFor(() => expect(app.asked).toEqual(['finish 0.3.8']))
+    expect(wire.applied).toBe(0)
+  })
+
+  it('🔴 says in the confirm that a gateway the app found is updated to the release first, and the press carries that step', async () => {
+    installedAs('pip')
+    wire.running = 2
+    const app = fakeApp(stands({ ...READY, restartsGateway: false, gatewayStep: { port: 10870, from: '0.3.7', to: '0.3.8' } }))
+    const card = await openPopover()
+    fireEvent.click(await within(card).findByRole('button', { name: 'Restart to finish the update of this app' }))
+    expect(await within(card).findByText(
+      'Restart PersonalClaw to finish updating to 0.3.8? The gateway on port 10870 is updated from 0.3.7 to 0.3.8 first, and restarts, which interrupts 2 running agents.',
+    )).toBeTruthy()
+    expect(wire.probes).toBe(1)
+    expect(app.asked).toEqual([])
+    fireEvent.click(within(card).getByRole('button', { name: 'Restart the App' }))
+    await waitFor(() => expect(app.asked).toEqual(['finish 0.3.8 gateway 0.3.7→0.3.8']))
     expect(wire.applied).toBe(0)
   })
 
@@ -352,12 +372,14 @@ describe('the words', () => {
     expect(appUpdateLine(stands({ ...OFFERED, phase: 'verifying' }))).toBe('Checking PersonalClaw 0.3.8…')
     expect(appUpdateLine(stands({ ...OFFERED, phase: 'downloading', progress: { received: 0, total: 0 } }))).toBe('Downloading PersonalClaw 0.3.8…')
     expect(appUpdateLine(READY)).toBe('PersonalClaw 0.3.8 is ready. Restart to finish the update.')
+    expect(appUpdateLine(stands({ ...READY, phase: 'gateway', sentence: 'Updating the gateway on port 10870 to 0.3.8 first…' }))).toBe('Updating the gateway on port 10870 to 0.3.8 first…')
     expect(appUpdateLine(stands({ ...READY, phase: 'placing' }))).toBe('Putting PersonalClaw 0.3.8 in place…')
     expect(appUpdateLine(stands({ phase: 'failed' }))).toBe('This app is v0.3.7.')
     expect(appUpdateOnOffer(null)).toBe(false)
     expect(appUpdateOnOffer(stands())).toBe(false)
     expect(appUpdateOnOffer(OFFERED)).toBe(true)
     expect(appUpdateOnOffer(stands({ phase: 'ready', ready: { version: '0.3.8' } }))).toBe(true)
+    expect(appUpdateOnOffer(stands({ phase: 'gateway' }))).toBe(true)
     expect(appUpdateOnOffer(stands({ phase: 'placing' }))).toBe(true)
     expect(appUpdateOnOffer(stands({ phase: 'restarting' }))).toBe(true)
   })

@@ -507,35 +507,37 @@ describe("readUpdatePolicy: the home's updates settings, read each time, failing
     return dir;
   };
 
-  it("follows the channel, beta its own line and every other one stable, and the pin only for the app's own gateway", () => {
+  it("follows the channel, beta its own line and every other one stable, and the pin whichever gateway serves the home", () => {
     const cases = [
-      [{ channel: "beta", pin: " 0.3.8 ", check_enabled: false }, true, { channel: "beta", pin: "0.3.8", checkEnabled: false }],
-      [{ channel: "beta", pin: "0.3.8" }, false, { channel: "beta", pin: "", checkEnabled: true }],
-      [{ channel: "nightly" }, true, { channel: "stable", pin: "", checkEnabled: true }],
-      [{ channel: 7, pin: 0.38 }, true, { channel: "stable", pin: "", checkEnabled: true }],
+      [{ channel: "beta", pin: " 0.3.8 ", check_enabled: false }, { channel: "beta", pin: "0.3.8", checkEnabled: false }],
+      [{ channel: "nightly" }, { channel: "stable", pin: "", checkEnabled: true }],
+      [{ channel: 7, pin: 0.38 }, { channel: "stable", pin: "", checkEnabled: true }],
     ];
-    for (const [updates, ownGateway, want] of cases) {
-      assert.deepEqual(readUpdatePolicy({ home: home(JSON.stringify({ updates })), ownGateway }), want, JSON.stringify(updates));
+    for (const [updates, want] of cases) {
+      assert.deepEqual(readUpdatePolicy({ home: home(JSON.stringify({ updates })) }), want, JSON.stringify(updates));
     }
+    // A gateway the app found follows the same pin, so the app's target is the gateway's: before,
+    // the app ignored the pin and could install a release the gateway, held to it, would not reach.
+    assert.deepEqual(readUpdatePolicy({ home: home(JSON.stringify({ updates: { pin: "0.3.8" } })), ownGateway: false }), { channel: "stable", pin: "0.3.8", checkEnabled: true });
   });
 
   it("takes the defaults for no file, an empty one, or a block that is not one, as the gateway does", () => {
     const defaults = { channel: "stable", pin: "", checkEnabled: true };
     for (const text of [undefined, "", "  \n", JSON.stringify({ updates: "beta" }), JSON.stringify({ updates: ["beta"] }), "[]"]) {
-      assert.deepEqual(readUpdatePolicy({ home: home(text), ownGateway: true }), defaults, String(text));
+      assert.deepEqual(readUpdatePolicy({ home: home(text) }), defaults, String(text));
     }
   });
 
   it("offers nothing from a file it cannot read or parse: the pin it may hold is a limit", () => {
     const broken = home("{ not json");
-    assert.deepEqual(readUpdatePolicy({ home: broken, ownGateway: true }), { unreadable: path.join(broken, "config.json") });
+    assert.deepEqual(readUpdatePolicy({ home: broken }), { unreadable: path.join(broken, "config.json") });
     const denied = home();
     const readFile = () => {
       const err = new Error("EACCES");
       err.code = "EACCES";
       throw err;
     };
-    assert.deepEqual(readUpdatePolicy({ home: denied, ownGateway: true, readFile }), { unreadable: path.join(denied, "config.json") });
+    assert.deepEqual(readUpdatePolicy({ home: denied, readFile }), { unreadable: path.join(denied, "config.json") });
   });
 });
 
@@ -550,7 +552,7 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
       removeItem: (k) => { delete data[k]; },
     };
   };
-  function updater({ list = [release("v0.3.8")], policy = { channel: "stable", pin: "", checkEnabled: true }, tools, current = "0.3.7", at = installed(), store = memoryStore(), ownsGateway, isMountPoint, listHold = () => null, listStatus = () => 200, getuid, runSync, isPackaged = true, onState: alsoOnState = () => {} } = {}) {
+  function updater({ list = [release("v0.3.8")], policy = { channel: "stable", pin: "", checkEnabled: true }, tools, current = "0.3.7", at = installed(), store = memoryStore(), ownsGateway, bringGateway, isMountPoint, listHold = () => null, listStatus = () => 200, getuid, runSync, isPackaged = true, onState: alsoOnState = () => {} } = {}) {
     const timers = [];
     const states = [];
     const relaunched = [];
@@ -600,6 +602,7 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
       request: asked,
       store,
       ownsGateway,
+      ...(bringGateway ? { bringGateway } : {}),
       ...(isMountPoint ? { isMountPoint } : {}),
       ...(getuid ? { getuid } : {}),
       ...(runSync ? { runSync } : {}),
@@ -663,10 +666,10 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
   it("checks at once when it finds its gateway on a newer version, comparing versions, not their spelling", async () => {
     const u = updater();
     u.start();
-    u.noteGateway({ kind: "adopted", version: "0.3.8" });
+    u.noteGateway({ kind: "adopted", version: "0.3.8", port: 10870 });
     await until(() => u.status().phase === "available");
     assert.equal(u.seen.length, 1, "the gateway's newer version started no check");
-    assert.deepEqual(u.status().gateway, { kind: "adopted", version: "0.3.8", order: "ahead", plan: null });
+    assert.deepEqual(u.status().gateway, { kind: "adopted", version: "0.3.8", order: "ahead", port: 10870, plan: null });
     // A release candidate is one release however it is spelled: the app's npm spelling and the
     // gateway's Python one are the same version, and nothing is checked.
     const rc = updater({ current: "0.3.8-rc.1", list: [release("v0.3.8")] });
@@ -796,6 +799,134 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     assert.equal(u.status().restartsGateway, true);
     own = false;
     assert.equal(u.status().restartsGateway, false);
+  });
+
+  /** Update, until its copy is ready, with the home served by a gateway the app found on *version*. */
+  const readyWithFoundGateway = async (u, version = "0.3.7") => {
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await settle(u);
+    u.noteGateway({ kind: "adopted", version, port: 10870 });
+  };
+  /** What a confirm that showed the gateway step carries with the press. */
+  const SHOWN = Object.freeze({ gateway: Object.freeze({ from: "0.3.7", to: "0.3.8" }) });
+
+  it("says the gateway step Restart to finish takes for a gateway it found older than the ready copy, and none for one on it, its own or none", async () => {
+    const u = updater({ bringGateway: async () => ({ ok: true }) });
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await settle(u);
+    assert.equal(u.status().gatewayStep, null, "no gateway was noted");
+    u.noteGateway({ kind: "adopted", version: "0.3.7", port: 10870 });
+    assert.deepEqual(u.status().gatewayStep, { port: 10870, from: "0.3.7", to: "0.3.8" });
+    u.noteGateway({ kind: "adopted", version: "0.3.8", port: 10870 });
+    assert.equal(u.status().gatewayStep, null, "a gateway already on the release keeps running");
+    u.noteGateway({ kind: "adopted", version: "0.3.9", port: 10870 });
+    assert.equal(u.status().gatewayStep, null);
+    u.noteGateway({ kind: "own" });
+    assert.equal(u.status().gatewayStep, null, "the app's own gateway updates with the app");
+    u.noteGateway({ kind: "none" });
+    assert.equal(u.status().gatewayStep, null);
+  });
+
+  it("brings a gateway it found to the release first at Restart to finish, and only then puts the new copy in place", async () => {
+    const order = [];
+    let u = null;
+    u = updater({
+      bringGateway: async (step) => {
+        order.push(["gateway", step.to, u.status().phase, fs.existsSync(path.join(u.at.folder, ".PersonalClaw-0.3.8.app.incoming"))]);
+        return { ok: true };
+      },
+      onState: (s) => {
+        if (s.phase === "placing" && !order.some((o) => o[0] === "placing")) order.push(["placing"]);
+      },
+    });
+    await readyWithFoundGateway(u);
+    assert.deepEqual(u.finish("0.3.8", SHOWN), { ok: true });
+    await settle(u);
+    assert.equal(u.status().phase, "restarting", u.status().sentence);
+    assert.deepEqual(order, [["gateway", "0.3.8", "gateway", false], ["placing"]]);
+    assert.equal(u.quits.length, 1);
+  });
+
+  it("makes no gateway call for a press whose confirm did not show the gateway step, and keeps the ready copy", async () => {
+    const asked = [];
+    const u = updater({ bringGateway: async (step) => (asked.push(step), { ok: true }) });
+    await readyWithFoundGateway(u);
+    const bare = u.finish("0.3.8");
+    assert.equal(bare.ok, false);
+    assert.match(bare.sentence, /gateway on port 10870/);
+    const other = u.finish("0.3.8", { gateway: { from: "0.3.6", to: "0.3.8" } });
+    assert.equal(other.ok, false, "a confirm that showed another gateway step");
+    assert.deepEqual(asked, []);
+    assert.equal(u.status().phase, "ready");
+    assert.equal(u.status().ready.version, "0.3.8");
+    assert.equal(u.quits.length, 0);
+  });
+
+  it("keeps the download when the gateway can't be brought along, says why, and tries again at the next press", async () => {
+    let answer = { ok: false, sentence: "The gateway on port 10870 couldn't be updated: it answered 500." };
+    const asked = [];
+    const u = updater({ bringGateway: async (step) => (asked.push(step.to), answer) });
+    await readyWithFoundGateway(u);
+    assert.deepEqual(u.finish("0.3.8", SHOWN), { ok: true });
+    await settle(u);
+    assert.equal(u.status().phase, "ready");
+    assert.equal(u.status().ready.version, "0.3.8");
+    assert.equal(u.status().sentence, answer.sentence);
+    assert.equal(u.quits.length, 0);
+    assert.equal(fs.existsSync(path.join(u.at.folder, ".PersonalClaw-0.3.8.app.incoming")), false);
+    answer = { ok: true };
+    assert.deepEqual(u.finish("0.3.8", SHOWN), { ok: true });
+    await settle(u);
+    assert.equal(u.status().phase, "restarting", u.status().sentence);
+    assert.deepEqual(asked, ["0.3.8", "0.3.8"]);
+    assert.equal(u.quits.length, 1);
+  });
+
+  it("checks the home's settings again after the gateway step, right before the copy is put in place", async () => {
+    const rules = { channel: "stable", pin: "", checkEnabled: true };
+    const u = updater({
+      policy: rules,
+      bringGateway: async () => {
+        rules.pin = "0.3.9";
+        return { ok: true };
+      },
+    });
+    await readyWithFoundGateway(u);
+    assert.deepEqual(u.finish("0.3.8", SHOWN), { ok: true });
+    await until(() => u.status().dropped);
+    assert.equal(u.status().ready, null);
+    assert.equal(u.quits.length, 0);
+    assert.equal(fs.existsSync(path.join(u.at.folder, ".PersonalClaw-0.3.8.app.incoming")), false);
+  });
+
+  it("puts nothing in place and does not quit for it when the app quits during the gateway step", async () => {
+    let answer = null;
+    const u = updater({ bringGateway: () => new Promise((resolve) => (answer = resolve)) });
+    await readyWithFoundGateway(u);
+    assert.deepEqual(u.finish("0.3.8", SHOWN), { ok: true });
+    await until(() => answer);
+    const stopped = u.stop();
+    answer({ ok: true });
+    await stopped;
+    assert.equal(u.quits.length, 0);
+    assert.equal(fs.existsSync(path.join(u.at.folder, ".PersonalClaw-0.3.8.app.incoming")), false);
+  });
+
+  it("asks no gateway along that is already on the release, the app's own, or none", async () => {
+    for (const noted of [{ kind: "adopted", version: "0.3.8", port: 10870 }, { kind: "own" }, { kind: "none" }]) {
+      const asked = [];
+      const u = updater({ bringGateway: async (step) => (asked.push(step), { ok: true }) });
+      await u.check({ asked: true });
+      u.download("0.3.8");
+      await settle(u);
+      u.noteGateway(noted);
+      assert.deepEqual(u.finish("0.3.8"), { ok: true }, JSON.stringify(noted));
+      await settle(u);
+      assert.deepEqual(asked, [], JSON.stringify(noted));
+      assert.equal(u.quits.length, 1);
+    }
   });
 
   it("downloads and checks only on Update, to the version on offer, in a private folder, and writes nothing beside the app", async () => {
@@ -1423,7 +1554,7 @@ describe("registerAppUpdateIpc: the app's own windows ask, and nothing else", ()
       status: () => "state",
       check: (o) => (asked.push(["check", o]), "checked"),
       download: (v) => (asked.push(["download", v]), { ok: true }),
-      finish: (v) => (asked.push(["finish", v]), { ok: true }),
+      finish: (v, shown) => (asked.push(["finish", v, shown]), { ok: true }),
     };
     registerAppUpdateIpc({ ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) }, channels, updater: () => updater, isAppWindow });
     return { handlers, asked };
@@ -1438,7 +1569,18 @@ describe("registerAppUpdateIpc: the app's own windows ask, and nothing else", ()
     await handlers.get("d")({ sender: {} }, { version: "0.3.8" });
     await handlers.get("f")({ sender: {} }, "0.3.8");
     await handlers.get("f")({ sender: {} }, ["0.3.8"]);
-    assert.deepEqual(asked, [["check", { asked: true }], ["download", "0.3.8"], ["download", ""], ["finish", "0.3.8"], ["finish", ""]]);
+    // What the confirm showed of the gateway step, as plain versions and nothing else.
+    await handlers.get("f")({ sender: {} }, "0.3.8", { gateway: { from: "0.3.7", to: "0.3.8", port: 1, more: "x" } });
+    await handlers.get("f")({ sender: {} }, "0.3.8", { gateway: { from: 7, to: ["0.3.8"] } });
+    assert.deepEqual(asked, [
+      ["check", { asked: true }],
+      ["download", "0.3.8"],
+      ["download", ""],
+      ["finish", "0.3.8", {}],
+      ["finish", "", {}],
+      ["finish", "0.3.8", { gateway: { from: "0.3.7", to: "0.3.8" } }],
+      ["finish", "0.3.8", {}],
+    ]);
   });
 
   it("refuses a page that is not one of the app's windows", () => {
@@ -1490,9 +1632,9 @@ describe("main.js: the update is asked for in the app menu, and the swap is the 
     assert.match(body("runProgram"), /resolve\(stream === "stderr" \? stderr : stdout\)/);
   });
 
-  it("follows the pin only while the home's gateway is not one the app found running, and trashes the old copy once the new one has its gateway", () => {
-    // The kind of gateway, never what the row says: a signed-out row is still one kind or the other.
-    assert.match(body("makeThisAppsUpdater"), /readUpdatePolicy\(\{ home: PERSONALCLAW_HOME, ownGateway: !adoptedGateway && !\["served", "behind", "unusable", "updating"\]\.includes\(localState\.state\) \}\)/);
+  it("follows the home's pin whichever gateway serves it, brings a found gateway along, and trashes the old copy once the new one has its gateway", () => {
+    assert.match(body("makeThisAppsUpdater"), /policy: \(\) => readUpdatePolicy\(\{ home: PERSONALCLAW_HOME \}\),/);
+    assert.match(body("makeThisAppsUpdater"), /bringGateway: \(step\) => bringGatewayAlong\(step\),/);
     assert.match(body("makeThisAppsUpdater"), /ownsGateway: \(\) => gatewayWatch\.kind === "own",/);
     // At the start, once a gateway is up; or later, once the first one is in use (a start that
     // landed on the chooser, then Use It or a gateway started here), once a run.
