@@ -1077,10 +1077,13 @@ _RELEASE_WORKFLOW = "release.yml"
 #: only from main (the settings report reads that policy back every week), and its workflow runs
 #: only on a schedule or a dispatch, so no candidate's run can name it. `settings-report` holds
 #: the report's read-only credential; `ci-controller` the release controller's App key, which
-#: release-tag.yml uses to create a `v*` tag and merge-verdict.yml to post the merge verdict.
-#: None of these jobs may hold a publishing permission, as no job outside release.yml may.
+#: release-tag.yml uses to create a `v*` tag and merge-verdict.yml to post the merge verdict;
+#: `pin-refresh` the pin-refresh App's key, which pin-refresh.yml uses to open its weekly refresh
+#: pull request (#4585). None of these jobs may hold a publishing permission, as no job outside
+#: release.yml may.
 _MAIN_ONLY_ENVIRONMENTS = {
     ("settings-report.yml", "report"): "settings-report",
+    ("pin-refresh.yml", "refresh"): "pin-refresh",
     ("release-tag.yml", "tag"): "ci-controller",
     ("merge-verdict.yml", "post"): "ci-controller",
     ("merge-verdict.yml", "contract"): "ci-controller",
