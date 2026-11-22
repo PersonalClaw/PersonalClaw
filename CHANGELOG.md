@@ -73,6 +73,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Settings › Models follows the models it shows: adding or removing an instance in the Providers section above it, or binding a model in another tab, updates each use case's models and chain at once instead of after a reload.**
 - **The Library's Filter names a picked collection by its name when the collection holds nothing yet, as the count line beside it does, rather than by its id.**
 - **A dialog no longer takes the key that opened it as its answer: Enter on New collection's name now shows its search step instead of making the collection at once.**
+- **A Library search or filter that leaves the open item out of the list keeps it in its pane and says the search hides it, rather than saying nothing in your library has its address.**
 
 ### Security
 
