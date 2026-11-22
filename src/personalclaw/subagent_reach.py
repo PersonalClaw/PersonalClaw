@@ -34,7 +34,7 @@ reads too (``inbox_reach``): an item raised for a chat's work is that chat's.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
@@ -100,6 +100,32 @@ class Reader:
     def of(self, helpers: Iterable[SubagentInfo]) -> list[SubagentInfo]:
         """The helpers of *helpers* this reads, in their order."""
         return [info for info in helpers if self.reads(info.parent_session_key)]
+
+
+def asked_by_someone_else(reader: Reader) -> dict[str, str]:
+    """Who asked for the work *reader* reads as, when it was someone other than you, read as a
+    memory read reads it (``memory_writes.asker``, else ``asker_of_sessions`` for the work and the
+    chat at its top): ``{}`` when you did or nothing says, and for a read you make from your own
+    pages. Such work reads none of your memory, so it reads no helper's report either
+    (:func:`report_withheld`), nor your Inbox (``inbox_reach``). Walks the chat's records, so call
+    it off the event loop."""
+    if reader.everyone:
+        return {}
+    from personalclaw import memory_writes
+
+    return memory_writes.asker() or memory_writes.asker_of_sessions([reader.work, reader.chat])
+
+
+def report_withheld(asked: Mapping[str, str]) -> str:
+    """What a read of a helper's report answers for work someone other than you asked for: a
+    helper that worked for your own turn may hold what it read of your memory in its report, so
+    none is read, whoever started it, as none of your memory is (``memory_reads.asked_refusal``)."""
+    from personalclaw.turn_source import named
+
+    return (
+        f"The helper's report was not read: {named(asked)} asked for this, and nothing says they "
+        "are the owner, whose helpers' reports are read only for their own requests."
+    )
 
 
 def reader_of_work(state: Any, work: str) -> Reader:
