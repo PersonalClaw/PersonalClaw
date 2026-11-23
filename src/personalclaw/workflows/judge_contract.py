@@ -571,6 +571,9 @@ def adjudicate(primary: JudgeVerdict, skeptic: JudgeVerdict | None) -> JudgeVerd
     reason = primary.done_reason
     if primary.done and not done:
         reason = f"skeptic overturned completion: {skeptic.done_reason}".strip()[:500]
+    # A skeptic that could not tell overturns a completion as one that refuted it does, and says
+    # why: the cycle is one neither judge could rule done, not one shown unfinished.
+    cannot_judge = "" if done else (primary.cannot_judge or skeptic.cannot_judge)
     return JudgeVerdict(
         verdict=verdict_for_cycle(done, regressed),
         reasoning=primary.reasoning,
@@ -585,6 +588,7 @@ def adjudicate(primary: JudgeVerdict, skeptic: JudgeVerdict | None) -> JudgeVerd
         regressed=regressed,
         adversarial=True,  # the skeptic ran → this verdict was adversarially cross-checked
         band_used=primary.band_used,
+        cannot_judge=cannot_judge,
     )
 
 

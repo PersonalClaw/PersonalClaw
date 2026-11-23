@@ -25,10 +25,12 @@ self-report. The watchdog still owns the lifecycle decision; this only supplies 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from typing import Any
 
 from personalclaw.loop import files as loop_files
 from personalclaw.loop.loop import Loop
-from personalclaw.workflows.judge_contract import verdict_for_cycle
+from personalclaw.workflows.judge_contract import JudgeVerdict, verdict_for_cycle
 from personalclaw.workflows.supervisor_policy import (
     DONE_NEVER,
     DONE_ORCHESTRATED,
@@ -420,6 +422,11 @@ async def _judge_assessment_signal(
             },
         )
         return None
+    # A judge that cannot tell has not said the work needs more: its cycle defers, as one with no
+    # verdict does, and the loop asks its owner once it could not tell on cycles in a row.
+    if verdict.cannot_judge:
+        _cannot_tell(loop, cycle, verdict)
+        return None
     # Adversarial skeptic: a HIGH-stakes verdict (a claimed completion or a claimed regression)
     # must survive a second independent judge told to REFUTE it before the supervisor acts on it. A
     # lone judge that hallucinates "done" would otherwise complete the loop on
@@ -445,6 +452,10 @@ async def _judge_assessment_signal(
         from personalclaw.workflows.judge_contract import adjudicate
 
         verdict = adjudicate(verdict, skeptic)
+        if verdict.cannot_judge:
+            _cannot_tell(loop, cycle, verdict)
+            return None
+    _could_tell(loop)
     trail = store.record_marginal_score(loop.id, verdict.marginal_value)
     # Keep the quality trail alongside (the calibrated band's variance sample + a future
     # quality-regression signal); we read the marginal trail for exhaustion.
@@ -467,6 +478,75 @@ async def _judge_assessment_signal(
     if returns_exhausted_calibrated(trail, granularity):
         return True
     return False
+
+
+#: The cycles in a row a loop's judge may say it cannot tell before the loop asks its owner: one
+#: is a thin report, and the next cycle may show more; a second is the judge saying the loop's
+#: evidence does not show the goal, which more cycles of the same work will not change.
+CANNOT_TELL_PAUSE = 2
+
+#: ``kind_config`` keys: the can't-tell answers in a row, and the judge's reason the loop pauses
+#: with, set when they reach :data:`CANNOT_TELL_PAUSE` and taken by the watchdog that pauses it.
+CANNOT_TELL_STREAK = "judge_cannot_tell_cycles"
+CANNOT_TELL_PAUSED = "judge_cannot_tell"
+
+
+def _cannot_tell(loop: Loop, cycle: int, verdict: JudgeVerdict) -> None:
+    """Record a cycle whose judge said it cannot tell whether the goal is met: its verdict, with
+    the judge's reason and no score (the returns rail skips it), and one more in the streak, which
+    at :data:`CANNOT_TELL_PAUSE` asks the loop's owner with that reason."""
+    from personalclaw.loop import store
+
+    why = str(verdict.cannot_judge).rstrip(".")
+    # In the words the loop's page reads off its latest cycle (`cannot_judge`), as a cycle with no
+    # verdict is said; the judge's own reason is quoted in it.
+    sentence = (
+        f"The judge could not tell whether the goal is met: “{why}”. The loop asks it again after "
+        f"its next cycle, and asks you if it still cannot tell."
+    )
+    record = {"cycle": cycle, **verdict.to_dict(), "cannot_judge": sentence}
+    for unscored in ("marginal_value", "quality_score"):
+        record.pop(unscored, None)
+    loop_files.write_verdict(loop.id, cycle, record)
+    streak = int(_cfg(loop).get(CANNOT_TELL_STREAK) or 0) + 1
+    if streak >= CANNOT_TELL_PAUSE:
+        store.set_kind_config_key(loop.id, CANNOT_TELL_STREAK, 0)
+        store.set_kind_config_key(loop.id, CANNOT_TELL_PAUSED, why)
+    else:
+        store.set_kind_config_key(loop.id, CANNOT_TELL_STREAK, streak)
+
+
+def _could_tell(loop: Loop) -> None:
+    """A cycle its judge could rule on ends a streak of ones it could not."""
+    from personalclaw.loop import store
+
+    if _cfg(loop).get(CANNOT_TELL_STREAK):
+        store.set_kind_config_key(loop.id, CANNOT_TELL_STREAK, 0)
+
+
+def pause_when_its_judge_cannot_tell(loop_id: str, publish: Callable[..., Any]) -> bool:
+    """Pause the loop *loop_id* whose judge could not tell, :data:`CANNOT_TELL_PAUSE` cycles in a
+    row, whether its goal is met, saying so on the loop with the judge's own reason; whether it
+    did. Read once: a resumed loop runs its next cycle, and asks again only after the judge says
+    it cannot tell on that many more."""
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import LoopStatus
+
+    loop = store.get(loop_id)
+    why = str(_cfg(loop).get(CANNOT_TELL_PAUSED) or "") if loop is not None else ""
+    if not why:
+        return False
+    store.set_kind_config_key(loop_id, CANNOT_TELL_PAUSED, "")
+    loop_files.write_question(
+        loop_id,
+        f"Paused: this loop's judge could not tell, {CANNOT_TELL_PAUSE} cycles in a row, whether "
+        f"the goal is met. It said: “{why}”. Tell the loop what shows it, such as the file its "
+        "work is in, then resume; or stop it if the work is done.",
+        asked_by=loop_files.SCHEDULER_QUESTION,
+    )
+    store.update_status(loop_id, LoopStatus.NEEDS_INPUT)
+    publish(loop_id, "needs_input", {"loop_id": loop_id})
+    return True
 
 
 def has_done_check(loop: Loop, policy: SupervisorPolicy) -> bool:
