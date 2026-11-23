@@ -39,6 +39,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Only you publish a workflow to outside A2A clients, with the switch on its page. A workflow a pack brings arrives unpublished.**
 - **An agent on an agent CLI is offered, and may call, only the PersonalClaw tools its tool list allows, and a list you save holds a chat already open on it from its next call.**
 - **An app granted the helper routes stops and clears only the helpers its own work started. Another chat's helper answers as an id that never existed and is left running, a fan-out holding one is not stopped, and an app's stop is recorded as the app's, so the helper's report reaches its chat as usual rather than reading as your own stop.**
+- **Deleting a loop forgets every chat it made, its task workers' included, as deleting a chat does.**
 
 ## [0.4.1] — 2026-11-25
 
