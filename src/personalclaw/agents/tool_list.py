@@ -53,6 +53,17 @@ _NAMED = 20
 #: Why a list could not be read when the configuration file it is set in could not be.
 NO_CONFIG = "the configuration file could not be read"
 
+#: Where the gateway's session tool policy (``GET /api/session-tool-policy``) carries an agent's
+#: list to the PersonalClaw tool servers an agent CLI is handed (``mcp_shared``), so the CLI is
+#: offered, and may call, only the PersonalClaw tools its agent's list allows. The CLI's own
+#: built-in tools (its shell, its file edits) are outside any list: they follow the CLI's own
+#: permission mode.
+POLICY_KEY = "agentTools"
+
+#: Why a list a tool server was sent could not be read (not the shape :meth:`AgentTools.as_policy`
+#: writes).
+UNREADABLE_POLICY = "the list the gateway sent could not be read"
+
 
 @dataclass(frozen=True)
 class AgentTools:
@@ -105,6 +116,38 @@ class AgentTools:
             held._until,
         )
         return held
+
+    def as_policy(self) -> dict[str, Any] | None:
+        """This list as the session tool policy carries it (:data:`POLICY_KEY`), or ``None`` for
+        no list, which allows every tool."""
+        if not self.listed:
+            return None
+        return {
+            "agent": self.agent,
+            "patterns": list(self.patterns),
+            "unreadable": self.unreadable,
+            "fixed": self.fixed,
+        }
+
+    @classmethod
+    def from_policy(cls, value: Any) -> "AgentTools":
+        """The list a session tool policy carried (:meth:`as_policy`): every tool when it carried
+        none. One that is not in that shape, or names nothing and gives no reason, was still a
+        limit, so it allows only :data:`ALWAYS_KEPT`."""
+        if value is None:
+            return cls()
+        if not isinstance(value, dict):
+            return cls(listed=True, unreadable=UNREADABLE_POLICY)
+        patterns = value.get("patterns")
+        names = _names(patterns) if isinstance(patterns, list) else ()
+        why = str(value.get("unreadable") or "") or ("" if names else UNREADABLE_POLICY)
+        return cls(
+            agent=str(value.get("agent") or ""),
+            patterns=() if why else names,
+            listed=True,
+            unreadable=why,
+            fixed=value.get("fixed") is True,
+        )
 
     @property
     def _until(self) -> str:
