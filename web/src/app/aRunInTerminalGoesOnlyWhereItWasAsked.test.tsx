@@ -282,6 +282,47 @@ describe('a session nobody can see takes nothing', () => {
     }
   })
 
+  it('🔴 closing the drawer on the Terminal page sends Run to the pane the page shows, not the closed drawer', async () => {
+    pty.live.push({ session_id: 'pty-left', cwd: '/home/ada', shell: '/bin/zsh', alive: true })
+    location.hash = '#/terminal?active=pty-left'
+    render(<StrictMode><ThemeProvider><AppearanceProvider><PersonalityProvider><App /></PersonalityProvider></AppearanceProvider></ThemeProvider></StrictMode>)
+    await screen.findByRole('group', { name: /PTY/ })
+    await settle()
+
+    fireEvent.keyDown(window, { key: 'j', ctrlKey: true })
+    await waitFor(() => expect(screen.getAllByRole('group', { name: /PTY/ })).toHaveLength(2))
+    await settle()
+    askToRun('pwd')
+    await waitFor(() => expect(runsOf('pwd')).toEqual([['pty-1', 'pwd\n']]))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide terminal' }))
+    await waitFor(() => expect(screen.getAllByRole('group', { name: /PTY/ })).toHaveLength(1))
+    await settle()
+    askToRun('pwd')
+    await waitFor(() => expect(runsOf('pwd')).toHaveLength(2))
+    expect(runsOf('pwd').map(([id]) => id)).toEqual(['pty-1', 'pty-left'])
+  })
+
+  it('🔴 a pane the Terminal page showed takes no Run once the page is left, though its session registers again', async () => {
+    pty.live.push({ session_id: 'pty-left', cwd: '/home/ada', shell: '/bin/zsh', alive: true })
+    await openChat(SESSION, /RUN THIS ONE/)
+    act(() => { location.hash = '#/terminal?active=pty-left' })
+    await screen.findByRole('group', { name: /PTY/ })
+    await settle()
+    act(() => { location.hash = `#/chat/${SESSION}` })
+    await screen.findByText(/RUN THIS ONE/)
+
+    const again: string[] = []
+    registerTerminal('pty-left', (text) => { again.push(text); return true })
+    try {
+      run()
+      await waitFor(() => expect(runsOf(COMMAND)).toEqual([['pty-1', `${COMMAND}\n`]]), { timeout: 4000 })
+      expect(again, 'the page no longer shows it').toEqual([])
+    } finally {
+      unregisterTerminal('pty-left')
+    }
+  })
+
   // Last in the file: the session it shows is the bridge's for the rest of the file.
   it("the drawer's command goes to the session it opened, though another is shown while it opens", async () => {
     pty.openAfter = 400
