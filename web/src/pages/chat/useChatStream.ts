@@ -313,6 +313,8 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // The app that started this conversation — `null` for one of yours. Read from the session
   // detail on every open.
   const [startedBy, setStartedBy] = useState<{ name: string } | null>(null)
+  // Whether the chat's channel thread is one other people read, where nothing written here goes.
+  const [sharedThread, setSharedThread] = useState(false)
   // Investigate origin: the entity this chat was opened to investigate.
   // Rendered as a header chip deep-linking back to the source surface.
   const [investigateOrigin, setInvestigateOrigin] = useState<import('../../lib/api').InvestigateOrigin | null>(null)
@@ -601,6 +603,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     setSubagents([])  // subagent cards are per-session too
     setBranchedFrom(null)  // lineage is per-session; the load below re-reads it
     setStartedBy(null)  // so is which app started it
+    setSharedThread(false)  // and whether its thread is shared
     if (!sessionId) { setTurns([]); setLoadingHistory(false); return }
     setLoadFailure(null)
     let alive = true
@@ -657,6 +660,8 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         // permissions whoever sends it, and the composer and the Permission pill say so
         // (`StartedByApp`).
         setStartedBy(startedByName(d) ? { name: startedByName(d) } : null)
+        // A thread others read hears none of her turns from here, and the composer says so.
+        setSharedThread(d.shared_thread === true)
         // Investigate origin chip — present on sessions opened via
         // POST /api/investigate; survives the first turn (display fields kept).
         setInvestigateOrigin((d as { investigate?: import('../../lib/api').InvestigateOrigin | null }).investigate ?? null)
@@ -1341,6 +1346,6 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     contextPct, contextWindow, contextParts, autoChain, setAutoChain, workingDir, setWorkingDir,
     sessionBindingRef, bindingToldRef, bindingNonce,
     title, setTitle, titleNeed, setTitleNeed, sessionCost,
-    branchedFrom, chatProject, startedBy, investigateOrigin,
+    branchedFrom, chatProject, startedBy, sharedThread, investigateOrigin,
   }
 }

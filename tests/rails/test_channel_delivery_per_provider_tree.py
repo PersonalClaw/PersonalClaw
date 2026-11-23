@@ -7,6 +7,7 @@ hold to.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import channel_delivery_per_provider_shared
@@ -30,10 +31,20 @@ def _code(path: Path) -> str:
 class TestNoSecondSlotComesBack:
     def test_the_mirror_path_resolves_the_ORIGIN_handle(self) -> None:
         """`chat_runner`'s three mirror sites (user echo, tool stream, response) must all use the
-        origin-scoped handle. Reading the owner-reachable attribute there is the bug."""
+        origin-scoped handle. Reading the owner-reachable attribute there is the bug. The handle is
+        resolved where the turn's thread is chosen (`_the_thread_told`), from the channel the
+        chat's link names, and the mirror's handle is the one that returns."""
         code = _code(_CORE / "dashboard" / "chat_runner.py")
+        told = code[code.index("async def _the_thread_told(") :]
+        # Its own body only: up to the next function, an async one too, so lines moved into a
+        # helper after it are not read as its own.
+        after = re.search(r"\n(?:async )?def ", told[1:])
+        told = told[: after.start() + 1] if after else told
+        assert "provider = state.channel_provider_for(session_key)" in told
+        assert "delivery = state.delivery_for(provider)" in told
         assert (
-            "_mirror_delivery = state.delivery_for(state.channel_provider_for(session_key))" in code
+            "_mirror_delivery, _mirror_thread, _mirror_chan, _mirror_note = await _the_thread_told("
+            in code
         )
         assert "state.channel_delivery" not in code, (
             "a mirror site went back to the owner-reachable handle — a reply carries the origin "

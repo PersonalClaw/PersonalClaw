@@ -202,11 +202,13 @@ from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.turn_source import (
     ASKED_FOR_BY,
+    DASHBOARD_SOURCE,
     FROM_OUTSIDE,
     asked_by,
     holds_a_turn_not_asked_by,
     named,
     shared_source,
+    source_of,
 )
 from personalclaw.turn_streams import close_stream
 from personalclaw.usage_ledger import recorder, spent_rows
@@ -384,6 +386,7 @@ def say_how_an_unanswered_turn_ended(
     session_key: str,
     outcome: str,
     *,
+    told: bool = True,
     after_deny: str = "",
     waited: str = "",
 ) -> None:
@@ -396,7 +399,8 @@ def say_how_an_unanswered_turn_ended(
     but a turn cut short with nobody asking left no trace in it, so that one is added there too.
 
     Sent in the background: the end of a turn must neither wait on a channel's network nor be cut
-    off by it. A conversation with no linked channel sends nothing.
+    off by it. A conversation with no linked channel sends nothing, and neither does a turn its
+    thread was not *told* of (``_the_thread_told``): that turn stays in the dashboard.
 
     A turn the gateway ended to restart or shut down says so in the chat too, in those words, so a
     question it cut off is never left there unanswered with nothing saying why. One it ended while
@@ -424,9 +428,11 @@ def say_how_an_unanswered_turn_ended(
         session.append("error", note, "msg msg-err")
     else:
         return
-    told = asyncio.ensure_future(state.tell_linked_channel(session_key, note))
-    state._background_tasks.add(told)
-    told.add_done_callback(state._background_tasks.discard)
+    if not told:
+        return
+    telling = asyncio.ensure_future(state.tell_linked_channel(session_key, note))
+    state._background_tasks.add(telling)
+    telling.add_done_callback(state._background_tasks.discard)
 
 
 def _resolve_agent_id(agent: str | None, provider_kind: str, provider_agent: str | None) -> str:
@@ -771,6 +777,58 @@ async def _mirror_the_answer(
             row["meta"] = {**(meta if isinstance(meta, dict) else {}), SHOWN_ON_CHANNEL: True}
             session._dirty = True
         return
+
+
+def _the_owners_dashboard_turn(row: object) -> bool:
+    """Whether *row*, the row a turn starts with, is the owner's own message from the dashboard:
+    a person's row the dashboard's chat took in (``turn_source.DASHBOARD_SOURCE``), not words taken
+    in from outside, and not work someone else asked for. A turn with no row of its own, and one an
+    automation's result, a helper's report or a loop's nudge started, is none."""
+    if not isinstance(row, Mapping) or row.get("role") != "user" or memory_writes.asker():
+        return False
+    meta = row.get("meta")
+    if isinstance(meta, Mapping) and (meta.get(FROM_OUTSIDE) or meta.get(ASKED_FOR_BY)):
+        return False
+    return source_of(row) == dict(DASHBOARD_SOURCE)
+
+
+async def _the_thread_told(
+    state: DashboardState, session_key: str, turn_row: object, arrived_from_channel: bool
+) -> tuple[Any, str | None, str | None, bool]:
+    """The channel thread the chat *session_key* is linked to, as ``(handle, thread, channel id,
+    whether its note is posted)``, when it is told of the turn now running (its progress and its
+    answer, and for a turn from the dashboard its note), else ``(None, None, None, False)``: the
+    turn stays in the dashboard.
+
+    A turn its own message started (*arrived_from_channel*, or a row the thread's channel took in)
+    is answered there, and its message, which the thread holds, is not posted back. Any other turn
+    is told only when it is the owner's own message from the dashboard
+    (:func:`_the_owners_dashboard_turn`) and the thread is the owner's own DM with PersonalClaw
+    (``channel_links.is_the_owners_own_dm``): a channel's or a group's conversation is read by
+    everyone in it, and one whose readers cannot be told is read as shared. An internal turn (a
+    helper's report, a scheduled run's result, a loop's nudge, words from outside, work someone
+    else asked for) is told nowhere.
+
+    The handle is the one of the channel the chat's link names: ``None`` when that channel is not
+    connected, and nothing is told, never on another channel, where the thread's ids would post
+    nowhere or into somebody else's conversation (#959). It is resolved before the link is read,
+    which a chat on no channel never reads."""
+    from personalclaw.dashboard import channel_links
+
+    provider = state.channel_provider_for(session_key)
+    delivery = state.delivery_for(provider)
+    if not delivery:
+        return None, None, None, False
+    thread, channel = state.sessions.get_channel_link(session_key)
+    if not (thread and channel):
+        return None, None, None, False
+    if arrived_from_channel or source_of(turn_row).get("source_channel") == provider:
+        return delivery, thread, channel, False
+    if _the_owners_dashboard_turn(turn_row) and await channel_links.is_the_owners_own_dm(
+        provider, channel, delivery
+    ):
+        return delivery, thread, channel, True
+    return None, None, None, False
 
 
 def _log_turn_failure(session_key: str, exc: BaseException) -> None:
@@ -2982,26 +3040,16 @@ async def run_chat(
         # Its model is asked now: the turn thinks (plans, in plan mode) until a step says more.
         chat_phase.say(state, session, chat_phase.thinking(session))
 
-        # ── Bidirectional sync: mirror user message to the linked channel thread ──
-        #
-        # The ORIGIN channel's handle first, from the provider the session was created with —
-        # None when this turn came from the dashboard, or when that channel is not connected. In
-        # both cases nothing is mirrored, which is the correct outcome: the alternative is posting
-        # this thread's id into a DIFFERENT provider, which either fails or lands in somebody
-        # else's channel (#959).
-        #
-        # Resolved BEFORE the link is read, and that order is load-bearing: the link lookup used
-        # to be gated on "any delivery exists", so making it unconditional reached paths that
-        # never called it (156 tests, whose mocked `sessions` return a non-tuple). Gating on the
-        # ORIGIN's handle is strictly narrower than the original gate, and a dashboard session
-        # now skips the lookup entirely.
+        # ── Bidirectional sync: the linked channel thread is told of the turn, where it may be ──
+        # (`_the_thread_told`: its own message's turn, and the owner's own dashboard turn in her
+        # own DM; every other turn stays in the dashboard).
         if not is_slash:
-            _mirror_delivery = state.delivery_for(state.channel_provider_for(session_key))
+            _mirror_delivery, _mirror_thread, _mirror_chan, _mirror_note = await _the_thread_told(
+                state, session_key, _turn_row, arrived_from_channel
+            )
             if _mirror_delivery:
-                _mirror_thread, _mirror_chan = state.sessions.get_channel_link(session_key)
-            if _mirror_thread and _mirror_chan and _mirror_delivery:
                 try:
-                    if not arrived_from_channel:
+                    if _mirror_note:
                         _mirror_msg = message[:500]
                         _mirror_msg, _ = redact_exfiltration_urls(_mirror_msg)
                         _mirror_msg, _ = redact_credentials(_mirror_msg)
@@ -5033,6 +5081,7 @@ async def run_chat(
                 session,
                 session_key,
                 _turn_outcome,
+                told=arrived_from_channel or bool(_mirror_delivery),
                 after_deny=_deny_note,
                 # How its wait on her answer ended, when the gateway stopped while it waited.
                 waited=parked_chat_turns.how_the_wait_ended(session),

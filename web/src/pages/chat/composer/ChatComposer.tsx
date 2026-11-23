@@ -21,6 +21,7 @@ import { RoutingChip } from '../RoutingChip'
 import { OrganizeChip } from '../OrganizeChip'
 import { BundledFloorNotice } from '../BundledFloorNotice'
 import { AppPermissionNotice } from '../StartedByApp'
+import { SharedThreadNotice } from './SharedThreadNotice'
 import { AttachmentChips } from '../AttachmentChips'
 import { isImagePath } from '../imageAttachments'
 import { MEMORY_MODE_NOTICE } from '../memoryModeCopy'
@@ -94,7 +95,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
   speakingTurn: number | null
 }) {
   const { acpFor, editorKeep, activatePlanMode, startGoalLoop, applySelection, chooseApproval, chooseTaskMode, postureKnown, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, focusComposerSoon, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion, widgetDraft, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft, sendWithPrompt } = composer
-  const { sessionRef, turns, streaming, turnPhase, turnAct, turnEnding, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, contextParts, sessionCost, autoChain, startedBy, workingDir } = stream
+  const { sessionRef, turns, streaming, turnPhase, turnAct, turnEnding, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, contextParts, sessionCost, autoChain, startedBy, sharedThread, workingDir } = stream
   // What the draft carries besides its words: a send that carries any of it is queued for a turn of
   // its own, never steered into the running one (`useChatComposer`'s mid-turn send), so the button
   // says Queue.
@@ -148,6 +149,9 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
       {/* An app's conversation: what you send runs under the APP's grant, not your approval
           switches — said before you type, like the memory notice above. */}
       {startedBy && <AppPermissionNotice name={startedBy.name} />}
+      {/* A chat linked to a thread others read: nothing she writes here is posted there
+          (`chat_runner._the_thread_told`), said before she types. */}
+      {sharedThread && <SharedThreadNotice />}
       {/* The composer's notice: what failed (voice input, screen sharing, a switched answer, a
           branch…), which stays until dismissed or the next send, or what just happened. */}
       <ComposerNoticeLine notice={notice.notice} onDismiss={notice.clear} />

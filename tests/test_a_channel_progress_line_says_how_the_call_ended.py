@@ -164,10 +164,13 @@ async def _pending(session) -> str:
 
 
 async def _turn(state, session, answer=None) -> None:
-    """One turn; *answer* is what happens to its approval once it is asked."""
-    session.append("user", "go", "msg msg-u")
+    """One turn, which a message on the chat's thread started, as the channel's door starts it;
+    *answer* is what happens to its approval once it is asked."""
+    from personalclaw.turn_source import arrived_on
+
+    session.append("user", "go", "msg msg-u", source=arrived_on("thread-1", "U0SENDER", PROVIDER))
     answering = asyncio.ensure_future(answer(state, session)) if answer else None
-    await asyncio.wait_for(run_chat(state, session, "go"), timeout=20)
+    await asyncio.wait_for(run_chat(state, session, "go", arrived_from_channel=True), timeout=20)
     if answering is not None:
         await answering
 
