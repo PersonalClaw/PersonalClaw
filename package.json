@@ -21,8 +21,8 @@
     "postinstall": "sh scripts/install_git_hooks.sh"
   },
   "devDependencies": {
-    "impeccable": "4.8.1",
-    "playwright": "^1.64.1"
+    "impeccable": "4.9.2",
+    "playwright": "^1.65.1"
   },
   "overrides": {
     "react": "^19.2.8",
