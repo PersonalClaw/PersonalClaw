@@ -23,6 +23,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The System card's update button reads Check for Updates until an update is known, and says what the check found right there. Once one is known it reads Update & Restart, and its confirm names the version it updates to. It used to read Update & Restart on an install already up to date, and a press restarted the gateway for nothing. A container or desktop install keeps its Update, which says how it is updated.**
 - **The lightning bolt marks Automations only. YOLO in a chat's permission menu, a tool step that ran without asking, and an automation that acts on its own wear a crossed-out shield, beside the menu's other shields.**
 - **A button that's unavailable says why in the app's own tooltip: when you point at it, when you tab to it, and when you tap it on a phone, instead of the browser's slow native tooltip.**
+- **On a phone, a project's detail opens as a full-height sheet over the page, closed with Close or Esc, with the focus on Close as it opens. It used to take the lower half of the page under the work.**
 
 ### Fixed
 
