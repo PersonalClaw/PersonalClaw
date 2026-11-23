@@ -580,12 +580,10 @@ def _static_signals(spec: dict[str, Any]) -> dict[str, bool]:
     )
     hints = _sub(spec, "runtime_hints")
     execution = _sub(hints, "execution")
-    judge = _sub(hints, "judge")
     return {
         "has_gate_or_judge": has_gate,
         "has_escalation": bool(execution.get("escalation")),
         "has_breaker": bool(execution.get("breaker")),
-        "has_stop_condition": bool(judge.get("stop_condition")),
     }
 
 
@@ -597,7 +595,7 @@ def template_maturity(
 ) -> dict[str, Any]:
     """Compute a template's maturity level L0–L3.
 
-    Level combines STATIC spec signals (does it verify, escalate, stop) with DEMONSTRATED
+    Level combines STATIC spec signals (does it verify, escalate, break a stall) with DEMONSTRATED
     ledger activity (clean runs, and — the load-bearing one — "the evaluator has rejected at
     least one real bad run", because a gate that has never rejected is not yet proven). The
     caller supplies the ledger figures; this stays a pure function over (spec, stats).

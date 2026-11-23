@@ -330,7 +330,6 @@ def test_a_full_hint_block_round_trips():
         {
             "rubric": [{"criterion": "correct", "target_score": 2, "weight": 2.0}],
             "ratchet": "relaxed",
-            "stop_condition": {"consecutive_clean": 3},
             "marginal_threshold": 1.0,
             "forbidden_success_modes": ["custom mode here"],
             "proof_command": "make test",
@@ -345,7 +344,6 @@ def test_a_full_hint_block_round_trips():
     )
     assert parsed.rubric[0].weight == 2.0
     assert parsed.ratchet is Ratchet.RELAXED
-    assert parsed.consecutive_clean == 3
     assert parsed.judge_isolation is Isolation.CROSS_MODEL
     assert parsed.fallback_check is FallbackCheck.COMMAND_EXIT_CODE
     assert parsed.freedom_level is FreedomLevel.LOW
@@ -357,28 +355,11 @@ def test_a_malformed_rubric_entry_is_dropped_not_fatal():
     assert [c.criterion for c in parsed.rubric] == ["ok"]
 
 
-def test_the_double_clean_rule_defaults_to_two():
-    """One clean pass is a sample; two is a signal. This is what stops a loop exiting
-    on the judge's first good mood."""
-    assert JudgeHints().consecutive_clean == 2
-
-
-def test_an_absent_stop_condition_keeps_the_double_clean_default():
-    """An empty dict is "unspecified", which means the default applies — not "zero"."""
-    assert JudgeHints(stop_condition={}).consecutive_clean == 2
-
-
-def test_an_explicit_zero_is_floored_to_one():
-    """A zero would let a loop exit having never passed a clean judge at all."""
-    assert JudgeHints(stop_condition={"consecutive_clean": 0}).consecutive_clean == 1
-    assert JudgeHints(stop_condition={"consecutive_clean": -5}).consecutive_clean == 1
-
-
 def test_the_granularity_presets_match_the_real_dial():
     """Seeded from the existing UI's scale so the numbers mean what it already means."""
     assert GRANULARITY_PRESETS["balanced"]["marginal_threshold"] == 2.0
-    assert GRANULARITY_PRESETS["quick"]["consecutive_clean"] == 1
-    assert GRANULARITY_PRESETS["exhaustive"]["consecutive_clean"] == 3
+    assert GRANULARITY_PRESETS["quick"]["marginal_threshold"] == 3.0
+    assert GRANULARITY_PRESETS["exhaustive"]["marginal_threshold"] == 1.0
 
 
 # ── the record ──

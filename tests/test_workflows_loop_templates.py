@@ -404,7 +404,6 @@ def test_the_hints_parse_into_the_judge_contract(subtests):
             assert hints.ratchet is Ratchet.STRICT
             assert hints.judge_isolation is Isolation.FRESH
             assert isinstance(hints.fallback_check, FallbackCheck)
-            assert hints.consecutive_clean >= 1
 
 
 def test_every_rubric_criterion_appears_in_a_judge_prompt(subtests):

@@ -176,15 +176,15 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         dry_streak=ctl._dry_streaks.get(parent_path, 0),
         ctx=ctx,
     )
-    # The budget stops a loop only when the loop would otherwise go on: its own exit test ran
-    # first (`loop_should_continue`), and a loop that met it on the last iteration its budget
-    # allows has finished. The budget used to be checked first, so exactly those loops ended
-    # escalated instead of complete.
-    budget = None
-    if keep_going and spent:
-        budget = verdict
-    elif not keep_going and reason == "max_iterations":
-        budget = BreakerVerdict(True, "max_iterations")
+    keep_going, reason, budget = _what_ends_the_cycle(
+        ctl,
+        node,
+        parent_path,
+        iteration,
+        keep_going=keep_going,
+        reason=reason,
+        spent=verdict if spent else None,
+    )
     if budget is not None:
         # What this iteration's judge ruled, or None when no judge ruled on a whole iteration.
         # "Accepted" is its validated ``passed``: a PASS the contract upheld
@@ -266,6 +266,42 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         return
 
     loop_convergence.finish_loop(ctl, parent_path, node, iteration)
+
+
+def _what_ends_the_cycle(
+    ctl: RunController,
+    node: Node,
+    parent_path: str,
+    iteration: int,
+    *,
+    keep_going: bool,
+    reason: str,
+    spent: BreakerVerdict | None,
+) -> tuple[bool, str, BreakerVerdict | None]:
+    """`(keep_going, reason, budget)` once the loop's own exit test has run: *spent* is the
+    breaker's verdict when it tripped on a budget, and the budget is the one that stops the loop.
+
+    The budget stops a loop only when the loop would otherwise go on: its own exit test ran first
+    (`loop_should_continue`), and a loop that met it on the last iteration its budget allows has
+    finished. The budget used to be checked first, so exactly those loops ended escalated instead
+    of complete.
+
+    A judge that would not decide on this cycle (`ending_sentence.judge_stop`: it ruled ESCALATE,
+    or its contract escalated its ruling, as one that said what it could not check) makes the loop
+    its owner's now: another round would spend a worker and a judge on work it said a person must
+    rule on, and a budget that ran out beside it is not why it stopped. It ends as a loop that met
+    its exit on an escalated ruling does, in the judge's words (`ending_sentence.loop_stop`). Read
+    at this cycle's own advance, the one place its ruling is this cycle's."""
+    budget = None
+    if keep_going and spent is not None:
+        budget = spent
+    elif not keep_going and reason == "max_iterations":
+        budget = BreakerVerdict(True, "max_iterations")
+    if keep_going or budget is not None:
+        ruling = ending_sentence.judge_ruling(ctl, node, parent_path, iteration)
+        if ending_sentence.judge_stop(ruling) is not None:
+            return False, "judge_escalated", None
+    return keep_going, reason, budget
 
 
 def _cycle_output(

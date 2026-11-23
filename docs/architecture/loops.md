@@ -210,7 +210,14 @@ The loop surfaces do not care which home a loop has:
 - **Ending.** A loop's own exit test is asked before its cycle budget
   (`workflows/tick.py:loop_should_continue`), and the budget stops it only when it would otherwise
   go on: on the cycle the budget ends on, a judge stage that accepted the work is the loop's done
-  (`workflows/loop_iteration.py:advance_loop`). A cycle in which a step failed never counts as dry,
+  (`workflows/loop_iteration.py:advance_loop`). A judge that would not decide on a cycle (it ruled
+  ESCALATE, or its contract escalated its ruling) ends the loop after that cycle, before another
+  round is run (`loop_iteration._what_ends_the_cycle`). Nothing else a judge rules ends one: a
+  loop's judge grades one cycle's step, not whether the task is done, so a loop ends at its own
+  exit or its round cap, when its judge hands the decision to you, or when you stop it. A
+  `runtime_hints.judge.stop_condition` (`consecutive_clean: N`) once declared that N passes in a
+  row would end it; nothing read it, and a workflow that still carries it loads and runs as before,
+  the key ignored and named once in the log. A cycle in which a step failed never counts as dry,
   so a loop whose steps keep failing goes on to its budget or its breaker instead of finishing.
   Why a loop that stops is handed to a person is decided once
   (`workflows/ending_sentence.py:loop_stop`) and carried on its escalation record as a cause, a

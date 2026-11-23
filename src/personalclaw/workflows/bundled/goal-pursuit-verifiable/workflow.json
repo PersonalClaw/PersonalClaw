@@ -39,9 +39,6 @@
         }
       ],
       "ratchet": "strict",
-      "stop_condition": {
-        "consecutive_clean": 2
-      },
       "marginal_threshold": 2.0,
       "freedom_level": "medium",
       "judge_isolation": "fresh",
