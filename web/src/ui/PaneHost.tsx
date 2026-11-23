@@ -33,6 +33,9 @@ import { useResizablePanel } from './useResizablePanel'
 // window's, so a sidebar docked beside it takes its share first. A work that keeps something at its
 // foot (the chat's composer) gives the host a slot (`stackInto`) above that foot, and a stacked pane
 // goes there instead, so the foot stays last and the work's content and the pane share the rest.
+// A surface whose detail is the whole task while it is open (a project's) asks for a stacked pane
+// over the work instead (`stacks="over"`): a sheet at the surface's full height, the work hidden but
+// mounted under it, with Close and Esc closing it and the focus on Close as it opens.
 
 /** What a pane shows. The feature builds it; the host only frames it. */
 export type PaneContent = {
@@ -93,7 +96,7 @@ function useNarrowerThan(box: RefObject<HTMLElement | null>, room: number): bool
   return narrow
 }
 
-export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, stackInto = null, children }: {
+export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, stackInto = null, stacks = 'under', children }: {
   /** The surface the pane belongs to. Its size is remembered for this surface alone. */
   surface: string
   /** The side of the work the pane docks on until a person moves it (then the side they chose,
@@ -106,6 +109,9 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
   /** Where a stacked pane goes: an element inside the work, before what the work keeps at its foot
    *  (best a `display: contents` slot in the work's own column). Without one it goes under the work. */
   stackInto?: HTMLElement | null
+  /** How a stacked pane opens: under the work, the two sharing the surface's height (the default),
+   *  or over it, a sheet at the surface's full height that Close or Esc closes. */
+  stacks?: 'under' | 'over'
   /** The surface's work, beside the pane. */
   children: ReactNode
 }) {
@@ -130,6 +136,10 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
     controlsRef.current?.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)?.focus()
   }
   const stacked = useNarrowerThan(boxRef, size.min + WORK_MIN)
+  // Stacked on a surface that asks for it, the pane is a sheet over the work: expanded, with no
+  // way back to a split there is no room for.
+  const sheet = stacked && stacks === 'over'
+  const over = expanded || sheet
 
   // ── Focus goes back where it came from ──
   //
@@ -165,6 +175,12 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
 
   // A pane that closes, or opens other content, opens again beside the work, with no move under way.
   useEffect(() => { setExpanded(false); setPreview(null); setSaid('') }, [id])
+  // A sheet hides the work, the focus with it, so it takes the focus on its Close as it opens, unless
+  // the focus is in it already. Closing it gives the focus back to its opener, as any close does.
+  useLayoutEffect(() => {
+    if (!sheet || !id || paneRef.current?.contains(document.activeElement)) return
+    focusControl(`Close ${pane?.label ?? 'pane'}`)
+  }, [sheet, id]) // eslint-disable-line react-hooks/exhaustive-deps
   // The pane is drawn on the side it would go to, before or after the work as it sits there, so
   // the reading order follows what is seen; drawing it there again takes the focus with it, which
   // goes back to Place while the move lasts.
@@ -202,11 +218,11 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
   const onPaneKey = (e: KeyboardEvent) => {
     if (e.key !== 'Escape' || e.defaultPrevented || preview || inAField(e.target)) return
     e.preventDefault()
-    if (expanded) setExpanded(false)
+    if (expanded && !sheet) setExpanded(false)
     else pane?.onClose()
   }
-  const layout = expanded ? 'expanded' : stacked ? 'stacked' : 'beside'
-  const where = expanded ? 'Expanded over the work' : stacked ? 'Under the work' : `Docked on the ${side} of the work`
+  const layout = sheet ? 'sheet' : expanded ? 'expanded' : stacked ? 'stacked' : 'beside'
+  const where = sheet ? 'Over the work, at its full height' : expanded ? 'Expanded over the work' : stacked ? 'Under the work' : `Docked on the ${side} of the work`
 
   const inner = side === 'right' ? 'left' : 'right'
   // Beside the work, the pane is drawn at the width chosen for this surface (`fitWidth` keeps it
@@ -214,7 +230,7 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
   // its own 12rem beside it and nothing spills past the surface. The chosen width is kept, and
   // drawn again once there is room for it. Stacked, the pane takes the surface's width and half its
   // height, under the work.
-  const edge = expanded ? 'flex-1' : stacked ? 'flex-1 border-t' : side === 'right' ? 'border-l' : 'border-r'
+  const edge = over ? 'flex-1' : stacked ? 'flex-1 border-t' : side === 'right' ? 'border-l' : 'border-r'
   const paneEl = pane && (
     <section ref={paneRef} aria-labelledby={titleId} aria-describedby={whereId} onKeyDown={onPaneKey}
       className={`relative flex min-h-0 min-w-0 flex-col ${edge} border-outline-variant/40 bg-surface`}
@@ -235,8 +251,8 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
           ) : (
             <>
               {!stacked && !expanded && <IconButton icon={ArrowLeftRight} label={`Move ${pane.label}`} onClick={startMove} size={24} iconSize={13} />}
-              <IconButton icon={expanded ? Minimize2 : Maximize2} label={`${expanded ? 'Collapse' : 'Expand'} ${pane.label}`}
-                onClick={() => setExpanded((x) => !x)} size={24} iconSize={13} />
+              {!sheet && <IconButton icon={expanded ? Minimize2 : Maximize2} label={`${expanded ? 'Collapse' : 'Expand'} ${pane.label}`}
+                onClick={() => setExpanded((x) => !x)} size={24} iconSize={13} />}
               <IconButton icon={X} label={`Close ${pane.label}`} onClick={pane.onClose} size={24} iconSize={13} />
             </>
           )}
@@ -260,8 +276,8 @@ export function PaneHost({ surface, dock = 'right', size = DEFAULT_SIZE, pane, s
   // the pane goes under the work from either side. `data-pane-host` names the box whose room is
   // read, and `data-pane-layout` says which layout is drawn while a pane is open.
   const before = side === 'left' && !stacked
-  const into = stacked && !expanded ? stackInto : null
-  const workHidden = expanded && !!pane
+  const into = stacked && !over ? stackInto : null
+  const workHidden = over && !!pane
   return (
     <div ref={boxRef} data-pane-host={surface} data-pane-layout={pane ? layout : undefined}
       className={`flex min-h-0 min-w-0 flex-1 ${stacked ? 'flex-col' : ''}`}>

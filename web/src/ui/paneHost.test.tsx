@@ -20,10 +20,10 @@ const content = (id: string, onClose: () => void = () => {}): PaneContent => ({
 })
 
 /** A surface with two sources that open the pane, a field in its work, and the host beside it. */
-function Surface({ surface = 'code', dock, initial = null }: { surface?: string; dock?: 'left' | 'right'; initial?: string | null }) {
+function Surface({ surface = 'code', dock, initial = null, stacks }: { surface?: string; dock?: 'left' | 'right'; initial?: string | null; stacks?: 'under' | 'over' }) {
   const [open, setOpen] = useState<string | null>(initial)
   return (
-    <PaneHost surface={surface} dock={dock} pane={open ? content(open, () => setOpen(null)) : null}>
+    <PaneHost surface={surface} dock={dock} stacks={stacks} pane={open ? content(open, () => setOpen(null)) : null}>
       <button type="button" onClick={() => setOpen('a.py')}>Open a.py</button>
       <button type="button" onClick={() => setOpen('b.py')}>Open b.py</button>
       <button type="button" onClick={() => setOpen(null)}>Back</button>
@@ -297,6 +297,46 @@ describe('the pane host stacks the pane under the work on a compact surface', ()
     boxWidth = 512
     render(<Surface initial="a.py" />)
     expect(layout()).toHaveAttribute('data-pane-layout', 'beside')
+  })
+
+  // A surface whose detail is the whole task while it is open (a project's) asks for the pane over
+  // the work where it stacks: a sheet at the surface's full height, as the design draws it on a phone.
+  it('🔴 opens a stacked pane over the work, at its full height, on a surface that asks for it', () => {
+    boxWidth = 390
+    render(<Surface initial="a.py" stacks="over" />)
+    expect(layout()).toHaveAttribute('data-pane-layout', 'sheet')
+    expect(pane()).toBeVisible()
+    expect(pane()).toHaveAccessibleDescription('Over the work, at its full height')
+    expect(screen.getByRole('textbox', { name: 'Draft', hidden: true }), 'the work is under the sheet, mounted').not.toBeVisible()
+    expect(screen.queryByRole('button', { name: /^(Expand|Collapse|Move) diff$/ }), 'a sheet has no split to go back to').toBeNull()
+    expect(screen.queryByRole('separator')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Close diff' }), 'the work took the focus with it, so the sheet has it').toHaveFocus()
+  })
+
+  it('🔴 Esc closes the sheet, rather than collapsing it, and the focus goes back to its opener', () => {
+    boxWidth = 390
+    render(<Surface stacks="over" />)
+    const opener = screen.getByRole('button', { name: 'Open a.py' })
+    opener.focus()
+    fireEvent.click(opener)
+    expect(layout()).toHaveAttribute('data-pane-layout', 'sheet')
+    key(document.activeElement as HTMLElement, 'Escape')
+    expect(screen.queryByRole('region', { name: 'Diff — a.py' })).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Draft' })).toBeVisible()
+    expect(opener).toHaveFocus()
+  })
+
+  it('docks the sheet beside the work again once the surface has the room, and under it on a surface that does not ask', () => {
+    boxWidth = 390
+    render(<Surface initial="a.py" stacks="over" />)
+    resizeTo(1000)
+    expect(layout()).toHaveAttribute('data-pane-layout', 'beside')
+    expect(screen.getByRole('textbox', { name: 'Draft' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Expand diff' })).toBeTruthy()
+    cleanup()
+    boxWidth = 390
+    render(<Surface initial="a.py" />)
+    expect(layout()).toHaveAttribute('data-pane-layout', 'stacked')
   })
 
   it('keeps the last reading while its box has no width yet, which starts beside', () => {

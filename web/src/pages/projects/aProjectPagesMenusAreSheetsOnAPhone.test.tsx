@@ -55,6 +55,26 @@ describe("a project page's menus on a phone", () => {
     expect(within(openSheet(within(preview).getByRole('button', { name: /^Use in chat/ }))).getByRole('button', { name: /^New chat with this/ })).toBeTruthy()
   })
 
+  it("🔴 a detail opens over the whole page where the page stacks it, and Close gives the page back", async () => {
+    // Below its stacking width the detail took the lower half of the page under the work. The design
+    // draws it as a full-height sheet straight away, closed with Esc or Close.
+    windowOf(390)
+    // The host reads its own box's width; nothing else is measured, so the preview's editor is not.
+    const measure = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.hasAttribute('data-pane-host')
+        ? ({ width: 390, height: 800, top: 0, left: 0, right: 390, bottom: 800, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect
+        : measure.call(this)
+    })
+    const page = mountPage({ sessions: [chat('c-1', 'Seed ideas', PID)], library: LIB, query: { open: 'artifact:report-1' } })
+    const detail = await screen.findByRole('region', { name: 'Result' })
+    const host = detail.closest('[data-pane-host="project"]')!
+    expect(host).toHaveAttribute('data-pane-layout', 'sheet')
+    expect(host.querySelector(':scope > div[hidden]'), "the page's work is under it, mounted").toBeTruthy()
+    fireEvent.click(within(detail).getByRole('button', { name: 'Close item' }))
+    expect(page.address.query.open).toBeUndefined()
+  })
+
   it('on a wide window New opens as the menu it is (the control)', async () => {
     windowOf(1280)
     mountPage({ sessions: [chat('c-1', 'Seed ideas', PID)], library: LIB })
