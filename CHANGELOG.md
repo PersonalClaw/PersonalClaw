@@ -112,6 +112,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A thread other people read is told only that a chat was compacted, linked or moved there: not the compaction's summary of the conversation, not the chat's title or last messages, and not a move of a turn the thread never saw. Your own DM with PersonalClaw is told as before.**
 - **A helper's reply goes into a thread other people read only when the work was asked for in that thread. Work you started from the dashboard, or from anywhere else, is answered in your own DM with PersonalClaw, and stays in the dashboard when no channel reaches you. A chat moved after its helper started is judged by where the work was asked for.**
 - **Deleting a workflow run, or its pruning by run retention, acts only on the folder this home made for it.**
+- **A workflow's named workspace works in a folder of its own.**
 
 ## [0.3.9] — 2026-11-16
 

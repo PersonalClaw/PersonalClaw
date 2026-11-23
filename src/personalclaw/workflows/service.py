@@ -475,6 +475,20 @@ async def _loosenings(spec: dict[str, Any]) -> list[Any]:
     )
 
 
+def _workspace_name_refusal(spec: dict[str, Any]) -> str:
+    """Why *spec*'s ``workspace:`` block names no folder of its own, or "": a name whose folder
+    would be the workflows store, the folder every named workspace shares, or a hidden one
+    (`workspace.folder_name_refusal`), which its run start refuses as a fatal issue."""
+    from personalclaw.workflows.provisioning import WORKSPACE_KEY
+    from personalclaw.workflows.workspace import folder_name_refusal
+
+    block = spec.get(WORKSPACE_KEY)
+    if not isinstance(block, dict):
+        return ""
+    refused = folder_name_refusal(str(block.get("name", "") or "").strip())
+    return f"{spec.get('name')!r} was not saved: its {refused}." if refused else ""
+
+
 #: What a definition's writer sets, never the spec it is handed: who saved the version and the ops
 #: it records (the provider's hints), and the label of who saved it the definition carries.
 _SET_BY_THE_WRITER: frozenset[str] = frozenset({"_saved_by", "_version_ops", "provenance"})
@@ -508,6 +522,10 @@ async def _write_definition(
     accepted refiner diff), and ``tests/test_workflow_definition_writer_census.py`` fails a new
     write that does not.
     """
+    if refused := _workspace_name_refusal(spec):
+        # Every door's write, refused where its writer reads the answer, an agent's included: a
+        # run of it would be refused at its start, after the save had said nothing.
+        return {}, _service_failure("WF_DEF_WORKSPACE_REFUSED", refused, repromptable=True)
     loosened = await _loosenings(spec)
     if loosened and not owner_allowed:
         name = str(spec.get("name") or "")
