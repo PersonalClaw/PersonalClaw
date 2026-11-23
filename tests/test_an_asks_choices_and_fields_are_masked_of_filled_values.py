@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -83,11 +84,15 @@ def _spec(ask: dict[str, Any], gate_id: str = "ok") -> dict[str, Any]:
 
 
 async def _parked(
-    ask: dict[str, Any], gate_id: str = "ok", completion: Any = None, **inputs: Any
+    ask: dict[str, Any],
+    gate_id: str = "ok",
+    completion: Any = None,
+    state: Any = None,
+    **inputs: Any,
 ) -> Any:
     """A run of an approval gate asking *ask*, parked on its question (the wait ends at its
-    timeout), with *inputs*, each holding a reference handed to the run as one, and *completion*
-    as its model."""
+    timeout), with *inputs*, each holding a reference handed to the run as one, *completion* as
+    its model and *state* the dashboard its Inbox rows go to."""
     from personalclaw.workflows import input_secrets, store
     from personalclaw.workflows.controller import EngineServices, RunController
     from personalclaw.workflows.models import WorkflowRun
@@ -97,7 +102,9 @@ async def _parked(
     extra = input_secrets.stamp({}, inputs, [NAME])
     run = store.create(WorkflowRun(id="", workflow_name=spec["name"], inputs=inputs, extra=extra))
     store.write_spec(run.id, spec)
-    controller = RunController(run, spec, services=EngineServices(completion=completion))
+    controller = RunController(
+        run, spec, services=EngineServices(completion=completion, attention_state=state)
+    )
     await controller.run_to_completion(timeout=3)
     return controller
 
@@ -605,14 +612,22 @@ JUDGE_ASKS = {
 @pytest.mark.parametrize("ask", sorted(JUDGE_ASKS))
 async def test_what_a_parked_judge_asks_besides_its_prompt_is_masked(home, published, ask):
     """A judge's prompt is left to its own refusal of a value in it; what else its park asks is
-    masked before the ask is built, as an approval's is. 🔴 Red before: the judge's park kept the
-    value, one character per choice."""
+    masked before the ask is built, as an approval's is, and so is every copy of the ask: its
+    continuation, its confirmation's pending half and its Inbox row, now that a parked judge asks
+    you (`gate_answers.awaits_human`). 🔴 Red before: the judge's park kept the value, one
+    character per choice."""
     from personalclaw import filled_secrets
-    from personalclaw.workflows.models import InstanceState
+    from personalclaw.inbox import InboxStore
+    from personalclaw.workflows import journal, store
+    from personalclaw.workflows.human_input import list_continuations
+    from personalclaw.workflows.models import InstanceState, RunStatus
 
     gate = {"kind": "judge", "prompt": "judge the beds", **JUDGE_ASKS[ask]}
+    state = SimpleNamespace(
+        _inbox_svc=SimpleNamespace(inbox=InboxStore()), notify=lambda *a, **k: None
+    )
 
-    controller = await _parked(gate, completion=_NeedsInput())
+    controller = await _parked(gate, completion=_NeedsInput(), state=state)
 
     parked = controller.instances["root.children[0]"]
     assert parked.state == InstanceState.WAITING, parked.state
@@ -620,4 +635,16 @@ async def test_what_a_parked_judge_asks_besides_its_prompt_is_masked(home, publi
     mask = filled_secrets.masked(VALUE, [VALUE])
     shown = asked["choices"] if "fields" not in JUDGE_ASKS[ask] else asked["fields"][0]["choices"]
     assert shown == [mask], asked
-    assert _kept(home, json.dumps(asked), *(p for _e, p in published)) == []
+    run = store.get(controller.run.id)
+    assert run.status == RunStatus.NEEDS_INPUT, run.status
+    (cont,) = list_continuations(run.id)
+    rows = [vars(i) for i in state._inbox_svc.inbox.items.values()]
+    pending = journal.ledger(run.id, kinds={journal.CONFIRMATION_PENDING})
+    assert rows and pending, "vacuity floor: the park raised its Inbox row and its confirmation"
+    copies = [json.dumps(c, default=str) for c in (cont.ask, rows, pending)]
+    assert mask in copies[0], copies[0]
+    if "fields" not in JUDGE_ASKS[ask]:
+        # The Inbox row carries an ask's own choices, not a form's fields'
+        # (`needs_input.build_item`): only a choice ask's row shows them, masked.
+        assert mask in copies[1], copies[1]
+    assert _kept(home, json.dumps(asked), *copies, *(p for _e, p in published)) == []
