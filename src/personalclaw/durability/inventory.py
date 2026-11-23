@@ -115,6 +115,12 @@ class StateEntry:
     # restore and an import leave these files as they are too (`reconcile.bring_in_folder`): each
     # is rebuilt or measured again here.
     machine_local_within: tuple[str, ...] = field(default_factory=tuple)
+    # Files inside `path` (globs, relative to it) that the gateway keeps for the store itself and
+    # that hold no row of the owner's: the workflow versions' digest table, written once at a
+    # home's first start (`workflows.versions.remember_digests`). A snapshot counts them among the
+    # domain's files and never among its rows (`snapshot._domain_counts`), so a home that holds no
+    # workflow of its own does not read as holding automation data.
+    bookkeeping_within: tuple[str, ...] = field(default_factory=tuple)
     # Whether a merge restore or an import takes an archive's copy in. False for the records of
     # what ran on one machine, a workflow run, an autonomous loop or an agent, which the start
     # picks up and drives: another home's, taken in, was resumed here, a second time and on this
@@ -829,6 +835,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         # what an automation here may run, saved by whom here, with the steps allowed here.
         # Another machine's would run here as written, with its owner's saves read as this one's.
         machine_local_within=("template_nudges.json", "template_candidates.json", "versions/*"),
+        bookkeeping_within=("versions/digests-renamed.json",),
     ),
     # ── platform ──
     StateEntry(
@@ -2235,6 +2242,14 @@ def stays_here(entry: StateEntry, row_id: str) -> bool:
         fnmatchcase(row_id, glob) or fnmatchcase(f"{row_id}.json", glob)
         for glob in entry.machine_local_within
     )
+
+
+def is_bookkeeping(entry: StateEntry, rel: str) -> bool:
+    """Whether *rel*, a path under *entry*'s folder, is a file the gateway keeps for the store
+    itself rather than a row of the owner's (``StateEntry.bookkeeping_within``)."""
+    from fnmatch import fnmatchcase
+
+    return any(fnmatchcase(rel, glob) for glob in entry.bookkeeping_within)
 
 
 def append_only_folder(entry: StateEntry) -> bool:
