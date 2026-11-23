@@ -1165,7 +1165,7 @@ async def teardown(
     path = str(state.get("path", "") or "")
     spec_teardown = str(state.get("teardown", "") or "")
     isolated = bool(state.get("isolated", False))
-    # 🔴 A record is not a trust boundary: only a folder this home made for the run is torn down.
+    # 🔴 A record is not a trust boundary: only the run's own folder in this home is torn down.
     foreign = _another_homes_folder(run, state, out)
     path = "" if foreign else path
     alive = bool(path) and Path(path).is_dir()
@@ -1235,25 +1235,48 @@ async def teardown(
 
 
 def _another_homes_folder(run: Any, state: dict[str, Any], out: TornDown) -> bool:
-    """Whether *run*'s record names an isolated folder this home did not make for it, saying so
-    on *out* when it does.
+    """Whether *run*'s record names a folder that is not this run's in this home, saying so on
+    *out* when it does.
 
-    An isolated workspace's folder is one this home made for the run (`_own_isolated_dir`). A
-    record that names any other folder (restored from another home on this machine, whose
-    folders it names) gets no teardown step run there, no commit and no removal, and neither
-    does the container that worked in it: that folder, and what runs in it, are another home's.
+    An isolated workspace's folder is one this home made for the run (`_own_isolated_dir`). An
+    in-place run works in the tree its project binds in this home (`_is_own_tree`), the folder
+    the spawn allowlist admits for its steps too (`run_workdir`). A record that names any other
+    folder (restored from another home on this machine, whose folders it names) gets no teardown
+    step run there, no commit and no removal, and neither does the container that worked in it:
+    that folder, and what runs in it, are another home's.
     """
     path = str(state.get("path", "") or "")
-    if not (state.get("isolated") and path) or _own_isolated_dir(run, path, state):
+    if not path:
         return False
+    if state.get("isolated"):
+        if _own_isolated_dir(run, path, state):
+            return False
+        whose = "a folder this home made for this run (its record may have been restored from"
+        whose += " another home on this machine)"
+    else:
+        if _is_own_tree(run, path):
+            return False
+        whose = "the folder this run's project binds in this home (its record may have been"
+        whose += " restored from another home on this machine, or its project bound elsewhere"
+        whose += " since)"
     left = "nothing ran there, nothing was committed and nothing was removed"
     if state.get("container_id"):
         left += ", and the container that worked in it was left as it is"
-    out.failed.append(
-        f"left {path}: it is not a folder this home made for this run (its record may have been "
-        f"restored from another home on this machine), so {left}"
-    )
+    out.failed.append(f"left {path}: it is not {whose}, so {left}")
     return True
+
+
+def _is_own_tree(run: Any, recorded: str) -> bool:
+    """Whether *recorded* is the tree *run*'s project binds in this home (`project_tree`): the one
+    folder an in-place run works in. A run with no project, or whose project binds no folder,
+    has none."""
+    tree = project_tree(str(getattr(run, "project_id", "") or ""))
+    if not tree:
+        return False
+    try:
+        return os.path.realpath(recorded) == os.path.realpath(tree)
+    except (OSError, ValueError):
+        return False
 
 
 async def _remove_container(state: dict[str, Any], out: TornDown) -> None:

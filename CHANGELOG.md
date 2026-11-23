@@ -116,6 +116,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A helper's reply goes into a thread other people read only when the work was asked for in that thread. Work you started from the dashboard, or from anywhere else, is answered in your own DM with PersonalClaw, and stays in the dashboard when no channel reaches you. A chat moved after its helper started is judged by where the work was asked for.**
 - **Deleting a workflow run, or its pruning by run retention, acts only on the folder this home made for it.**
 - **A workflow's named workspace works in a folder of its own.**
+- **Deleting a workflow run that worked in place, or its pruning by run retention, runs its teardown only in the tree its project binds in this home.**
 
 ## [0.3.9] — 2026-11-16
 
