@@ -194,6 +194,11 @@ def _row(role: str, content: str, **extra) -> dict:
     return {"role": role, "content": content, **extra}
 
 
+def _shown_on(provider: str, thread: str, channel: str = "C0EXAMPLE01") -> dict:
+    """The mark an answer row carries once its mirror posted it to *thread* on *provider*."""
+    return {"provider": provider, "channel": channel, "thread": thread}
+
+
 def test_the_channel_view_shows_what_the_channel_showed_and_stubs_the_rest():
     """The view a turn someone else asked for is built with: the messages a channel took in, the
     answers the thread was shown, and a stub for each turn the channel never showed and each answer
@@ -204,7 +209,7 @@ def test_the_channel_view_shows_what_the_channel_showed_and_stubs_the_rest():
 
     hers = arrived_on("1790800000.000100", "U0OWNER", "slack")
     his = arrived_on("1790800000.000100", "U0JONAS", "slack")
-    shown = {"meta": {SHOWN_ON_CHANNEL: True}}
+    shown = {"meta": {SHOWN_ON_CHANNEL: _shown_on("slack", "1790800000.000100")}}
     session = SimpleNamespace(
         messages=[
             _row("user", "Morning! Notes go here.", **hers),
@@ -246,6 +251,131 @@ def test_the_channel_view_shows_what_the_channel_showed_and_stubs_the_rest():
     ):
         assert stub in said, stub
     assert "What's the plan?" not in said, "the in-flight message is cut off"
+
+
+#: The owner's own DM with PersonalClaw, where the chat ran before it was moved to the thread.
+HER_DM = "D0OWNERDM1"
+
+
+def _moved_from_her_dm(where_he_writes: str) -> SimpleNamespace:
+    """A chat that ran in her DM, where she wrote and was answered, and then moved to a shared
+    thread, where he writes on *where_he_writes*."""
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL, arrived_on
+
+    hers = arrived_on(HER_DM, "U0OWNER", "slack")
+    his = arrived_on(where_he_writes, "U0JONAS", "slack")
+    in_her_dm = {"meta": {SHOWN_ON_CHANNEL: _shown_on("slack", HER_DM, channel=HER_DM)}}
+    return SimpleNamespace(
+        messages=[
+            _row("user", "Remind me: therapy is Thursday at four.", **hers),
+            _row("assistant", "Noted: therapy, Thursday at four.", **in_her_dm),
+            _row("user", "What's the plan for the offsite?", **his),
+        ]
+    )
+
+
+def test_what_was_said_in_her_dm_is_not_in_a_thread_the_chat_moved_to():
+    """A chat moved from her DM to a shared thread is the same chat: his turn in the thread is
+    shown stubs for her DM's message and its answer, which the thread never showed. 🔴 Red before:
+    a row a channel took in, and an answer the mark said was shown, were shown whatever thread
+    they were on."""
+    from personalclaw.dashboard.chat_persistence import channel_view
+
+    view = channel_view(_moved_from_her_dm("1790800000.000100"), "What's the plan for the offsite?")
+    said = json.dumps(view)
+    assert "therapy" not in said and "Thursday" not in said, view
+    assert "A message from another thread this chat ran in was here" in said
+    assert "A reply the channel was not shown was here" in said
+
+
+def test_the_view_is_for_the_thread_whoever_asked_is_on():
+    """A turn that carries on work he asked for (a helper's report handed back) is built for the
+    thread he asked on, which the turn's own row does not name: what was said and shown there is in
+    it, and nothing from her DM. 🔴 Red before: there was no thread to say it for."""
+    from personalclaw.dashboard.chat_persistence import channel_view
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL, arrived_on
+
+    thread = "1790800000.000100"
+    session = _moved_from_her_dm(thread)
+    session.messages += [
+        _row(
+            "assistant",
+            "The venue opens at nine.",
+            meta={SHOWN_ON_CHANNEL: _shown_on("slack", thread)},
+        ),
+        _row("subagent", REPORT),
+    ]
+    view = channel_view(session, REPORT, where=arrived_on(thread, "U0JONAS", "slack"))
+    said = json.dumps(view)
+    assert "What's the plan for the offsite?" in said and "The venue opens at nine." in said
+    assert "therapy" not in said, view
+
+
+def test_the_turn_engine_builds_his_carried_on_turn_for_the_thread_he_asked_on():
+    """The turn engine (``chat_runner._turn_history``) builds a turn that carries on work he asked
+    for, a helper's report handed back whose row names no thread, for the thread whoever asked is
+    on: the asker's, not the in-flight row's. A view built for the report's row would stub all of
+    it, his own thread's messages and answers too."""
+    from personalclaw import memory_writes
+    from personalclaw.dashboard.chat_runner import _turn_history
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL, arrived_on
+
+    thread = "1790800000.000100"
+    session = _moved_from_her_dm(thread)
+    session.messages += [
+        _row(
+            "assistant",
+            "The venue opens at nine.",
+            meta={SHOWN_ON_CHANNEL: _shown_on("slack", thread)},
+        ),
+        _row("subagent", REPORT),
+    ]
+    with memory_writes.derived_from("dashboard:offsite"):
+        memory_writes.asked_for(arrived_on(thread, "U0JONAS", "slack"))
+        history, apart = _turn_history(session, REPORT, 0)
+    said = json.dumps(history)
+    assert apart, "the control: his turn is answered apart from her DM's"
+    assert "What's the plan for the offsite?" in said and "The venue opens at nine." in said
+    assert "therapy" not in said, history
+
+
+def test_an_answer_marked_before_marks_named_a_thread_is_a_stub():
+    """Closed: an answer whose mark names no thread (one written while marks were a plain yes) is
+    a stub, since nothing says which thread it was shown on."""
+    from personalclaw.dashboard.chat_persistence import channel_view
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL, arrived_on
+
+    thread = "1790800000.000100"
+    session = SimpleNamespace(
+        messages=[
+            _row("assistant", "Noted: therapy, Thursday at four.", meta={SHOWN_ON_CHANNEL: True}),
+            _row("user", "What's the plan?", **arrived_on(thread, "U0JONAS", "slack")),
+        ]
+    )
+    said = json.dumps(channel_view(session, "What's the plan?"))
+    assert "therapy" not in said and "A reply the channel was not shown was here" in said
+
+
+def test_a_shown_answer_is_masked_as_the_channel_masks_it():
+    """An answer the thread was shown is handed on masked as the channel's handle masks what it
+    sends, whatever its row holds. 🔴 Red with the mask taken out."""
+    from personalclaw.dashboard.chat_persistence import channel_view
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL, arrived_on
+
+    thread = "1790800000.000100"
+    key = "AKIAIOSFODNN7EXAMPLE"
+    session = SimpleNamespace(
+        messages=[
+            _row(
+                "assistant",
+                f"The key is {key}.",
+                meta={SHOWN_ON_CHANNEL: _shown_on("slack", thread)},
+            ),
+            _row("user", "What's the plan?", **arrived_on(thread, "U0JONAS", "slack")),
+        ]
+    )
+    said = json.dumps(channel_view(session, "What's the plan?"))
+    assert key not in said and "The key is" in said, said
 
 
 def test_a_conversation_holds_a_turn_someone_else_asked_for():

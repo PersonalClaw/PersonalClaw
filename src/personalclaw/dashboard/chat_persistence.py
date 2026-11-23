@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from personalclaw import chat_record, memory_locality
@@ -1306,27 +1307,41 @@ _FROM_OUTSIDE_TURN = "Words taken in from outside arrived here"
 _OUTSIDE_THE_THREAD = "The owner wrote here outside this thread"
 #: The same for an answer the channel thread was not shown (no ``turn_source.SHOWN_ON_CHANNEL``).
 _REPLY_NOT_SHOWN = "A reply the channel was not shown was here"
+#: The same for a message a channel took in on another thread than the one the view is for: a chat
+#: moved from the owner's DM to a shared thread keeps what was said in her DM.
+_ANOTHER_THREAD = "A message from another thread this chat ran in was here"
 
 
-def channel_view(session: _ChatSession, in_flight: str, *, nested: bool = False) -> list[dict]:
-    """THIS session's conversation before the turn now being sent, as the channel showed it: the
-    messages a channel took in, as they were sent, and the answers its thread was shown, masked as
-    the channel's handle masks what it sends (``security.redact_for_display``), each with where it
-    came from (``turn_source.provenance``). A turn the channel never showed (one a helper's
-    report, a scheduled run's result or a loop's nudge started, words taken in from outside, a
-    message of the owner's no channel took in), and an answer the thread was not shown, is a stub
+def channel_view(
+    session: _ChatSession,
+    in_flight: str,
+    *,
+    nested: bool = False,
+    where: Mapping[str, str] | None = None,
+) -> list[dict]:
+    """THIS session's conversation before the turn now being sent, as the thread it is for showed
+    it: the messages a channel took in on that thread, as they were sent, and the answers that
+    thread was shown, masked as the channel's handle masks what it sends
+    (``security.redact_for_display``), each with where it came from (``turn_source.provenance``).
+    A turn the channel never showed (one a helper's report, a scheduled run's result or a loop's
+    nudge started, words taken in from outside, a message of the owner's no channel took in), a
+    message from another thread the chat ran in, and an answer the thread was not shown, is a stub
     that names what it was and holds none of it; tool rows, approvals and cards are not in it at
     all.
 
-    What a turn someone other than the owner asked for is built with: such a turn is answered
-    apart from the runtime's history (``NativeRuntime._history_for_turn``), whose earlier turns
-    hold what the channel never showed them. Closed: a user row is shown only when a channel took
-    it in, and an answer only when the thread was shown it (``turn_source.SHOWN_ON_CHANNEL``). Cut
-    at the in-flight message, as :func:`prior_turns_transcript` is."""
-    from personalclaw.turn_source import FROM_OUTSIDE, SHOWN_ON_CHANNEL, provenance
+    The thread is the one *where* names (the source of whoever the turn is for:
+    ``memory_writes.asker``), else the one the in-flight message came on; with none, every message
+    and answer is a stub. What a turn someone other than the owner asked for is built with: such a
+    turn is answered apart from the runtime's history (``NativeRuntime._history_for_turn``), whose
+    earlier turns hold what the channel never showed them. Closed: a user row is shown only when
+    its thread's channel took it in, and an answer only when the mark it carries names that thread
+    (``turn_source.SHOWN_ON_CHANNEL``). Cut at the in-flight message, as
+    :func:`prior_turns_transcript` is."""
+    from personalclaw.turn_source import FROM_OUTSIDE, provenance
 
     msgs = session.messages
     at = in_flight_index(session, in_flight, nested=nested)
+    here = _thread_of(where if where is not None else (msgs[at] if at is not None else None))
     out: list[dict] = []
     for m in msgs[: len(msgs) if at is None else at]:
         role = m.get("role")
@@ -1336,7 +1351,9 @@ def channel_view(session: _ChatSession, in_flight: str, *, nested: bool = False)
             stub = _FROM_OUTSIDE_TURN
         elif role == "user" and not source_of(m).get("source_channel"):
             stub = _OUTSIDE_THE_THREAD
-        elif role == "assistant" and not (isinstance(meta, dict) and meta.get(SHOWN_ON_CHANNEL)):
+        elif role == "user" and (not here or _thread_of(m) != here):
+            stub = _ANOTHER_THREAD
+        elif role == "assistant" and (not here or _shown_on(meta) != here):
             stub = _REPLY_NOT_SHOWN
         if stub:
             said = f"[{stub}. It is not shown: someone other than the owner asked for this turn.]"
@@ -1347,6 +1364,27 @@ def channel_view(session: _ChatSession, in_flight: str, *, nested: bool = False)
             shown = redact_for_display(str(m.get("content") or ""))
             out.append({"role": role, "content": shown, **provenance(m)})
     return out
+
+
+def _thread_of(source: object) -> tuple[str, str] | None:
+    """The channel and thread *source* (a row, or the source a turn's asker records) names, as
+    ``(channel, thread)``; ``None`` when it names no channel's thread."""
+    found = source_of(source)
+    channel, thread = found.get("source_channel", ""), found.get("source_thread", "")
+    return (channel, thread) if channel and thread else None
+
+
+def _shown_on(meta: object) -> tuple[str, str] | None:
+    """The channel and thread the answer row of *meta* was shown on, as its mark records it
+    (``turn_source.SHOWN_ON_CHANNEL``); ``None`` for one that was not shown, or whose mark names
+    no thread (one written before marks named it)."""
+    from personalclaw.turn_source import SHOWN_ON_CHANNEL
+
+    mark = meta.get(SHOWN_ON_CHANNEL) if isinstance(meta, Mapping) else None
+    if not isinstance(mark, Mapping):
+        return None
+    channel, thread = str(mark.get("provider") or ""), str(mark.get("thread") or "")
+    return (channel, thread) if channel and thread else None
 
 
 def background_summary(state: DashboardState, session: _ChatSession) -> dict | None:
