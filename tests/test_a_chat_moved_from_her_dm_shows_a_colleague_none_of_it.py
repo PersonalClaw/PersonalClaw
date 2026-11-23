@@ -41,7 +41,7 @@ from personalclaw import channel_inbound as ci
 from personalclaw.channel_transports.base import ChannelMessage
 
 #: Her own DM with PersonalClaw on the channel, where the chat ran first.
-HER_DM = "D0MIRADM01"
+HER_DM = "D0OWNERDM1"
 #: The shared thread the chat moves to, as the channel opens it.
 THREAD = "1790800000.000100"
 #: What she said in her DM, and what the answer there repeated.

@@ -254,7 +254,7 @@ def test_the_channel_view_shows_what_the_channel_showed_and_stubs_the_rest():
 
 
 #: The owner's own DM with PersonalClaw, where the chat ran before it was moved to the thread.
-HER_DM = "D0MIRADM01"
+HER_DM = "D0OWNERDM1"
 
 
 def _moved_from_her_dm(where_he_writes: str) -> SimpleNamespace:
