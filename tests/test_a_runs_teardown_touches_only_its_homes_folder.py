@@ -159,7 +159,8 @@ async def test_this_homes_own_scratch_folder_is_still_torn_down(homes, ran):
     assert not folder.is_dir()
 
 
-async def test_this_homes_own_worktree_is_still_torn_down(homes, ran, tmp_path):
+@pytest.mark.parametrize("stamped", ["with its mode", "before records named a mode"])
+async def test_this_homes_own_worktree_is_still_torn_down(homes, ran, tmp_path, stamped):
     import subprocess
 
     homes.use(homes.second)
@@ -179,6 +180,8 @@ async def test_this_homes_own_worktree_is_still_torn_down(homes, ran, tmp_path):
     )
     assert not made.degraded_reason, made.degraded_reason
     provisioning.stamp_run(run, made, spec)
+    if stamped != "with its mode":
+        run.extra[provisioning.WORKSPACE_KEY].pop("mode")
     torn = await provisioning.teardown(run, workspace_dir=str(repo))
     assert torn.failed == [] and torn.removed is True
     assert ran == [("compose-down", made.path)] and not os.path.isdir(made.path)

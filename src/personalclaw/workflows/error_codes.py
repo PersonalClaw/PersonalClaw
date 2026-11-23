@@ -350,6 +350,10 @@ WF_ERROR_CODES: dict[str, str] = {
         "owner's yes for it, so nothing was written; the failure names each such step and what "
         "it would then do."
     ),
+    "WF_DEF_WORKSPACE_REFUSED": (
+        "The definition's `workspace:` block names a workspace whose folder would not be its "
+        "own (`..`, `.` or a name starting with `.`), so nothing was written."
+    ),
     "WF_DEF_DELETE_FAILED": "Deleting the definition failed; the message carries the cause.",
     "WF_LOOP_KIND_UNKNOWN": "No workflow template replaces the named loop kind.",
     "WF_LOOP_KIND_NOT_PORTED": (

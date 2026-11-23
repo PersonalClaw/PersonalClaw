@@ -850,13 +850,23 @@ def scratch_location(run_id: str, name: str = "", run_dir: Path | None = None) -
     Under the RUN dir on purpose: retention already sweeps it (`watchdog._sweep_run_dir`), so a
     scratch workspace cannot outlive the run that made it and become an orphan nobody can find.
     A NAMED workspace is the exception — it is shared across runs by definition, so it lives
-    beside the runs rather than inside one.
+    beside the runs rather than inside one: in a folder of its own under ``workspaces/``, or
+    nowhere. A name whose folder would be another (``..`` is the workflows store itself,
+    `workspace.folder_name_refusal`), or a folder there that resolves elsewhere (a link in its
+    place), raises ``ValueError``: its parse refuses it before a run starts, and every caller here
+    reads the error as no folder of the run's.
     """
     from personalclaw.workflows import store
+    from personalclaw.workflows.workspace import folder_name, folder_name_refusal
 
     if name:
-        safe = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in name)[:64] or "named"
-        return store.workflows_dir() / "workspaces" / safe
+        if refused := folder_name_refusal(name):
+            raise ValueError(refused)
+        shared = store.workflows_dir() / "workspaces"
+        named = shared / folder_name(name)
+        if os.path.dirname(os.path.realpath(named)) != os.path.realpath(shared):
+            raise ValueError(f"the workspace folder for {name!r} resolves outside {shared}")
+        return named
     base = run_dir if run_dir is not None else store.run_dir(run_id)
     return Path(base) / "workspace"
 
@@ -1022,6 +1032,10 @@ def _own_isolated_dir(run: Any, recorded: str, state: dict[str, Any]) -> str:
         mode = str(state.get("mode", "") or "")
         if mode == Mode.WORKTREE.value and not state.get("degraded_reason"):
             return recorded if _is_own_worktree(run, real) else ""
+        if not mode and _is_own_worktree(run, real):
+            # A record stamped before it named its mode: its own worktree is still its own, and
+            # read only against the scratch folder it was left, an orphan, in place.
+            return recorded
         # A worktree that could not be made falls back to the run's unnamed scratch folder
         # (`_create_worktree`). A container works in the scratch folder its declaration names,
         # made or not, as a declared scratch workspace does.
@@ -1050,9 +1064,12 @@ def _is_own_worktree(run: Any, real: Path) -> bool:
 def _scratch_dir(run_id: str, name: str, run_dir: Path | None) -> str:
     """Create the scratch directory :func:`scratch_location` names, and return it (``""`` when it
     cannot be created)."""
-    root = scratch_location(run_id, name, run_dir)
     try:
+        root = scratch_location(run_id, name, run_dir)
         root.mkdir(parents=True, exist_ok=True)
+    except ValueError:
+        logger.warning("refused the scratch workspace for %r", name, exc_info=True)
+        return ""
     except OSError:
         logger.warning("could not create the scratch workspace %s", root, exc_info=True)
         return ""

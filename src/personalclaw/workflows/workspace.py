@@ -164,6 +164,28 @@ class SpecIssue:
 _GREEDY_PATTERNS = ("**", "**/*", "/", ".", "./", "*")
 
 
+def folder_name(name: str) -> str:
+    """The folder a named workspace gets under the workflows store's ``workspaces/``: its letters,
+    digits, ``-``, ``_`` and ``.``, each other character a ``-``, at most 64 of them, or ``named``
+    for a name with none (``provisioning.scratch_location``)."""
+    return "".join(c if (c.isalnum() or c in "-_.") else "-" for c in name)[:64] or "named"
+
+
+def folder_name_refusal(name: str) -> str:
+    """Why *name* names no workspace folder of its own, or "". A folder name of ``..`` is the
+    workflows store itself, every run's records, dropped files and workspaces, other chats' among
+    them; ``.`` is the ``workspaces/`` folder every named workspace shares; and a name starting with
+    ``.`` is a hidden one beside them. Read on the folder the name becomes (:func:`folder_name`),
+    so a name that only becomes one of them is refused too."""
+    if not name or not folder_name(name).startswith("."):
+        return ""
+    return (
+        f"workspace name {name!r} names no folder of its own: as a folder `..` is the workflows "
+        "store itself, `.` is the folder every named workspace shares, and a name starting with "
+        "`.` is hidden. Name it with letters, digits, `-` or `_`"
+    )
+
+
 def parse_workspace(raw: Any) -> tuple[WorkspaceSpec, list[SpecIssue]]:
     """Read a `workspace:` block, returning the spec and everything wrong with it.
 
@@ -240,13 +262,17 @@ def parse_workspace(raw: Any) -> tuple[WorkspaceSpec, list[SpecIssue]]:
             )
         )
 
+    name = str(raw.get("name", "") or "").strip()
+    if refused := folder_name_refusal(name):
+        issues.append(SpecIssue("workspace_name_escapes", refused, fatal=True))
+
     spec = WorkspaceSpec(
         mode=mode,
         preserve_patterns=patterns,
         setup=str(raw.get("setup", "") or "").strip(),
         teardown=str(raw.get("teardown", "") or "").strip(),
         env=env,
-        name=str(raw.get("name", "") or "").strip(),
+        name=name,
         container=container_block,
     )
     if spec.mode is Mode.IN_PLACE and spec.teardown:

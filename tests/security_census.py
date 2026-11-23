@@ -55,6 +55,9 @@ NAME_PREFIXES: dict[str, str] = {
 #: and keyed on.
 #: Each was read for what it asserts; a name that only mentions a credential is not here.
 NAMED_MODULES: dict[str, str] = {
+    "tests/test_a_workspace_name_stays_in_its_own_folder.py": (
+        "a named workspace works in a folder of its own, never the workflows store"
+    ),
     "tests/test_browse_safety_script.py": "a browsed page's fetch, media and devices are blocked",
     "tests/test_browse_cdp_live.py": "a denied navigation never reaches the network, in a browser",
     "tests/test_real_home_guard.py": "the suite refuses every touch of the real home, by test",
