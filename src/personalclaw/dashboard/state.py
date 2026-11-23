@@ -280,6 +280,7 @@ class _ChatSession(ChatQueue):
         "_tab_id",
         "_disk_older_count",
         "_kept_unread",
+        "_deleted",
         "_file_changes",
         "_declared_file_change_idx",
         "_acp_breaker",
@@ -524,6 +525,10 @@ class _ChatSession(ChatQueue):
         # Set when the transcript is seeded; the session's own file is always loaded whole.
         self._disk_older_count: int = 0
         self._kept_unread: bool = False  # what is kept could not be read (open_kept_chat)
+        # Deleted (`chat_forget.delete_chats`): nothing runs for it from then on, and no save
+        # writes it, whatever its `force` says. The object outlives the delete in its
+        # stopped turn's end and in a title request still waiting on its model.
+        self._deleted: bool = False
         # Per-turn file-change accumulator [{path, before, after}], reset at the
         # top of each run_chat and flushed onto the assistant message's meta at turn end.
         self._file_changes: list[dict[str, str]] = []
@@ -2054,6 +2059,30 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         # Announced first, like `delete_notification`: each app hears only its own notes' ts.
         self.broadcast_ws("notification_removed", {"ts": removed_ts})
         self._notification_log = [n for n in self._notification_log if n.get("loop_id") != loop_id]
+        self._write_notifications()
+        return len(removed_ts)
+
+    def delete_notifications_for_chat(
+        self, of_the_chat: Callable[[str], bool], *, items: frozenset[str] = frozenset()
+    ) -> int:
+        """Remove every notification about the chat *of_the_chat* tells by a session key (its
+        ``session``: one of the chat's spellings, or a helper that worked for it) and every one
+        that is a view of an Inbox row in *items* (``inbox_item``), and persist. Called when the
+        chat goes (``chat_forget_inbox``): what it raised in the bell goes with it. Returns the
+        count removed."""
+
+        def about(note: dict[str, Any]) -> bool:
+            session, row = note.get("session"), note.get("inbox_item")
+            return (isinstance(session, str) and bool(session) and of_the_chat(session)) or (
+                isinstance(row, str) and row in items
+            )
+
+        removed_ts = [n.get("ts", "") for n in self._notification_log if about(n)]
+        if not removed_ts:
+            return 0
+        # Announced first, like `delete_notification`: each app hears only its own notes' ts.
+        self.broadcast_ws("notification_removed", {"ts": removed_ts})
+        self._notification_log = [n for n in self._notification_log if not about(n)]
         self._write_notifications()
         return len(removed_ts)
 

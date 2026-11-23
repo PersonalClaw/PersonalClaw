@@ -48,6 +48,7 @@ PARENT_READ_COVERED = {
     "/api/apps/{name}/uninstall-preview": "api_app_uninstall_preview",
     "/api/artifacts/{slug}/versions": "api_artifact_versions",
     "/api/autonudge/session/{session_name}": "api_autonudge_get",
+    "/api/chat/sessions/{session}/runs-going": "api_chat_session_runs_going",
     "/api/feedback/target/{kind}/{id}": "api_feedback_target",
     "/api/knowledge/entities/by-name/{name}/items": "get_entity_items",
     "/api/knowledge/entities/by-name/{name}/related": "get_entity_related",

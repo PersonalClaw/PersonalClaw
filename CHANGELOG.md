@@ -98,6 +98,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow's dollar and token caps now hold its steps that run on an agent CLI.**
 - **A turn on Claude Code (or any agent CLI that says what its turn cost) now writes its Usage row and counts toward spend.**
 - **The Usage page and the daily budget say which agent CLI turns they leave out.**
+- **Deleting a chat asks whether the workflow runs it started stop with it: the dialog says how many are still going and offers to stop them too. Left unticked, they keep running, as they did before.**
 
 ### Security
 
@@ -117,6 +118,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Deleting a workflow run, or its pruning by run retention, acts only on the folder this home made for it.**
 - **A workflow's named workspace works in a folder of its own.**
 - **Deleting a workflow run that worked in place, or its pruning by run retention, runs its teardown only in the tree its project binds in this home.**
+- **A chat you delete stays deleted. A message waiting in its queue goes with it and never runs, and nothing that answers for it after the delete, such as the tags its title request brings, writes it back into Chat history.**
+- **A chat you delete, or a Temporary chat that ends, leaves none of its words in your Inbox or notifications. Each approval it asked for stays in the Inbox as a short record of what was asked, when, and how it ended, and opens nothing. Its questions, notes and helpers' reports go, and so does every notification about it.**
+- **Deleting a chat stops every helper it started, an earlier turn's too, and ends any helper still waiting for your Allow. Nothing they would still write is kept, and their reports start no turn and send no notification. Workflow runs the chat started go on.**
 
 ## [0.3.9] — 2026-11-16
 

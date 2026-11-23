@@ -795,6 +795,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_get("/api/chat/sessions/{session}/turns/{message_id}", chat_turns.api_chat_turn)
     # The durable session map: the index's marks and per-turn telemetry, not the whole transcript.
     app.router.add_get("/api/chat/sessions/{session}/map", chat.api_chat_session_map)
+    app.router.add_get("/api/chat/sessions/{session}/runs-going", chat.api_chat_session_runs_going)
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", chat.api_chat_tool_result)
     app.router.add_post("/api/chat/sessions/{session}/stop", chat.api_chat_session_stop)
     app.router.add_post("/api/chat/sessions/{session}/interrupt", chat.api_chat_session_interrupt)

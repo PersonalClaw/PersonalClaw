@@ -44,6 +44,7 @@ from personalclaw.dashboard.chat_folders import (  # noqa: F401
     api_chat_session_folder,
     api_chat_session_pin,
 )
+from personalclaw.dashboard.chat_forget import api_chat_session_runs_going  # noqa: F401
 from personalclaw.dashboard.chat_fork import (  # noqa: F401
     api_chat_session_fork,
     api_chat_session_fork_rewound,

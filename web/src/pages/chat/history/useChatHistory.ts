@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { failureSentence, reportActionFailure, reportingWrite } from '../../../app/reportingWrite'
 import { searchCoverage } from '../searchDeepLink'
 import { confirm, promptInput } from '../../../ui/dialog'
@@ -6,6 +6,7 @@ import { notify } from '../../../app/appSdk'
 import { api, isSwitchedOff, type ChatSessionSummary, type ChatFolder, type ChatTag, type RetagJob, type SessionSearchAnswer } from '../../../lib/api'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../../lib/useChatSocket'
 import { detailKey } from '../useChatStream'
+import { DeleteChatBody } from './DeleteChatBody'
 import { useQuery, invalidateKeys } from '../../../lib/data'
 import { downloadFrom } from '../../../lib/download'
 import { sessionRecencyMs } from '../../../lib/epoch'
@@ -338,18 +339,22 @@ export function useChatHistory({ navigate, query, setQuery }: { navigate: (p: st
   const roomsAvailable = Array.isArray(roomsData)
 
   async function del(s: ChatSessionSummary) {
+    // The workflow runs it started itself go on unless the dialog is told to stop them too
+    // (`started_work.runs_going`); a count the gateway did not answer is said, and they go on.
+    const going = await api.chatRunsGoing(s.key).then((r) => (typeof r?.runs === 'number' ? r.runs : null), () => null)
+    let stopRuns = false
     // The memory half is the backend's rule (`chat_forget.delete_chats`): what memory filed under
     // this chat alone goes, and a record other work also stands behind stays.
     if (!(await confirm({
       title: 'Delete chat?',
-      body: `"${sessionTitle(s)}" and its history will be permanently removed, and so will what memory drew from this chat alone: its summary, its episodes, and the facts and lessons that came only from it. What also came from elsewhere stays, such as a lesson you taught in another chat too or a fact you edited in Memory, as do the files, Knowledge, artifacts and skills you kept.`,
+      body: createElement(DeleteChatBody, { going, onStopRuns: (stop: boolean) => { stopRuns = stop }, said: `"${sessionTitle(s)}" and its history will be permanently removed, and so will what memory drew from this chat alone: its summary, its episodes, and the facts and lessons that came only from it. Nothing it raised in your Inbox or notifications keeps its words: each approval it asked for stays as a short record of what was asked, when, and how it ended, and the rest goes or is withdrawn. What also came from elsewhere stays, such as a lesson you taught in another chat too or a fact you edited in Memory, as do the files, Knowledge, artifacts and skills you kept.` }),
       danger: true, confirmLabel: 'Delete',
     }))) return
     // Surface a real failure instead of swallowing it — the dialog promised the
     // chat would be "permanently removed", so a silent failure that leaves it in the
     // list (as the old .catch(()=>{}) did) is a lie to the user.
     try {
-      await api.deleteChatSession(s.key)
+      await api.deleteChatSession(s.key, { stopRuns })
     } catch (e) {
       notify(`Couldn't delete this chat: ${String((e as Error)?.message || e)}`, 'error')
       return

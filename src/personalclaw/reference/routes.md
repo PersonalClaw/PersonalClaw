@@ -220,6 +220,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/resume` — load a history session into a session.
 - `GET /api/chat/sessions/{session}/rewind` — what a rewind would do. Read-only.
 - `POST /api/chat/sessions/{session}/rewind` — restore files to the end of turn N.
+- `GET /api/chat/sessions/{session}/runs-going` — how many workflow runs the chat started
 - `POST /api/chat/sessions/{session}/seen` — you have seen the chat through ``through`` (now
 - `POST /api/chat/sessions/{session}/share` — a redacted, read-only artifact of a chat.
 - `POST /api/chat/sessions/{session}/side/close` — drop the buffer + destroy

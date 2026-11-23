@@ -9718,7 +9718,12 @@ export const api = {
      *  that app's permissions, whoever sends the message: your approval switches never reach it,
      *  and the app approves none of its calls, so each one that needs approval asks you. */
   } & AppStarted>(`/api/chat/sessions/${encodeURIComponent(key)}?all=1`, read),
-  deleteChatSession: (key: string) => del(`/api/chat/sessions/${encodeURIComponent(key)}`),
+  /** Delete a chat for good. `stopRuns` stops the workflow runs it started itself with it
+   *  (`?runs=stop`); without it they keep running. */
+  deleteChatSession: (key: string, { stopRuns = false }: { stopRuns?: boolean } = {}) =>
+    del(`/api/chat/sessions/${encodeURIComponent(key)}${stopRuns ? '?runs=stop' : ''}`),
+  /** How many workflow runs a chat started itself are still going: what its Delete asks about. */
+  chatRunsGoing: (key: string) => get<{ runs: number }>(`/api/chat/sessions/${encodeURIComponent(key)}/runs-going`),
   /** Set the per-conversation reply style. `''` resets it, so the conversation follows its agent
    *  (then the platform default) again. The response is the RE-RESOLVED state, not an echo: the
    *  backend owns the resolution order, so the composer shows what actually took effect. */

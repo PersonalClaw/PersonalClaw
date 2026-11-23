@@ -171,6 +171,7 @@ SHARED = SharedApp(APP, _bundle, _app_gateway)
 SESSION_READS: list[tuple[str, str]] = [
     ("GET", "/api/chat/sessions/{session}"),
     ("GET", "/api/chat/sessions/{session}/map"),
+    ("GET", "/api/chat/sessions/{session}/runs-going"),
     ("GET", "/api/chat/sessions/{session}/export"),
     ("GET", "/api/chat/sessions/{session}/tool-result/{rid}"),
     ("GET", "/api/chat/sessions/{session}/plan-session"),

@@ -463,6 +463,44 @@ async def test_ephemeral_skills_distinguish_unknown_from_session_without_drafts(
 
 
 @pytest.mark.asyncio
+async def test_chat_runs_going_distinguishes_unknown_from_chat_with_no_runs(monkeypatch):
+    # The count a chat's Delete asks about: a chat neither running here nor kept on disk is not
+    # found, as its Delete would not find it, and a kept chat with no runs going answers 0.
+    from personalclaw import started_work
+    from personalclaw.dashboard import chat_forget
+
+    state = _empty_session_state()
+    state.conversation_log.get_metadata.return_value = None
+    state.conversation_log.has_log.return_value = False
+    counted = MagicMock(return_value=0)
+    monkeypatch.setattr(started_work, "runs_going", counted)
+
+    missing = await chat_forget.api_chat_session_runs_going(
+        _request(
+            "GET",
+            f"/api/chat/sessions/{GHOST}/runs-going",
+            match_info={"session": GHOST},
+            state=state,
+        )
+    )
+    state.conversation_log.has_log.side_effect = lambda key: key == "real-chat-no-runs"
+    existing = await chat_forget.api_chat_session_runs_going(
+        _request(
+            "GET",
+            "/api/chat/sessions/real-chat-no-runs/runs-going",
+            match_info={"session": "real-chat-no-runs"},
+            state=state,
+        )
+    )
+
+    assert missing.status == 404
+    assert _body(missing)["error"]["code"] == "session_not_found"
+    assert existing.status == 200
+    assert _body(existing) == {"runs": 0}
+    counted.assert_called_once_with("real-chat-no-runs")
+
+
+@pytest.mark.asyncio
 async def test_feedback_target_rejects_unknown_kind_but_keeps_unknown_id_hydration(monkeypatch):
     from personalclaw import feedback as fb
     from personalclaw.dashboard.handlers import feedback as handlers

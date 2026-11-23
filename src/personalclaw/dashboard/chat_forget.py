@@ -56,7 +56,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from personalclaw import secret_file_grants
+from aiohttp import web
+
+from personalclaw import secret_file_grants, started_work
 from personalclaw.chat_traces import (
     TEMPORARY,
     attached_files,
@@ -64,6 +66,7 @@ from personalclaw.chat_traces import (
     is_temporary,
     name_of,
 )
+from personalclaw.http_errors import json_error
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -112,8 +115,9 @@ def purge_chat(
     kept of its turns and the lessons it captured from them (a lesson batch compiled from one is
     withdrawn), the learning and skill proposals learned from it that still wait on your answer,
     the skills it was taught and not yet kept, and the links it was given (held in memory for
-    web_fetch). Says how many attached files were deleted, and whether the
-    transcript stayed.
+    web_fetch); and of what it raised in your Inbox and the bell, all but each decision it asked
+    for, which stays as a short record (``chat_forget_inbox``). Says how many attached files were
+    deleted, and whether the transcript stayed.
 
     ``keys`` are every form of the chat's key the per-session stores may have been written under
     (a turn's tool results are keyed by the canonical ``dashboard:`` key, some paths by the bare
@@ -131,6 +135,16 @@ def purge_chat(
             removed = False
         kept = not removed and _transcript_left(state.conversation_log, history_key)
     names = {k for k in keys if k}
+    # What it raised in your Inbox and the bell (`chat_forget_inbox`): each decision stays as a
+    # short record with none of the chat's words, and the rest goes.
+    try:
+        from personalclaw.dashboard.chat_forget_inbox import forget_chat_rows
+
+        forget_chat_rows(state, _spellings(names))
+    except Exception:
+        logger.warning(
+            "forget: inbox and notification purge failed for %s", history_key, exc_info=True
+        )
     try:
         from personalclaw.tool_providers import result_store
 
@@ -246,6 +260,49 @@ def _transcript_left(log: ConversationLog, key: str) -> bool:
 
 
 @dataclass(frozen=True)
+class HeldChat:
+    """A chat the gateway has: running here, kept on disk, or both (:func:`held_chat`)."""
+
+    #: The key it runs under here, or ``None`` when it is only kept on disk.
+    live: str | None
+    session: _ChatSession | None
+    #: Its name: the key it runs under, else the one it was asked for by.
+    name: str
+    #: The key its transcript is kept under.
+    history_key: str
+
+
+def held_chat(state: DashboardState, chat: str) -> HeldChat | None:
+    """The chat *chat* names, by its name or by the key its transcript is kept under; ``None``
+    when it is neither running here nor kept on disk. The one existence check of a chat's Delete
+    and of the count it asks about first (``GET .../runs-going``), so the two cannot disagree on
+    whether a chat is there."""
+    from personalclaw.dashboard.chat_utils import persisted_history_key
+    from personalclaw.dashboard.handlers.sessions import _live_session_key
+
+    log = state.conversation_log
+    live = _live_session_key(state, chat)
+    session = state._sessions.get(live) if live is not None else None
+    name = session.key if session is not None else chat
+    # The key the caller named, when a transcript is kept under it: a history listing names
+    # each transcript by its own file, which may carry no metadata to resolve it by.
+    try:
+        named = log is not None and bool(log.has_log(chat))
+    except Exception:  # noqa: BLE001 — the resolver answers instead
+        named = False
+    history_key = chat if named else persisted_history_key(log, name)
+    try:
+        on_disk = log is not None and (
+            bool(log.get_metadata(history_key)) or log.has_log(history_key)
+        )
+    except Exception:  # noqa: BLE001 — unreadable reads as not kept, as every existence check
+        on_disk = False
+    if session is None and not on_disk:
+        return None
+    return HeldChat(live=live, session=session, name=name, history_key=history_key)
+
+
+@dataclass(frozen=True)
 class Deletion:
     """What :func:`delete_chats` did: the chats it deleted, and those it found but could not
     delete, their transcript still on disk."""
@@ -254,13 +311,17 @@ class Deletion:
     failed: tuple[str, ...] = ()
 
 
-async def delete_chats(state: DashboardState, chats: Iterable[str], *, by: str) -> Deletion:
+async def delete_chats(
+    state: DashboardState, chats: Iterable[str], *, by: str, stop_runs: bool = False
+) -> Deletion:
     """Delete each chat *chats* names, by its name or by the key its transcript is kept under,
     and what memory drew from it alone. One neither running here nor kept on disk is not found,
     and is neither deleted nor failed; one whose transcript could not be removed failed, and the
     rest of what it kept goes all the same.
 
-    For each chat, in order: it leaves the gateway's chats and its turn is stopped; what it was
+    For each chat, in order: it leaves the gateway's chats and its turn is stopped; every helper
+    it started ends (``started_work.end_chat``), and with *stop_runs* each workflow run it
+    started itself; what it was
     allowed of a project's secret files ends (``secret_file_grants``); what it keeps on disk goes
     (:func:`purge_chat`), its transcript first, so a pass of memory still answering for it keeps
     nothing it would write after (``HistoryConsolidator._was_deleted``); then what
@@ -269,42 +330,31 @@ async def delete_chats(state: DashboardState, chats: Iterable[str], *, by: str) 
     deleted it (*by*), never what it held.
     """
     from personalclaw.cancellation import cancel_and_wait
-    from personalclaw.dashboard.chat_utils import persisted_history_key
-    from personalclaw.dashboard.handlers.sessions import _live_session_key
 
-    log = state.conversation_log
     deleted: list[str] = []
     failed: list[str] = []
     keys: set[str] = set()
     runtimes: list[tuple[str, bool]] = []
     for chat in dict.fromkeys(c for c in chats if c):
-        live = _live_session_key(state, chat)
-        session = state._sessions.get(live) if live is not None else None
-        name = session.key if session is not None else chat
-        # The key the caller named, when a transcript is kept under it: a history listing names
-        # each transcript by its own file, which may carry no metadata to resolve it by.
-        try:
-            named = log is not None and bool(log.has_log(chat))
-        except Exception:  # noqa: BLE001 — the resolver answers instead
-            named = False
-        history_key = chat if named else persisted_history_key(log, name)
-        try:
-            on_disk = log is not None and (
-                bool(log.get_metadata(history_key)) or log.has_log(history_key)
-            )
-        except Exception:  # noqa: BLE001 — unreadable reads as not kept, as every existence check
-            on_disk = False
-        if session is None and not on_disk:
+        held = held_chat(state, chat)
+        if held is None:
             continue
+        live, session, name, history_key = held.live, held.session, held.name, held.history_key
         files = temporary_attachments(state, history_key, session)
         if live is not None:
             state._sessions.pop(live, None)
         if session is not None:
             state._ephemeral_keys.discard(f"dashboard:{session.key}")
+            # Before its turn is stopped: that turn's end starts nothing for it, what waits in
+            # its queue goes with it, and no save writes it again (`_ChatSession._deleted`).
+            session._deleted = True
+            session._queue.clear()
         if session is not None and session.running and session.task is not None:
             # `wait_for` on a task it cancelled is no bound: at its timeout it cancels the task
             # again and waits for that, and a turn starting an agent's process may not leave.
             await cancel_and_wait([session.task], what=f"chat {name}", grace=2.0)
+        # Every helper it started ends with it, an earlier turn's too, before what it kept goes.
+        await started_work.end_chat(state, name, stop_runs=stop_runs)
         spelled = {history_key, name, chat}
         # What it was allowed of a project's secret files ends with it (`secret_file_grants`).
         for key in _spellings(spelled):
@@ -350,6 +400,20 @@ async def delete_chats(state: DashboardState, chats: Iterable[str], *, by: str) 
     except Exception:  # noqa: BLE001 — an audit failure must never keep a chat's traces
         logger.debug("delete: audit row failed", exc_info=True)
     return Deletion(deleted=tuple(deleted), failed=tuple(failed))
+
+
+async def api_chat_session_runs_going(request: web.Request) -> web.Response:
+    """GET /api/chat/sessions/{session}/runs-going — how many workflow runs the chat started
+    itself are still going (``started_work.runs_going``): what its Delete asks whether to stop
+    (``DELETE /api/chat/sessions/{session}?runs=stop``). Answers ``{runs}``, 0 for a chat with
+    none; ``404 session_not_found`` for a chat neither running here nor kept on disk, the one its
+    Delete would not find either (:func:`held_chat`)."""
+    state: DashboardState = request.app["state"]
+    held = held_chat(state, request.match_info["session"])
+    if held is None:
+        return json_error("session_not_found", status=404)
+    runs = await asyncio.to_thread(started_work.runs_going, held.name)
+    return web.json_response({"runs": runs})
 
 
 async def forget_what_memory_drew_from(state: DashboardState, keys: Iterable[str]) -> int:

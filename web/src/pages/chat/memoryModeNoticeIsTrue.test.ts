@@ -73,6 +73,17 @@ describe('a chat that is not persistent says what is kept', () => {
     expect(read(join(GATEWAY, 'inbox.py'))).toMatch(/def _notify_view\([\s\S]{0,600}?state\.notify\(/)
   })
 
+  it('the Temporary notice says what its end keeps of its Inbox and bell rows, as the purge does', () => {
+    expect(MEMORY_MODE_NOTICE.temporary).toContain(
+      "When it is forgotten, nothing it raised in your Inbox or notifications keeps its words: each approval it asked for stays as a short record of what was asked, when, and how it ended, and the rest goes or is withdrawn.",
+    )
+    // Its end is the same purge a Delete runs, which keeps each decision as a record.
+    const forget = read(join(GATEWAY, 'dashboard', 'chat_forget.py'))
+    const end = forget.slice(forget.indexOf('def forget_temporary_chat('))
+    expect(end.slice(0, 2500)).toMatch(/purge_chat\(/)
+    expect(forget.slice(forget.indexOf('def purge_chat('))).toMatch(/forget_chat_rows\(state, _spellings\(names\)\)/)
+  })
+
   it('no mode promises the chat a place in the history, and only Temporary says it is forgotten', () => {
     const incognito = [MEMORY_MODE_NOTICE.incognito, MEMORY_MODES.find((m) => m.id === 'incognito')!.hint]
     for (const text of incognito) expect(text).not.toMatch(/saved in your history|forgot|forget/i)

@@ -2061,14 +2061,25 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
     whose transcript could not be removed answers 500 (``session_not_deleted``), so the page says
     it is still there rather than that it is gone. An app reaches this only for a conversation it
     started: the permission middleware checked the creator on its meta line before this ran.
+
+    ``?runs=stop`` stops the workflow runs the chat started itself with it, the answer its Delete
+    dialog asked for (``GET .../runs-going``); ``keep``, the default, leaves them going. Any other
+    value is refused, and nothing is deleted.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     from personalclaw.dashboard.chat_forget import delete_chats
 
+    runs = request.query.get("runs", "keep")
+    if runs not in ("keep", "stop"):
+        return json_error(
+            "invalid_request",
+            message="runs is keep or stop: whether the workflow runs the chat started go on.",
+            status=400,
+        )
     app = request.get("app", "")
     by = f"app:{app}" if app else str(request.get("user") or "dashboard")
-    done = await delete_chats(state, [name], by=by)
+    done = await delete_chats(state, [name], by=by, stop_runs=runs == "stop")
     if done.failed:
         return json_error("session_not_deleted", status=500)
     if not done.deleted:

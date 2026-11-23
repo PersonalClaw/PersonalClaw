@@ -1699,6 +1699,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/chat/sessions/{session}": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
     "GET /api/chat/sessions/{session}/turns/{message_id}": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
     "GET /api/chat/sessions/{session}/map": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
+    "GET /api/chat/sessions/{session}/runs-going": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
     "GET /api/chat/sessions/{session}/export": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
     "GET /api/chat/sessions/{session}/tool-result/{rid}": AppMay(
         "reads a tool's full output from a conversation the app started", owns=_OWN_CHAT
