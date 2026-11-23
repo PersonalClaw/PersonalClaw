@@ -11,7 +11,8 @@ import { TOUCH_TARGET } from './Toggle'
 // control is a 44 px box from 320 to 768 px. `HeaderMenu` took none, so its trigger stayed a 40 px
 // `size-10` (icon only) or `h-10` pill, and a page whose primary action opens a menu (the library's
 // Add, a project's New) had a control under the 44 px floor. It takes one now, added to the
-// trigger as `HeaderControl` adds its own, and without it the trigger is as before.
+// trigger as `HeaderControl` adds its own; since every header control has the box, one passed
+// nothing has it too.
 
 const items = [{ label: 'Upload files', onSelect: () => {} }]
 const trigger = () => screen.getByRole('button', { name: 'Add' })
@@ -25,10 +26,12 @@ describe("a header menu's trigger", () => {
     expect(button.title).toBe('Add')
   })
 
-  it('🔑 one passed none renders as today: a 40 px trigger', () => {
+  it('🔑 one passed none has the box too, its 40 px trigger kept above the compact widths', () => {
+    // Every header control's button takes the compact widths' box now
+    // (`everyHeaderControlIsATargetOnAPhone.test.tsx`).
     render(<HeaderActions><HeaderMenu icon={Plus} label="Add" variant="primary" items={items} /></HeaderActions>)
     const classes = [...trigger().classList]
-    expect(classes.some((c) => c.includes('min-h-11') || c.includes('min-w-11'))).toBe(false)
+    for (const cls of TOUCH_TARGET.split(' ')) expect(classes.includes(cls), cls).toBe(true)
     expect(classes.includes('h-10') || classes.includes('size-10')).toBe(true)
   })
 })
