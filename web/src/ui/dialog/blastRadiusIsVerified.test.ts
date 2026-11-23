@@ -330,7 +330,7 @@ describe('two more bodies: one corrected, one confirmed', () => {
     // The handler hands the delete to the one way a chat is deleted, so the claim is verified in
     // the caller AND in what it calls.
     expect(del.slice(0, 3000), 'the handler deletes through the one path').toMatch(
-      /await delete_chats\(state, \[name\], by=by\)/,
+      /await delete_chats\(state, \[name\], by=by, stop_runs=runs == "stop"\)/,
     )
     const forget = py('dashboard/chat_forget.py')
     const one = forget.slice(forget.indexOf('async def delete_chats('), forget.indexOf('def forget_what_memory_drew_from('))
@@ -345,6 +345,31 @@ describe('two more bodies: one corrected, one confirmed', () => {
     // disk-purge fallback because "Delete" used to 404 for a non-resident session, leaving its JSONL on
     // disk and letting the chat RESURRECT on reopen — the exact opposite of what this sentence promises.
     expect(del.slice(0, 3000)).toMatch(/letting it resurrect on reopen/)
+  })
+
+  it('the chat delete keeps each decision as a short record, and takes the rest of its Inbox and bell rows', () => {
+    // The dialog said the chat and its history went while every approval's row kept the tool's
+    // purpose and arguments, a helper's report stayed in the bell, and its questions and notes
+    // stayed in the Inbox. Each half of the sentence is read back from the purge.
+    expect(web('pages/chat/history/useChatHistory.ts')).toContain(
+      "Nothing it raised in your Inbox or notifications keeps its words: each approval it asked for stays as a short record of what was asked, when, and how it ended, and the rest goes or is withdrawn.",
+    )
+    const forget = py('dashboard/chat_forget.py')
+    const purge = forget.slice(forget.indexOf('def purge_chat('), forget.indexOf('def _transcript_left('))
+    expect(purge, 'the purge reaches the Inbox and the bell').toMatch(/forget_chat_rows\(state, _spellings\(names\)\)/)
+    expect(purge, 'and withdraws what was learned from it').toMatch(/skill_proposals\.withdraw_sessions\(spelled\)/)
+    const rows = py('dashboard/chat_forget_inbox.py')
+    expect(rows, 'a decision is an approval or a call denied unanswered').toMatch(
+      /return bool\(refs\.get\("approval"\) or refs\.get\("auto_denied"\)\)/,
+    )
+    expect(rows, 'kept as what was asked, when and how it ended').toMatch(
+      /said = f"Asked in a chat that is gone, \{_when\(item\)\}\. \{_ended\(title, refs\)\}"\s*\n\s*item\.message = f"\{how\}: \{tool or 'a tool call'\}\\n\\n\{said\}"/,
+    )
+    expect(rows, 'the tool by its own name alone, never its display title').toMatch(
+      /tool = _tool_name\(title\.partition\(":"\)\[2\]\.strip\(\)\) or _tool_name\(str\(refs\.get\("tool"\) or ""\)\)/,
+    )
+    expect(rows, 'everything else goes').toMatch(/removed = store\.remove\(dropped, state=state\)/)
+    expect(rows, 'and every note about the chat').toMatch(/state\.delete_notifications_for_chat\(of_the_chat, items=ids\)/)
   })
 
   it('the chat delete takes what memory drew from it alone, and keeps what came from elsewhere too', () => {

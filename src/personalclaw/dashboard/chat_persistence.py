@@ -903,6 +903,17 @@ def _read_so_far(
     return min(count, kept) if type(count) is int else 0
 
 
+def _has_ended(state: DashboardState, session: _ChatSession) -> bool:
+    """Whether *session* has ended, so a save still in flight for it (a stopped turn's end, a
+    title request answering late, the flush loop's say) must not write its transcript back: a
+    deleted chat (``_ChatSession._deleted``), or a Temporary one no longer running here, which
+    is forgotten (``chat_forget``). Not any chat no longer loaded: ``/cleanup`` lets go of one
+    and then saves it closed, on purpose."""
+    if getattr(session, "_deleted", False):
+        return True
+    return session.memory_mode == TEMPORARY and state._sessions.get(session.key) is not session
+
+
 def save_session_to_history(
     state: DashboardState,
     session: _ChatSession,
@@ -925,9 +936,9 @@ def save_session_to_history(
     msgs = messages if messages is not None else session.messages
     if not state.conversation_log:
         return
-    # A Temporary chat no longer running here has ended and is forgotten (`chat_forget`): a save
-    # still in flight for it, the flush loop's say, must not write its transcript back.
-    if session.memory_mode == TEMPORARY and state._sessions.get(session.key) is not session:
+    # A deleted chat, or a Temporary one no longer running here, has ended (`_has_ended`): a
+    # save still in flight for it must not write its transcript back, whatever `force` says.
+    if _has_ended(state, session):
         return
     # Save back under the key this session is actually persisted under — the one owner
     # of on-disk identity (a channel-provider thread keeps its own bare key; a dashboard

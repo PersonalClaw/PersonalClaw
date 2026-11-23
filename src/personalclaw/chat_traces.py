@@ -7,6 +7,11 @@ archive batch of it), its working folder
 the files it changed), the files attached to its messages (``uploads/``, and ``screenshots/``
 for a native capture) and the skills it was taught and not yet kept (``skills/.ephemeral/``).
 
+What it raised in your Inbox and notifications is not its own file but rows of shared stores.
+When the chat goes, each decision it asked for stays in the Inbox as a short record with none of
+its words, and every other row and notification about it is deleted
+(``dashboard/chat_forget_inbox.py``).
+
 Core, beneath the dashboard that forgets a chat (``dashboard/chat_forget.py``), because the
 stores that copy the home read it too: a snapshot and a shard export leave out what a running
 Temporary chat keeps (:func:`kept_by_temporary_chats`), since such a chat is forgotten when its

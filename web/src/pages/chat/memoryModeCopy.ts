@@ -67,5 +67,6 @@ export const MEMORY_MODE_NOTICE: Record<Exclude<MemoryMode, 'persistent'>, strin
     + "the one it runs on: a tool that needs a model uses this one or says it can't, and no background model "
     + 'reads it for a title, follow-ups or suggestions. '
     + 'Files you attach, a screen you share, your dictation and replies read aloud still use the models you set up for them. '
-    + KEPT_AS_FOR_ANY_CHAT,
+    + KEPT_AS_FOR_ANY_CHAT
+    + " When it is forgotten, nothing it raised in your Inbox or notifications keeps its words: each approval it asked for stays as a short record of what was asked, when, and how it ended, and the rest goes or is withdrawn.",
 }

@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **976 registrations** over **791 distinct paths** — 969 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **977 registrations** over **792 distinct paths** — 970 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 135 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 91 | 78 |
+| `/api/chat` | 92 | 79 |
 | `/api/knowledge` | 80 | 64 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
@@ -162,7 +162,7 @@ The 135 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 969 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 970 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -380,6 +380,7 @@ The 969 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/chat/sessions/{session}/resume` | load a history session into a session. |
 | `GET` | `/api/chat/sessions/{session}/rewind` | what a rewind would do. Read-only. |
 | `POST` | `/api/chat/sessions/{session}/rewind` | restore files to the end of turn N. |
+| `GET` | `/api/chat/sessions/{session}/runs-going` | how many workflow runs the chat started |
 | `POST` | `/api/chat/sessions/{session}/seen` | you have seen the chat through ``through`` (now |
 | `POST` | `/api/chat/sessions/{session}/share` | a redacted, read-only artifact of a chat. |
 | `POST` | `/api/chat/sessions/{session}/side/close` | drop the buffer + destroy |

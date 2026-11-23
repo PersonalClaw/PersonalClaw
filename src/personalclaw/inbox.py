@@ -838,22 +838,29 @@ class InboxStore:
         by the remediation engine's ``inbox.maintenance`` job when auto-cleanup is
         enabled; the InboxService no longer runs its own maintenance loop.
         """
+        expired = self._expired_ids(retention_days)
+        if expired:
+            self.remove(expired)
+            logger.info("Inbox auto-cleanup: deleted %d expired items", len(expired))
+        return len(expired)
+
+    def remove(self, item_ids: Iterable[str], *, state: Any = None) -> list[InboxItem]:
+        """Delete the rows *item_ids* name, and the files they came with, in one save. An id no
+        longer here is skipped. An open row the waiting list lists rings it as it goes (*state*,
+        the dashboard to ring, or None where there is none). Returns the rows deleted."""
         from personalclaw import attachments
 
-        expired = self._expired_ids(retention_days)
         removed: list[InboxItem] = []
-        for item_id in expired:
+        for item_id in item_ids:
             gone = self.items.pop(item_id, None)
             if gone is not None:
                 removed.append(gone)
                 if gone.attachments:
                     attachments.forget(item_id)
-        if expired:
+        if removed:
             self.save()
-            logger.info("Inbox auto-cleanup: deleted %d expired items", len(expired))
-            # An open row the waiting list lists that ages out leaves it: the list rings.
-            _ring_waiting(None, [g for g in removed if g.status in OPEN_STATUSES])
-        return len(expired)
+            _ring_waiting(state, [g for g in removed if g.status in OPEN_STATUSES])
+        return removed
 
 
 # ── Alerts ──

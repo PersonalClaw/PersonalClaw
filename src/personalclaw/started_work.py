@@ -14,6 +14,10 @@ work ran (``SubagentInfo.starter_ended``), which would take the work up again.
   ``SessionManager.stop_turn``): what the turn's session started since the turn began. What an
   earlier turn of the same chat started is that turn's, which ended without being stopped, so it
   goes on.
+* A chat's deletion ends every helper the chat started, whenever it started them
+  (:func:`end_chat`, from ``chat_forget.delete_chats``), and what each started in turn. Their
+  sessions are sealed first, so a write one is still making as its stop lands keeps nothing. The
+  chat's own workflow runs go on, as they did: a run has a page of its own.
 * A workflow run's ending ends what its steps started (:func:`end_run`, from
   ``RunController._finish`` and ``service.delete_run``): what the session of one of its steps'
   subagents (``subagent:<id>``) started, and what four step kinds launched (:func:`_end_launched`):
@@ -60,6 +64,10 @@ logger = logging.getLogger(__name__)
 #: another agent), and none ends the chat itself.
 TURN_STOPPED = "its chat turn was stopped"
 
+#: How what a chat started reads once the chat's deletion ends it: "Stopped because its chat was
+#: deleted."
+CHAT_DELETED = "its chat was deleted"
+
 
 class Ended(NamedTuple):
     """What an ending reached: the runs whose cancel it asked, the subagents it stopped (a
@@ -95,6 +103,8 @@ async def end_started(
     clause: str,
     since: float = 0.0,
     asks: Any = None,
+    its_own_runs: bool = True,
+    seal: bool = False,
 ) -> Ended:
     """End what the sessions *owns* claims started, and what each subagent among it started in
     turn, as *clause* ("its chat turn was stopped"). *asks* is the approval registry, which holds
@@ -102,15 +112,50 @@ async def end_started(
 
     *since* (an epoch) keeps it to what those sessions started from then on: a turn's own work,
     not an earlier turn's. What a subagent it reaches started is that subagent's, whenever it was.
+    Without *its_own_runs*, the workflow runs those sessions started themselves go on; what a
+    subagent it reaches started still ends. With *seal*, each subagent it reaches is first marked
+    as work whose chat nothing can say any more (:func:`_seal`), from the one walk that stops it.
 
     Fail-open, child by child: a child that will not stop must not keep the owner from reaching
     the state she asked for. A run left behind is still ended by the workflow supervisor when its
     loop has ended (``loop.children.parent_ended``).
     """
-    from personalclaw.workflows import service, store
-    from personalclaw.workflows.ownership import OWNED_PREFIX
-
     agents = _agents(subagents)
+    started = reached(agents, owns, since)
+    if seal:
+        _seal(started)
+    sessions = {f"subagent:{agent_id}" for agent_id in started}
+    # Each one, finished or not, hands its report to no turn from here: one stopped below would
+    # otherwise be handed back as a turn that tells the agent its work was cut off, which the agent
+    # takes up again, and one that finished just before has its report waiting for the turn that
+    # is ending, to start the next (`gateway._subagent_done`). Before any is stopped, so the
+    # report each stop sends finds it said.
+    for info in started.values():
+        info.starter_ended = clause
+    runs_owned = owns if its_own_runs else None
+    runs, steps = _cancel_runs(agents, sessions, runs_owned, since, supervisor, clause)
+    stopped = 0
+    going = [agent_id for agent_id, info in started.items() if not info.done]
+    if going and subagents is not None:
+        try:
+            stopped = await subagents.stop_agents(going, because=clause)
+        except Exception:
+            logger.warning("could not stop subagents %s (%s)", going, clause, exc_info=True)
+    waiting = _end_waiting_asks(asks, owns, sessions, since, clause)
+    if runs or stopped or waiting:
+        logger.info(
+            "ended %d run(s), %d subagent(s) and %d ask(s) for an Allow: %s",
+            runs,
+            stopped,
+            waiting,
+            clause,
+        )
+    return Ended(runs=runs, subagents=stopped + steps, asks=waiting)
+
+
+def reached(agents: list[Any], owns: Callable[[str], bool], since: float = 0.0) -> dict[str, Any]:
+    """The subagents among *agents* the sessions *owns* claims started since *since* (an epoch),
+    and what each of those started in turn, by id: what :func:`end_started` ends."""
     started = {
         info.id: info
         for info in agents
@@ -126,23 +171,69 @@ async def end_started(
             and str(getattr(info, "parent_session_key", "") or "") in sessions
         }
         if not more:
-            break
+            return started
         started.update(more)
-    # Each one, finished or not, hands its report to no turn from here: one stopped below would
-    # otherwise be handed back as a turn that tells the agent its work was cut off, which the agent
-    # takes up again, and one that finished just before has its report waiting for the turn that
-    # is ending, to start the next (`gateway._subagent_done`). Before any is stopped, so the
-    # report each stop sends finds it said.
-    for info in started.values():
-        info.starter_ended = clause
+
+
+def _seal(started: dict[str, Any]) -> None:
+    """Mark each subagent in *started* as work whose chat nothing can say any more
+    (``session_restrictions.mark_unreadable``): what one still writes as its stop lands keeps
+    nothing, and what it reads finds nothing."""
+    from personalclaw import session_keys, session_restrictions
+
+    for agent_id in started:
+        session_restrictions.mark_unreadable(session_keys.SUBAGENT.key(agent_id))
+
+
+def _runs_of(sessions: set[str], owns: Callable[[str], bool] | None, since: float) -> list[Any]:
+    """The live workflow runs the subagent *sessions* started, and those the sessions *owns*
+    claims started since *since* (none when *owns* is None), whose cancel nobody asked for yet:
+    what :func:`_cancel_runs` ends and :func:`runs_going` counts."""
+    from personalclaw.workflows import store
+
+    return [
+        run
+        for run in store.active_runs()
+        if (key := str(run.origin.session_key or "")) in sessions
+        or (owns and owns(key) and _started_since(run.created_at, since))
+        if not store.cancel_requested(run.id)
+    ]
+
+
+def runs_going(name: str) -> int:
+    """How many workflow runs chat *name* started itself are still going: what its Delete asks
+    whether to stop (:func:`end_chat`'s *stop_runs*). Its helpers' runs are not counted, since
+    they end with it whatever the answer."""
+    owns = _chat_owns(name)
+    return len(_runs_of(set(), owns, 0.0)) if owns else 0
+
+
+def _chat_owns(name: str) -> Callable[[str], bool] | None:
+    """Whether a session key is chat *name*'s own, under its name or its dashboard key; None
+    for no name."""
+    from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_session_key
+
+    bare = str(name or "").removeprefix(DASHBOARD_SESSION_PREFIX)
+    return frozenset({bare, dashboard_session_key(bare)}).__contains__ if bare else None
+
+
+def _cancel_runs(
+    agents: list[Any],
+    sessions: set[str],
+    owns: Callable[[str], bool] | None,
+    since: float,
+    supervisor: Any,
+    clause: str,
+) -> tuple[int, int]:
+    """Cancel, as *clause*, each live workflow run the subagent *sessions* started, and each the
+    sessions *owns* claims started since *since* (none when *owns* is None). Returns how many runs
+    it asked to cancel, and how many of their steps' subagents were still running."""
+    from personalclaw.workflows import service
+    from personalclaw.workflows.ownership import OWNED_PREFIX
+
     runs = 0
     steps = 0
-    for run in store.active_runs():
-        key = str(run.origin.session_key or "")
-        if not (key in sessions or (owns(key) and _started_since(run.created_at, since))):
-            continue
-        if store.cancel_requested(run.id):
-            continue
+    for run in _runs_of(sessions, owns, since):
         try:
             if service.cancel_run(run.id, supervisor=supervisor, reason=clause).get("ok"):
                 runs += 1
@@ -150,37 +241,56 @@ async def end_started(
                 steps += sum(1 for info in agents if not info.done and info.parent_run == lane)
         except Exception:
             logger.warning("could not stop run %s (%s)", run.id, clause, exc_info=True)
-    stopped = 0
-    going = [agent_id for agent_id, info in started.items() if not info.done]
-    if going and subagents is not None:
-        try:
-            stopped = await subagents.stop_agents(going, because=clause)
-        except Exception:
-            logger.warning("could not stop subagents %s (%s)", going, clause, exc_info=True)
-    waiting = 0
-    if asks is not None:
-        from personalclaw.workflows.owner_allow import end_asks
+    return runs, steps
 
-        try:
-            waiting = end_asks(
-                asks,
-                lambda session, asked_at: (owns(session) or session in sessions)
-                and asked_at >= since,
-                reason=clause,
-            )
-        except Exception:
-            logger.warning(
-                "could not end the asks waiting for an Allow (%s)", clause, exc_info=True
-            )
-    if runs or stopped or waiting:
-        logger.info(
-            "ended %d run(s), %d subagent(s) and %d ask(s) for an Allow: %s",
-            runs,
-            stopped,
-            waiting,
-            clause,
+
+def _end_waiting_asks(
+    asks: Any, owns: Callable[[str], bool], sessions: set[str], since: float, clause: str
+) -> int:
+    """End, as *clause*, what still waits for her Allow in the registry *asks* for the sessions
+    *owns* claims or the subagent *sessions*, asked since *since*. Returns how many it ended."""
+    if asks is None:
+        return 0
+    from personalclaw.workflows.owner_allow import end_asks
+
+    try:
+        return end_asks(
+            asks,
+            lambda session, asked_at: (owns(session) or session in sessions) and asked_at >= since,
+            reason=clause,
         )
-    return Ended(runs=runs, subagents=stopped + steps, asks=waiting)
+    except Exception:
+        logger.warning("could not end the asks waiting for an Allow (%s)", clause, exc_info=True)
+        return 0
+
+
+async def end_chat(state: Any, name: str, *, stop_runs: bool = False) -> Ended:
+    """Chat *name* is being deleted (``chat_forget.delete_chats``): end every subagent it started,
+    whenever it started them, what each of them started in turn, and what still waits for your
+    Allow for it, saying :data:`CHAT_DELETED`. Called after its turn is stopped and before what it
+    kept is purged. Each subagent's session is sealed first, marked as work whose chat nothing can
+    say any more (``session_restrictions.mark_unreadable``), so what one still writes as its stop
+    lands keeps nothing and what it reads finds nothing; and its report starts no turn and tells
+    nobody (``SubagentInfo.starter_ended``). The workflow runs the chat started itself end too
+    with *stop_runs*, the answer its Delete asked for (:func:`runs_going`), and go on otherwise.
+
+    Never raises: the delete goes on whatever this reaches, and a restart ends what is left."""
+    owns = _chat_owns(name)
+    if owns is None:
+        return Ended(runs=0, subagents=0)
+    try:
+        return await end_started(
+            subagents=getattr(state, "subagents", None),
+            supervisor=getattr(state, "workflows", None),
+            asks=state,
+            owns=owns,
+            clause=CHAT_DELETED,
+            its_own_runs=stop_runs,
+            seal=True,
+        )
+    except Exception:  # noqa: BLE001 - the delete goes on, as the docstring says
+        logger.warning("could not end what chat %s started", name, exc_info=True)
+        return Ended(runs=0, subagents=0)
 
 
 async def end_turn(state: Any, session_key: str) -> int:

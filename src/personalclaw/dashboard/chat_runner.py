@@ -1564,12 +1564,23 @@ def _says_its_phases(turn: _TurnEngine) -> _TurnEngine:
     return _said  # type: ignore[return-value]
 
 
+def _goes_on_after_its_turn(state: DashboardState, session: _ChatSession) -> bool:
+    """Whether what follows a turn's end runs: its chat's next queued message, and a title,
+    follow-ups, an offer and a plan draft. Not while the gateway stops, since a turn or a model
+    call started now is cut off with the rest, and never for a deleted chat
+    (``_ChatSession._deleted``): nothing runs for it once it is deleted."""
+    return not state.stopping_for and not session._deleted
+
+
 def _start_plan_after_turn(state: DashboardState, session: _ChatSession) -> None:
     """Plan mode switched on while a turn ran starts as that turn ends, before anything runs next,
     so the next turn is the planning turn (``chat_plan.start_after_turn``). What follows in
     :func:`run_chat` runs without a pause until the chat reads idle or its next turn has started,
     so a plan asked for from then on finds one of those. Imported here, not at module scope,
-    because ``chat_plan`` dispatches back into :func:`run_chat`."""
+    because ``chat_plan`` dispatches back into :func:`run_chat`. None starts for a deleted
+    chat (``_ChatSession._deleted``)."""
+    if session._deleted:
+        return
     try:
         from personalclaw.dashboard.chat_plan import start_after_turn
 
@@ -5173,9 +5184,9 @@ async def run_chat(
             state.sessions.release(session_key)
         await running_turn.apply_pending_move(state, session, session_key)
         _start_plan_after_turn(state, session)
-        # Process queued messages (FIFO) — keep SSE stream alive. Not while the gateway stops: a
-        # turn started now would only be cut off in its turn.
-        if session._queue and not state.stopping_for:
+        # Process queued messages (FIFO) — keep SSE stream alive. Not while the gateway stops,
+        # nor for a deleted chat (`_goes_on_after_its_turn`).
+        if session._queue and _goes_on_after_its_turn(state, session):
             # This turn is over, unless what runs next is this turn sent again (its retry): its
             # last phase frame goes out before the next turn says it is waiting to start.
             if not session._queue[0].get("retry"):
@@ -5326,9 +5337,9 @@ async def run_chat(
             session.task = None
             state.broadcast_ws("chat_done", {"session": session.key, "outcome": _turn_outcome})
             state.push_refresh("history")
-            # The gateway is stopping: a title, follow-ups, an offer and a plan draft are the next
-            # turn's business, and a model call started now is cut off with the rest.
-            if not state.stopping_for:
+            # A title, follow-ups, an offer and a plan draft: none while the gateway stops, nor for
+            # a deleted chat (`_goes_on_after_its_turn`).
+            if _goes_on_after_its_turn(state, session):
                 # Auto-title: fire in background so it doesn't block the response
                 if not session._titled:
                     t = asyncio.create_task(_maybe_auto_title(state, session))
