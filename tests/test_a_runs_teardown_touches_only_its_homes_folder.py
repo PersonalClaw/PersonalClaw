@@ -12,11 +12,20 @@ Now teardown resolves the recorded folder through the check the working-folder a
 (`provisioning._own_isolated_dir`): a folder that is not the one this home makes for the run gets
 no teardown step, no commit and no removal, nor does the container that worked in it, and the
 teardown says so in one line, which the run's journal keeps.
+
+🔴 The same held for a run that worked in place (Backlog, private): its record names its project's
+tree, and its deletion or pruning ran the teardown command in whatever tree the record named,
+though it removed nothing. Restored into a second home whose project binds another folder, or
+that has no such project, the run's teardown ran in the first home's tree. Now an in-place
+record's folder is the run's only when it is the tree its project binds in this home
+(`provisioning._is_own_tree`), the one folder the allowlist admits for its steps
+(`provisioning.run_workdir`).
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -223,3 +232,107 @@ def test_another_runs_worktree_is_not_this_runs(homes, project_id):
     os.makedirs(other)
     assert provisioning._own_isolated_dir(run, mine, {**state, "path": mine}) == mine
     assert provisioning._own_isolated_dir(run, other, {**state, "path": other}) == ""
+
+
+# ── a run that worked in place ──
+
+
+def _project(tree: Path, name: str = "proj") -> str:
+    """A project of the active home bound to *tree*."""
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    tree.mkdir(exist_ok=True)
+    return HierarchyStore().create_project(name, workspace_dir=str(tree)).id
+
+
+async def _finished_in_place_run(project_id: str, created: str = "") -> WorkflowRun:
+    """A finished run of the active home that worked in its project's tree, with a teardown."""
+    run = store.create(
+        WorkflowRun(
+            id="",
+            workflow_name="inp",
+            status=RunStatus.COMPLETE,
+            project_id=project_id,
+            created_at=created,
+        )
+    )
+    spec = WorkspaceSpec(mode=Mode.IN_PLACE, teardown="compose-down")
+    made = await provisioning.provision(
+        spec,
+        run_id=run.id,
+        project_id=project_id,
+        workspace_dir=provisioning.project_tree(project_id),
+    )
+    assert made.path and not made.isolated, made
+    provisioning.stamp_run(run, made, spec)
+    store.save(run)
+    return run
+
+
+def _restored_with(homes: _Homes, run: WorkflowRun, *, projects: bool) -> WorkflowRun:
+    """*run*'s record restored into the second home, with the first home's projects or not."""
+    if projects:
+        shutil.copytree(homes.first / "projects", homes.second / "projects", dirs_exist_ok=True)
+    return _restored(homes, run)
+
+
+def _bind(project_id: str, tree: Path) -> None:
+    """Point the active home's project *project_id* at *tree*."""
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    tree.mkdir(exist_ok=True)
+    assert HierarchyStore().update_project(project_id, workspace_dir=str(tree)) is not None
+
+
+@pytest.mark.parametrize("here", ["its project binds another folder", "it has no such project"])
+async def test_deleting_a_restored_in_place_run_runs_nothing_in_the_tree_it_names(
+    homes, ran, tmp_path, here
+):
+    """🔴 Before: the teardown ran in the first home's tree."""
+    first_tree = tmp_path / "first-tree"
+    run = await _finished_in_place_run(_project(first_tree))
+    restored = _restored_with(homes, run, projects=here.startswith("its project"))
+    if here.startswith("its project"):
+        _bind(run.project_id, tmp_path / "second-tree")
+    out = await service.delete_run(restored.id)
+    assert out["ok"] is True and store.get(restored.id) is None, "the second home's row goes"
+    assert ran == [], "no teardown step ran in a tree this home does not bind for the run"
+    (said,) = out["teardown"]["failed"]
+    assert str(first_tree) in said, said
+    assert "not the folder this run's project binds in this home" in said, said
+    assert out["teardown"]["removed"] is False and first_tree.is_dir()
+
+
+async def test_pruning_restored_in_place_runs_runs_nothing_in_the_tree_they_name(
+    homes, ran, tmp_path
+):
+    from personalclaw.workflows.watchdog import prune_runs
+
+    project_id = _project(tmp_path / "first-tree")
+    made = [
+        await _finished_in_place_run(project_id, f"2026-01-0{i + 1}T00:00:00Z") for i in range(3)
+    ]
+    for run in made:
+        _restored_with(homes, run, projects=False)
+    assert await prune_runs("inp", keep=1) == 2
+    assert ran == []
+
+
+@pytest.mark.parametrize("spelled", ["as its project binds it", "through a link to it"])
+async def test_this_homes_own_in_place_run_still_runs_its_teardown(homes, ran, tmp_path, spelled):
+    """The control: the guard refuses a tree this home does not bind for the run, never the tree
+    its project binds here, however the record spells it. Nothing is removed: it is the real
+    tree."""
+    homes.use(homes.second)
+    tree = tmp_path / "tree"
+    run = await _finished_in_place_run(_project(tree))
+    if spelled != "as its project binds it":
+        link = tmp_path / "to-tree"
+        os.symlink(tree, link)
+        run.extra[provisioning.WORKSPACE_KEY]["path"] = str(link)
+        store.save(run)
+    recorded = provisioning.workspace_state(store.get(run.id))["path"]
+    out = await service.delete_run(run.id)
+    assert out["teardown"]["failed"] == [], out["teardown"]
+    assert ran == [("compose-down", recorded)]
+    assert out["teardown"]["removed"] is False and tree.is_dir()
