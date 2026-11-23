@@ -1159,9 +1159,11 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
                 placeholder="e.g. nas.local" />
             </FieldErrorProvider>
           </div>
-          <Button onClick={add} shape="squircle" disabled={disabled || !draft.trim()}
+          {/* Named for what it adds and where: the list renders twice (Allowed, Denied), beside the
+              denylist's own Add, and three buttons named "Add" were heard alike. */}
+          <Button onClick={add} shape="squircle" disabled={disabled || !draft.trim()} ariaLabel={`Add host to ${label}`}
             disabledReason={!disabled && !draft.trim() ? 'Enter a host first' : undefined}>
-            <Plus size={15} /> Add
+            <Plus size={15} /> Add host
           </Button>
         </div>
         {/* `FieldError` rather than a hand-rolled danger line: it carries `role="alert"`, which is the
@@ -1308,7 +1310,7 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
               <Button onClick={add} shape="squircle" loading={busy}
                 disabled={!draft.trim()}
                 disabledReason={!draft.trim() ? 'Enter a pattern first' : undefined}>
-                <Plus size={15} /> Add
+                <Plus size={15} /> Add pattern
               </Button>
             </div>
             {err && <FieldError>{err}</FieldError>}
