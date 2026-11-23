@@ -44,6 +44,14 @@ REACTIONS: Mapping[str, tuple[str, str]] = {
 #: How much of the answer the agent is shown, so it can tell which message the reaction is to.
 EXCERPT_CHARS = 160
 
+#: Every mark that reads as a double quote, each made a single quote in the excerpt
+#: (:func:`_excerpt`), so the answer's words cannot end the sentence's quote.
+_DOUBLE_QUOTES = str.maketrans(
+    dict.fromkeys(
+        '"\u201c\u201d\u201e\u201f\u00ab\u00bb\u2033\u2036\u275d\u275e\u301d\u301e\u301f\uff02', "'"
+    )
+)
+
 
 @dataclass(frozen=True)
 class Refusal:
@@ -248,8 +256,10 @@ def _clock(ts: str, zone: Any) -> str:
 
 def _excerpt(content: str) -> str:
     """The answer's first :data:`EXCERPT_CHARS` characters on one line, masked as text shown on
-    a page is."""
+    a page is. Its double quotes are single ones: an answer often carries outside text (an email,
+    a page), and a quote mark of its own would end the sentence's quote, so that what followed
+    read as the gateway's own words about the user."""
     text, _ = redact_exfiltration_urls(content)
     text, _ = redact_credentials(text)
-    text = " ".join(text.split())
+    text = " ".join(text.translate(_DOUBLE_QUOTES).split())
     return text if len(text) <= EXCERPT_CHARS else text[: EXCERPT_CHARS - 1].rstrip() + "…"
