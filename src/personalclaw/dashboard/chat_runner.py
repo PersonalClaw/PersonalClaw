@@ -646,6 +646,17 @@ def auto_chain_name(session: object, *, folder: str | None = None) -> str:
     return USE_CASE_NAMES.get(owner, owner)
 
 
+def _reported_usage(event: object) -> bool:
+    """Whether a turn's ``EVENT_COMPLETE`` says what the turn used, so its Usage row and its cost
+    line are written: tokens, or a cost its runtime reported. An agent CLI may report a cost and
+    no tokens (``acp.turn_spend``), and a turn read only for its tokens wrote no row for it."""
+    return bool(
+        getattr(event, "input_tokens", 0)
+        or getattr(event, "output_tokens", 0)
+        or getattr(event, "cost_usd", 0)
+    )
+
+
 def _record_turn_usage(
     event: object,
     *,
@@ -4465,7 +4476,7 @@ async def run_chat(
                     )
                     needs_session_reset = True
             elif event.kind == EVENT_COMPLETE:
-                if event.input_tokens or event.output_tokens:
+                if _reported_usage(event):
                     stats = Stats()
                     stats.inc_input_tokens(event.input_tokens)
                     stats.inc_output_tokens(event.output_tokens)

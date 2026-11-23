@@ -30,6 +30,7 @@ from pathlib import Path
 
 from personalclaw.acp import translate
 from personalclaw.acp.translate import extract_text_chunk  # noqa: F401 — re-export
+from personalclaw.acp.turn_spend import SessionSpend
 from personalclaw.acp.types import (
     CAP_COMMANDS,
     EVENT_AGENT_SWITCHED,
@@ -247,6 +248,8 @@ class AcpSession:
         self._owed_answer: "asyncio.Future[JsonRpcMessage] | None" = None
         self._owed_cancels: set[asyncio.Task] = set()
         self.last_prompt_stats = AcpPromptStats()
+        # What the agent says this session has cost so far, and what each turn adds (`turn_spend`).
+        self._spend = SessionSpend()
         # The stopReason the AGENT answered the last prompt with; "" when it never answered.
         self._last_stop_reason: str = ""
         self._turn_done: asyncio.Event = asyncio.Event()
@@ -854,6 +857,7 @@ class AcpSession:
 
         prev_pct = self.last_prompt_stats.context_pct
         self.last_prompt_stats = AcpPromptStats(context_pct=prev_pct)
+        self._spend.turn_began()
         self._tool_call_inputs.clear()
         self._tool_call_seen.clear()
         self._offered_options.clear()
@@ -968,6 +972,18 @@ class AcpSession:
         if pct is not None:
             self.last_prompt_stats.context_pct = pct
 
+    def _keep_usage(self, msg: JsonRpcMessage) -> None:
+        """Keep what *msg*, a frame of this turn, says of the session's usage: the context in use
+        (:meth:`_keep_context_pct`) and, on ACP's usage update, its cost so far (``turn_spend``)."""
+        self._keep_context_pct(translate.extract_usage_pct(msg))
+        self._spend.saw(msg)
+
+    def _completed(self, reason: str, result: object) -> AcpEvent:
+        """The turn's ``EVENT_COMPLETE`` for the agent's answer *result* (stopped for *reason*),
+        carrying what the agent said the turn cost and used (``turn_spend``), when it said."""
+        self._spend.answered(result)
+        return AcpEvent(kind=EVENT_COMPLETE, stop_reason=reason, **self._spend.turn())
+
     async def _turn_events(
         self,
         req_id: int,
@@ -1008,7 +1024,7 @@ class AcpSession:
                         return
                     self._last_stop_reason = reason
                     self._turn_done.set()
-                    yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=reason)
+                    yield self._completed(reason, result)
                     return
                 if action == "error":
                     if self._cancelled:
@@ -1083,7 +1099,7 @@ class AcpSession:
                         for tr in self._read_new_tool_results():  # prior tool's results first
                             yield tr
                         yield tool_event
-                    self._keep_context_pct(translate.extract_usage_pct(msg))
+                    self._keep_usage(msg)
                     upd_events = translate.extract_tool_update_events(
                         msg, self._tool_call_inputs, self._tool_call_seen
                     )
@@ -1356,7 +1372,10 @@ class AcpConnection:
             )
         if isinstance(result, dict):
             self._last_session_new_snapshot = dict(result)
-        return self._bind_session(sid, session_files_dir=session_files_dir)
+        sess = self._bind_session(sid, session_files_dir=session_files_dir)
+        # Opened here, so what its agent reports it has cost starts from nothing (`turn_spend`).
+        sess._spend.opened_here()
+        return sess
 
     async def load_session(
         self, params: dict, *, session_id: str, timeout: float = 60.0, session_files_dir=None
