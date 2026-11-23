@@ -26,6 +26,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **On a phone, a project's detail opens as a full-height sheet over the page, closed with Close or Esc, with the focus on Close as it opens. It used to take the lower half of the page under the work.**
 - **On a phone, every switch is a 44 px target: the switch is drawn the same, and the space you can tap around it grows, with its row. Only Settings › Chat's Keep my question in view had it before.**
 - **Settings › Security's and Voice's Add buttons say what they add: Add host (to Allowed or Denied hosts), Add pattern, Add term and Add correction. Each read "Add", so a screen reader heard several alike.**
+- **On a phone, every control in a page's header is a 44 px target, its `…` included: a page's New, Import, filters and menus were 40 px there unless the page asked for more.**
 
 ### Fixed
 
