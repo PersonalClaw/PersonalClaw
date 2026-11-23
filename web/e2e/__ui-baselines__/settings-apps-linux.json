@@ -9,10 +9,7 @@
         "button \"Install Infra Ops\"",
         "button \"Install Personal CFO\"",
         "button \"Store\"",
-        "button \"Suggest packs\"",
-        "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\"",
-        "button[role=switch] \"Project fingerprinting\""
+        "button \"Suggest packs\""
       ],
       "390": [
         "a \"Apps\"",
@@ -22,10 +19,7 @@
         "button \"Install Infra Ops\"",
         "button \"Install Personal CFO\"",
         "button \"Store\"",
-        "button \"Suggest packs\"",
-        "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\"",
-        "button[role=switch] \"Project fingerprinting\""
+        "button \"Suggest packs\""
       ],
       "412": [
         "a \"Apps\"",
@@ -35,10 +29,7 @@
         "button \"Install Infra Ops\"",
         "button \"Install Personal CFO\"",
         "button \"Store\"",
-        "button \"Suggest packs\"",
-        "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\"",
-        "button[role=switch] \"Project fingerprinting\""
+        "button \"Suggest packs\""
       ],
       "768": [
         "a \"Apps\"",
@@ -49,10 +40,7 @@
         "button \"Install Personal CFO\"",
         "button \"Settings\"",
         "button \"Store\"",
-        "button \"Suggest packs\"",
-        "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\"",
-        "button[role=switch] \"Project fingerprinting\""
+        "button \"Suggest packs\""
       ]
     },
     "known": {
@@ -71,10 +59,7 @@
         "button \"Install Infra Ops\"",
         "button \"Install Personal CFO\"",
         "button \"Store\"",
-        "button \"Suggest packs\"",
-        "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\"",
-        "button[role=switch] \"Project fingerprinting\""
+        "button \"Suggest packs\""
       ],
       "390": [
         "a \"Apps\"",
@@ -84,10 +69,7 @@
         "button \"Install Infra Ops\"",
         "button \"Install Personal CFO\"",
         "button \"Store\"",
-        "button \"Suggest packs\"",
-        "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\"",
-        "button[role=switch] \"Project fingerprinting\""
+        "button \"Suggest packs\""
       ],
       "412": [
         "a \"Apps\"",
@@ -97,10 +79,7 @@
         "button \"Install Infra Ops\"",
         "button \"Install Personal CFO\"",
         "button \"Store\"",
-        "button \"Suggest packs\"",
-        "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\"",
-        "button[role=switch] \"Project fingerprinting\""
+        "button \"Suggest packs\""
       ],
       "768": [
         "a \"Apps\"",
@@ -111,10 +90,7 @@
         "button \"Install Personal CFO\"",
         "button \"Settings\"",
         "button \"Store\"",
-        "button \"Suggest packs\"",
-        "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\"",
-        "button[role=switch] \"Project fingerprinting\""
+        "button \"Suggest packs\""
       ]
     },
     "known": {
