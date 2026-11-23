@@ -12,6 +12,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
+        "button \"Optimize this draft ⌘↵\"",
         "button \"Project: No project\"",
         "button \"Run a command and explain the output\"",
         "button \"Save a note to my knowledge base\"",
@@ -19,7 +20,6 @@
         "button \"Set up a daily briefing\"",
         "button \"Show health-check status\"",
         "button \"Task mode: Agent\"",
-        "button \"Type something first\"",
         "button \"Voice input\"",
         "button \"What can you help me with?\""
       ],
@@ -34,6 +34,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
+        "button \"Optimize this draft ⌘↵\"",
         "button \"Project: No project\"",
         "button \"Run a command and explain the output\"",
         "button \"Save a note to my knowledge base\"",
@@ -41,7 +42,6 @@
         "button \"Set up a daily briefing\"",
         "button \"Show health-check status\"",
         "button \"Task mode: Agent\"",
-        "button \"Type something first\"",
         "button \"Voice input\"",
         "button \"What can you help me with?\""
       ],
@@ -56,6 +56,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
+        "button \"Optimize this draft ⌘↵\"",
         "button \"Project: No project\"",
         "button \"Run a command and explain the output\"",
         "button \"Save a note to my knowledge base\"",
@@ -63,7 +64,6 @@
         "button \"Set up a daily briefing\"",
         "button \"Show health-check status\"",
         "button \"Task mode: Agent\"",
-        "button \"Type something first\"",
         "button \"Voice input\"",
         "button \"What can you help me with?\""
       ],
@@ -78,6 +78,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
+        "button \"Optimize this draft ⌘↵\"",
         "button \"Project: No project\"",
         "button \"Run a command and explain the output\"",
         "button \"Save a note to my knowledge base\"",
@@ -85,7 +86,6 @@
         "button \"Set up a daily briefing\"",
         "button \"Show health-check status\"",
         "button \"Task mode: Agent\"",
-        "button \"Type something first\"",
         "button \"Voice input\"",
         "button \"What can you help me with?\""
       ]
@@ -109,6 +109,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
+        "button \"Optimize this draft ⌘↵\"",
         "button \"Project: No project\"",
         "button \"Run a command and explain the output\"",
         "button \"Save a note to my knowledge base\"",
@@ -116,7 +117,6 @@
         "button \"Set up a daily briefing\"",
         "button \"Show health-check status\"",
         "button \"Task mode: Agent\"",
-        "button \"Type something first\"",
         "button \"Voice input\"",
         "button \"What can you help me with?\""
       ],
@@ -131,6 +131,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
+        "button \"Optimize this draft ⌘↵\"",
         "button \"Project: No project\"",
         "button \"Run a command and explain the output\"",
         "button \"Save a note to my knowledge base\"",
@@ -138,7 +139,6 @@
         "button \"Set up a daily briefing\"",
         "button \"Show health-check status\"",
         "button \"Task mode: Agent\"",
-        "button \"Type something first\"",
         "button \"Voice input\"",
         "button \"What can you help me with?\""
       ],
@@ -153,6 +153,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
+        "button \"Optimize this draft ⌘↵\"",
         "button \"Project: No project\"",
         "button \"Run a command and explain the output\"",
         "button \"Save a note to my knowledge base\"",
@@ -160,7 +161,6 @@
         "button \"Set up a daily briefing\"",
         "button \"Show health-check status\"",
         "button \"Task mode: Agent\"",
-        "button \"Type something first\"",
         "button \"Voice input\"",
         "button \"What can you help me with?\""
       ],
@@ -175,6 +175,7 @@
         "button \"Execution boundary: Normal\"",
         "button \"Hands-free voice\"",
         "button \"More actions\"",
+        "button \"Optimize this draft ⌘↵\"",
         "button \"Project: No project\"",
         "button \"Run a command and explain the output\"",
         "button \"Save a note to my knowledge base\"",
@@ -182,7 +183,6 @@
         "button \"Set up a daily briefing\"",
         "button \"Show health-check status\"",
         "button \"Task mode: Agent\"",
-        "button \"Type something first\"",
         "button \"Voice input\"",
         "button \"What can you help me with?\""
       ]
