@@ -19,6 +19,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow's judge gate that does not accept the work ends the run saying to fix what the judge found, not to change the step.**
 - **A loop's next cycle is told why the judge's last pass was set aside, in the general, open-ended goal and verifiable goal templates.**
 - **A workflow loop whose judge hands the decision to you stops after that round and asks you, in the judge's words, instead of running its next rounds first.**
+- **A General loop started with a document holds its judge's pass to that document being there, found where its Document panel finds it, as deep research's judge already was.**
 
 ## [0.4.2] — 2026-11-27
 
