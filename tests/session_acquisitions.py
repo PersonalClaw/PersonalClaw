@@ -51,6 +51,10 @@ def parents(tree: ast.AST) -> dict[int, ast.AST]:
     return {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
 
 
+#: Where an acquisition outside every function sits (:func:`acquisitions`).
+MODULE = "<module>"
+
+
 def acquires(node: ast.AST, parent: ast.AST | None = None) -> bool:
     """Whether *node* (whose parent is *parent*) acquires a session, once for each way it can:
 
@@ -61,9 +65,23 @@ def acquires(node: ast.AST, parent: ast.AST | None = None) -> bool:
     - any other read of a ``….get_or_create`` attribute: an alias (``acquire =
       sessions.get_or_create``), a bind under another name (``partial as bind``), the bound method
       handed on as a callback. Its call acquires with keywords nothing here reads, so it counts as
-      one that names no axis.
+      one that names no axis;
+    - the method named by a string anywhere else: ``operator.attrgetter("get_or_create")``,
+      ``operator.methodcaller("get_or_create", …)``, ``….__getattribute__("get_or_create")``, a
+      name a later ``getattr`` reads. Read as one that names no axis too. A bare string statement
+      (a docstring) names nothing.
 
     An acquisition counts where it is made or bound, once, however often it is called."""
+    if isinstance(node, ast.Constant):
+        if node.value != "get_or_create" or isinstance(parent, ast.Expr):
+            return False
+        # getattr's own name, which the call counts above.
+        return not (
+            isinstance(parent, ast.Call)
+            and _named(parent.func) == "getattr"
+            and len(parent.args) > 1
+            and parent.args[1] is node
+        )
     if isinstance(node, ast.Call):
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr == "get_or_create":
@@ -98,7 +116,8 @@ def acquires(node: ast.AST, parent: ast.AST | None = None) -> bool:
 
 def acquisitions(source: str | ast.Module) -> list[str]:
     """The qualified name of the function around each acquisition in *source* (text, or its
-    tree): each ``….get_or_create(…)`` call and each bind of it (:func:`acquires`), once each."""
+    tree): each ``….get_or_create(…)`` call and each bind of it (:func:`acquires`), once each;
+    :data:`MODULE` for one outside every function."""
     tree = _parsed(source)
     up = parents(tree)
     out: list[str] = []
@@ -112,6 +131,11 @@ def acquisitions(source: str | ast.Module) -> list[str]:
         for node in ast.walk(func):
             if acquires(node, up.get(id(node))) and id(node) not in inner:
                 out.append(qualname)
+    # Code outside every function runs once, at import: what it acquires or names is its module's.
+    in_one = {id(n) for f in _functions(tree).values() for n in ast.walk(f)}
+    for node in ast.walk(tree):
+        if id(node) not in in_one and acquires(node, up.get(id(node))):
+            out.append(MODULE)
     return out
 
 

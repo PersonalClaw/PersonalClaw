@@ -105,6 +105,9 @@ def test_the_resolution_classifier_on_a_planted_call(snippet: str, expected: str
         ('again = bind(sessions.get_or_create, "cron:digest", model_axis="orchestration")', ""),
         ('await getattr(sessions, "get_or_create")("cron:digest")', ""),
         ('await run_later(sessions.get_or_create, "cron:digest")', ""),
+        ('await operator.attrgetter("get_or_create")(sessions)("cron:digest")', ""),
+        ('await operator.methodcaller("get_or_create", "cron:digest")(sessions)', ""),
+        ('await sessions.__getattribute__("get_or_create")("cron:digest")', ""),
     ],
     ids=[
         "no axis",
@@ -117,6 +120,9 @@ def test_the_resolution_classifier_on_a_planted_call(snippet: str, expected: str
         "a bind under another name",
         "getattr",
         "the bound method as a callback",
+        "attrgetter",
+        "methodcaller",
+        "__getattribute__",
     ],
 )
 def test_the_classifier_on_a_planted_call(snippet: str, expected: str):
@@ -128,6 +134,18 @@ def test_the_classifier_on_a_planted_call(snippet: str, expected: str):
     tree = ast.parse(f"async def run_the_nightly_digest(sessions):\n    {snippet}\n")
     (site,) = census(tree, "planted.py")
     assert verdict(site, guarded_axes()) == expected
+
+
+def test_a_method_named_at_import_for_a_later_getattr_is_an_unmetered_acquisition():
+    """The name is the acquisition, its module's, and names no axis; a docstring names nothing."""
+    tree = ast.parse(
+        'NAME = "get_or_create"\n'
+        "async def run_the_nightly_digest(sessions):\n"
+        '    "get_or_create"\n'
+        '    await getattr(sessions, NAME)("cron:digest")\n'
+    )
+    (site,) = census(tree, "planted.py")
+    assert verdict(site, guarded_axes()) == ""
 
 
 # ── the one session a person answers on a metered axis ─────────────────────────────────────

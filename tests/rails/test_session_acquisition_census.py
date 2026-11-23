@@ -31,7 +31,14 @@ import ast
 
 import pytest
 import source_index
-from session_acquisitions import REACQUIRES, SRC, _census, _functions, _parsed, acquisitions
+from session_acquisitions import (
+    REACQUIRES,
+    SRC,
+    _census,
+    _functions,
+    _parsed,
+    acquisitions,
+)
 
 #: Sessions that keep their turns because the turns are one conversation, by (file under
 #: ``src/personalclaw``, function), with what the conversation is.
@@ -222,8 +229,19 @@ def test_the_census_fails_a_chore_that_binds_a_session_for_later():
         "again = bind(state.sessions.get_or_create, 'chores')\n    client, _, _ = await again()",
         "client, _, _ = await getattr(state.sessions, 'get_or_create')('chores')",
         "client, _, _ = await later(state.sessions.get_or_create, 'chores')",
+        "client, _, _ = await operator.attrgetter('get_or_create')(state.sessions)('chores')",
+        "client, _, _ = await operator.methodcaller('get_or_create', 'chores')(state.sessions)",
+        "client, _, _ = await state.sessions.__getattribute__('get_or_create')('chores')",
     ],
-    ids=["an alias", "a bind under another name", "getattr", "the bound method as a callback"],
+    ids=[
+        "an alias",
+        "a bind under another name",
+        "getattr",
+        "the bound method as a callback",
+        "attrgetter",
+        "methodcaller",
+        "__getattribute__",
+    ],
 )
 def test_the_census_fails_a_chore_that_reaches_a_session_another_way(reach):
     """Every way to reach `get_or_create` is an acquisition where it is reached, once: a chore that
@@ -238,6 +256,22 @@ def test_the_census_fails_a_chore_that_reaches_a_session_another_way(reach):
     )
     (site,) = [("planted.py", q) for q in acquisitions(planted)]
     assert site == ("planted.py", "title_the_chat")
+    assert not _accounted(site)
+
+
+def test_the_census_fails_a_module_that_names_the_method_for_a_later_getattr():
+    """Named at import and read inside a function by `getattr(…, NAME)`: the name is the
+    acquisition, and it is its module's. A docstring that says the name acquires nothing."""
+    planted = (
+        "NAME = 'get_or_create'\n"
+        "async def title_the_chat(state, prompt):\n"
+        "    'get_or_create'\n"
+        "    client, _, _ = await getattr(state.sessions, NAME)('chores')\n"
+    )
+    from session_acquisitions import MODULE
+
+    (site,) = [("planted.py", q) for q in acquisitions(planted)]
+    assert site == ("planted.py", MODULE)
     assert not _accounted(site)
 
 
