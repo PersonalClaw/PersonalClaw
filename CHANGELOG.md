@@ -99,6 +99,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A turn on Claude Code (or any agent CLI that says what its turn cost) now writes its Usage row and counts toward spend.**
 - **The Usage page and the daily budget say which agent CLI turns they leave out.**
 - **Deleting a chat asks whether the workflow runs it started stop with it: the dialog says how many are still going and offers to stop them too. Left unticked, they keep running, as they did before.**
+- **Judge guidance you save on a project's run page now reaches that project's runs. Every stage's task and every judge's rubric opens with it, read as each step starts, as the panel always said. An agent can no longer write a project's instructions.**
 
 ### Security
 

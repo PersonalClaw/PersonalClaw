@@ -231,13 +231,12 @@ def task_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDefiniti
             risk_level=RiskLevel.CAUTION,
             description=(
                 "Create a project (a scoping container for task lists). Args: name (str, "
-                "required, unique), optional agent_instructions_template (str)."
+                "required, unique). Its instructions are the owner's, written on its page."
             ),
             parameters={
                 **s,
                 "properties": {
                     "name": {"type": "string"},
-                    "agent_instructions_template": {"type": "string"},
                 },
                 "required": ["name"],
             },

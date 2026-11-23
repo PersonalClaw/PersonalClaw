@@ -2592,11 +2592,23 @@ class NativeBuiltinToolProvider(ToolProvider):
         name = str(a.get("name", "")).strip()
         if not name:
             return ToolResult(success=False, error="project_create requires 'name'")
+        if str(a.get("agent_instructions_template", "") or "").strip():
+            # 🔴 A project's instructions are the owner's standing guidance: every stage and
+            # judge of the project's runs is handed them as hers (`step_dispatch`), and an agent
+            # that loads the project's context as its rules. An agent writing them would be
+            # giving its own words her standing, as an app is refused the same field
+            # (`apps/permissions._A_PROJECTS_SESSIONS_ARE_GIVEN`).
+            return ToolResult(
+                success=False,
+                error=(
+                    "project_create names a project and writes no instructions: a project's "
+                    "instructions are the owner's, written on the project's page. Create it "
+                    "with a name only."
+                ),
+            )
 
         def _create():
-            return HierarchyStore().create_project(
-                name=name, agent_instructions_template=str(a.get("agent_instructions_template", ""))
-            )
+            return HierarchyStore().create_project(name=name)
 
         try:
             project = await asyncio.get_event_loop().run_in_executor(None, _create)
