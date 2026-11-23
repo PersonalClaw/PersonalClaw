@@ -94,6 +94,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat a client names can't take a name another kind of session has, such as a loop's `loop-…` or a scheduled automation's `cron:…`: `POST /api/chat/sessions` refuses it with `chat_name_refused` and says why, and nothing is made or opened. A chat's own names and `personalclaw run --session` are taken as before.**
 - **`POST /api/chat/sessions` takes an optional `title`, the chat's own title as a rename gives one, so auto-title leaves it alone. Until a chat has a title, its header names it by its first message instead of "Untitled chat".**
 - **A file you drop into a workflow run reaches its steps. A workflow that declares `file_drop` took files on its run page and stored them, but no step was ever handed one. A step now reads them through `{{run.dropped}}`, each file screened for injection and fenced with its name, and a file named `manifest.json` no longer overwrites the drop's own list.**
+- **A Code loop whose merge git refuses for anything but a conflict says what git said. Its question quotes git, and a lock file git names that was left behind is named, with when it was left. A failed merge, and a loop git step stopped for its time, are logged where the gateway's log keeps them, and the loop's status read takes no lock.**
 
 ### Security
 

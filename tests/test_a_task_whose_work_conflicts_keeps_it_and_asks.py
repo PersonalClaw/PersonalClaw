@@ -394,6 +394,8 @@ def test_a_merge_git_refuses_asks_as_the_scheduler_so_resume_tries_again(repo):
     _run(code.schedule(store.get(loop.id), _Ctx(state, SVC)))
     asked = loop_files.pending_question(loop.id)
     assert "could not be merged (a git error, not a content conflict)" in asked["question"]
+    # 🔴 What git said is quoted: it named nothing before, and the owner had to find it by hand.
+    assert "Git said:" in asked["question"] and "NOTES.md" in asked["question"], asked
     assert asked["asked_by"] == loop_files.SCHEDULER_QUESTION
     assert worktree.branch_tip(str(repo), tid) == tip
 

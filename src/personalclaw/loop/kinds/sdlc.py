@@ -2525,14 +2525,18 @@ class CodeKind(LoopKindStrategy):
                 f"{branch} until you choose how to resolve it."
             )
         else:
+            said = await asyncio.to_thread(worktree.why_not_merged, ws, result)
             loop_files.write_question(
                 loop.id,
                 f'Task "{title}" finished but its branch {branch} could not be merged (a git '
                 "error, not a content conflict), so nothing of it was merged and its work is "
-                "kept as it is. Check the workspace's git state, then resume.",
+                f"kept as it is. {said + ' ' if said else ''}Check the workspace's git state, "
+                "then resume.",
                 asked_by=loop_files.SCHEDULER_QUESTION,
             )
-            out = "Merge failed (not a content conflict) — check git state, then resume."
+            out = "Merge failed (not a content conflict) — check git state, then resume." + (
+                f" {said}" if said else ""
+            )
         store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
         ctx.publish(
             loop.id,
