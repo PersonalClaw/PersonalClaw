@@ -3511,7 +3511,8 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "never_ran"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "stopped_by_you"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "ended_by"},
-    {"annotation": "dict[str, str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "started_on"}
+    {"annotation": "dict[str, str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "started_on"},
+    {"annotation": "dict[str, str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "spend_cap"}
    ],
    "returns": "None"
   },

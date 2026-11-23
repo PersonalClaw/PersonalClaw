@@ -97,6 +97,20 @@ def classify_exception(exc: BaseException, *, use_case: str = "") -> Failure:
     return _by_text(type(exc).__name__, str(exc), timed_out=isinstance(exc, TimeoutError))
 
 
+def budget_failure(headline: str, fix: str, *, scope: str = "") -> Failure:
+    """A step a spend ceiling stopped, in the refusal's own two halves, the words a chat or a loop
+    shows for it: which ceiling stopped the call and what was spent against it (*headline*), then
+    where it is lifted (*fix*). The run page offers Retry once the ceiling has room again. One
+    shape, for the engine's own call (`BudgetExceededError`) and for a stage whose helper the
+    ceiling stopped (`SubagentInfo.spend_cap`)."""
+    return Failure(
+        failure_class=FailureClass.BUDGET,
+        cause_plain=headline,
+        remediation=f"{fix}, then Retry",
+        budget_scope=scope,
+    )
+
+
 def _typed(exc: BaseException, use_case: str) -> Failure | None:
     """The class an exception's TYPE (or the status it carries) decides, or None."""
     from personalclaw.guardrails.failure import (
@@ -166,15 +180,7 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
             recoverable=True,
         )
     if isinstance(exc, BudgetExceededError):
-        # The refusal's own two halves, the words a chat or a loop shows for it: which ceiling
-        # stopped the call and what was spent against it, then where it is lifted. The run page
-        # offers Retry once the ceiling has room again.
-        return Failure(
-            failure_class=FailureClass.BUDGET,
-            cause_plain=exc.headline(),
-            remediation=f"{exc.fix()}, then Retry",
-            budget_scope=str(getattr(exc, "scope", "") or ""),
-        )
+        return budget_failure(exc.headline(), exc.fix(), scope=str(getattr(exc, "scope", "") or ""))
     if isinstance(exc, PromptExceedsWindow):
         return Failure(
             failure_class=FailureClass.USER,

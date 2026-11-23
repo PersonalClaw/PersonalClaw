@@ -21,6 +21,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow loop whose judge hands the decision to you stops after that round and asks you, in the judge's words, instead of running its next rounds first.**
 - **A General loop started with a document holds its judge's pass to that document being there, found where its Document panel finds it, as deep research's judge already was.**
 - **An open-ended goal loop's cycle judge can say it cannot tell whether the goal is met, and after two such cycles in a row the loop pauses and asks you with its reason, instead of running more cycles.**
+- **A workflow step whose helper a spend cap stopped ends as the cap's stop, saying how to lift the cap, with Retry, instead of telling you to change the step.**
+- **For apps, `personalclaw.sdk.channel.SubagentInfo` has `spend_cap`: the spend ceiling's own words when one refused a call the helper made (`headline`, `fix`, `scope`), `{}` otherwise. Core sets it; a channel app that builds a `SubagentInfo` needs no change.**
 
 ## [0.4.2] — 2026-11-27
 
