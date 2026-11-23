@@ -200,7 +200,8 @@ def record_review(ctl: Any, item: Any, inst: Any, result: Any) -> None:
 
     Then, for a step that succeeded judging one finding (a verify panel's verifier): its verdict on
     the row its item names. A failed step's answer is never bound, so the finding goes on as the
-    seed has it, and the list says nothing the run did not do.
+    seed has it, and the list says nothing the run did not do. Nor does a verdict that quotes
+    nothing from a step asked to quote what it judged by: the panel keeps that finding unverified.
     """
     raw_out = result.output
     if isinstance(raw_out, dict) or (isinstance(raw_out, str) and '"findings"' in raw_out):
@@ -225,7 +226,12 @@ def record_review(ctl: Any, item: Any, inst: Any, result: Any) -> None:
             )
     if result.state not in SUCCESS_STATES:
         return
-    verdict = review_triage.verdict_on(raw_out, item.item if item.has_item else None)
+    schema = (getattr(item.node, "config", None) or {}).get("schema")
+    verdict = review_triage.verdict_on(
+        raw_out,
+        item.item if item.has_item else None,
+        needs_cited=isinstance(schema, dict) and "cited" in schema,
+    )
     if verdict is None:
         return
     stamp, refuted, reason = verdict

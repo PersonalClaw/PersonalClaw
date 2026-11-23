@@ -192,6 +192,10 @@ def _panel_spec() -> dict:
     )
 
 
+#: The lines a verifier quotes from what it was shown: a ruling that quotes nothing is none.
+CITED = "app.py:3  lock.acquire()"
+
+
 def _verifier(seen: list[str]):
     """Refutes F-REFUTE, answers F-BROKEN with something that is not JSON, upholds the rest."""
 
@@ -199,10 +203,10 @@ def _verifier(seen: list[str]):
         seen.append(prompt)
         finding = prompt.split("Finding:", 1)[1].split("What the finding is about:", 1)[0]
         if "F-REFUTE" in finding:
-            return json.dumps({"refuted": True, "refute_reason": "already handled"})
+            return json.dumps({"refuted": True, "refute_reason": "already handled", "cited": CITED})
         if "F-BROKEN" in finding:
             return "I could not decide."
-        return json.dumps({"refuted": False, "refute_reason": "real"})
+        return json.dumps({"refuted": False, "refute_reason": "real", "cited": CITED})
 
     return fn
 
@@ -261,8 +265,13 @@ class _Info:
         self.reaped = False
 
 
+#: What audit-sweep's read step returns for its finders and verifiers to judge.
+MATERIAL = "== app.py ==\n3  lock.acquire()\n9  os.remove(path)"
+
+
 class _Subagents:
-    """Stands in for the subagent manager: every spawned stage finishes at its first lookup."""
+    """Stands in for the subagent manager: every spawned stage finishes at its first lookup, the
+    read step with the target's text and any other with "fixed"."""
 
     def __init__(self) -> None:
         self.spawns: list[dict[str, Any]] = []
@@ -277,8 +286,20 @@ class _Subagents:
     def get(self, agent_id: str) -> _Info | None:
         info = self.infos.get(agent_id)
         if info is not None:
-            info.done, info.result = True, "fixed"
+            task = str(self.spawns[int(agent_id[1:])].get("task", ""))
+            read = task.startswith("Gather what this sweep audits")
+            info.done = True
+            info.result = (
+                json.dumps({"material": MATERIAL, "read": ["app.py"]}) if read else "fixed"
+            )
         return info
+
+    def tasks(self, opening: str) -> list[str]:
+        return [
+            str(s.get("task", ""))
+            for s in self.spawns
+            if str(s.get("task", "")).startswith(opening)
+        ]
 
 
 async def test_audit_sweep_verifies_each_finding_against_the_target_and_fixes_only_survivors() -> (
@@ -319,7 +340,7 @@ async def test_audit_sweep_verifies_each_finding_against_the_target_and_fixes_on
     assert len(refuters) == len(FINDINGS), f"{len(refuters)} verifiers for {len(FINDINGS)}"
     assert all("TARGET-MARKER" in p for p in refuters), "a verifier was not shown the target"
 
-    fix_task = subagents.spawns[0]["task"]
+    (fix_task,) = subagents.tasks("Fix the findings")
     critic = next(p for p in seen if "What did this round MISS" in p)
     for handed in (fix_task, critic):
         assert "F-REFUTE" not in handed, "a refuted finding reached a step after the panel"
@@ -355,7 +376,7 @@ async def _swept(
             finding = prompt.split("Finding:", 1)[1]
             if "F-REFUTE" in finding:
                 return json.dumps(refuter_says)
-            return json.dumps({"refuted": False, "refute_reason": "real"})
+            return json.dumps({"refuted": False, "refute_reason": "real", "cited": CITED})
         if "What did this round MISS" in prompt:
             critic.append(prompt)
         if "CORRECTNESS" in prompt and first["correctness"]:
@@ -368,10 +389,10 @@ async def _swept(
         run, spec, services=EngineServices(completion=fn, subagents=subagents, lane_limits=LANES)
     )
     await ctl.run_to_completion(timeout=120)
-    return run.id, critic, [str(s.get("task", "")) for s in subagents.spawns]
+    return run.id, critic, subagents.tasks("Fix the findings")
 
 
-REFUTED = {"refuted": True, "refute_reason": "already handled"}
+REFUTED = {"refuted": True, "refute_reason": "already handled", "cited": CITED}
 #: A refuter that refutes the finding and says it in its own words: another location, another
 #: problem. Its verdict is on the finding it was given, whatever it calls it.
 REWORDED = {**REFUTED, "location": "elsewhere.py:1", "problem": "a different problem"}

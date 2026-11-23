@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -59,7 +60,7 @@ class _Models:
         if prompt.startswith("Find "):
             return json.dumps({"findings": [FINDING]})
         if prompt.startswith("Try to REFUTE"):
-            return json.dumps({"refuted": False, "refute_reason": ""})
+            return json.dumps({"refuted": False, "refute_reason": "", "cited": "parse(): line 4"})
         if prompt.startswith("What did this round MISS?"):
             said = self.rounds[min(self.critic_turns, len(self.rounds) - 1)]
             self.critic_turns += 1
@@ -77,6 +78,26 @@ class _Models:
         return finders[3 * round_index : 3 * round_index + 3]
 
 
+class _Reader:
+    """The subagent manager, for the one stage the sweep spawns with fixing off: its read step,
+    which returns the target's text."""
+
+    def __init__(self) -> None:
+        self.infos: dict[str, SimpleNamespace] = {}
+
+    def spawn(self, **kw: Any) -> SimpleNamespace:
+        info = SimpleNamespace(id=f"r{len(self.infos)}", done=False, error="", reaped=False)
+        info.result = json.dumps({"material": "def parse(text): ...", "read": ["parser.py"]})
+        self.infos[info.id] = info
+        return info
+
+    def get(self, agent_id: str) -> SimpleNamespace | None:
+        info = self.infos.get(agent_id)
+        if info is not None:
+            info.done = True
+        return info
+
+
 def _sweep(models: _Models) -> tuple[WorkflowRun, list[dict[str, Any]]]:
     template = read_template("audit-sweep")
     assert template is not None
@@ -89,7 +110,9 @@ def _sweep(models: _Models) -> tuple[WorkflowRun, list[dict[str, Any]]]:
         )
     )
     store.write_spec(run.id, spec)
-    controller = RunController(run, spec, services=EngineServices(completion=models))
+    controller = RunController(
+        run, spec, services=EngineServices(completion=models, subagents=_Reader())
+    )
     asyncio.run(controller.run_to_completion(timeout=30.0))
     rows = J.ledger(run.id, kinds={J.ITERATION})
     return store.get(run.id), rows
@@ -162,5 +185,6 @@ def test_the_bundled_audit_sweep_carries_its_rounds():
     template = read_template("audit-sweep")
     assert template is not None
     spec = template.to_dict()
-    assert spec["root"]["config"]["progress_field"] == "new"
+    (sweep,) = [c for c in spec["root"]["children"] if c["kind"] == "loop"]
+    assert sweep["config"]["progress_field"] == "new"
     assert not _amnesiac(spec)

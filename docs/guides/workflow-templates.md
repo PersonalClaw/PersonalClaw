@@ -183,14 +183,20 @@ target's code or text), so the verifier can check rather than guess. Its `_confi
 step drops only a finding a verifier explicitly refuted: `kept` is every other finding,
 each carrying `refuted: false` (it survived) or `refuted: null` (its verifier failed,
 timed out or answered outside its schema, so nobody ruled on it); `survived` and
-`unverified` are the two halves. To join several finders' lists into one, tag each with
-where it came from first: `[{{nodes.a.output.findings | tag('lens','a')}}, …]`, then
-`| flatten`.
+`unverified` are the two halves. A verifier quotes in `cited` the lines it judged by, and a
+ruling that quotes nothing is no ruling: that finding is kept as unverified, whatever its
+verdict said (`| if_empty('cited', 'refuted', null)` sets a field on each record whose other
+field is empty). `context` must hold the material itself: an `infer` verifier cannot open a
+file, so hand it a path and it judges the path. audit-sweep reads a path target first
+(`read_target`, a read-only stage) and hands its finders and verifiers the text, fenced. To
+join several finders' lists into one, tag each with where it came from first:
+`[{{nodes.a.output.findings | tag('lens','a')}}, …]`, then `| flatten`.
 
 The run's review list follows the panel. Each finding a step files carries its row's
 `review_key` in the step's output, and a verifier that succeeded marks the row it was handed:
 Refuted, with its reason, when it refuted the finding, whatever words it used for it. A
-verifier that failed or answered outside its schema marks nothing, so the row stays Open.
+verifier that failed, answered outside its schema or cited nothing marks nothing, so the row
+stays Open.
 Refuted is the verifier's view: the row can still be accepted.
 
 `route` classifies at the `fast` tier by default: choosing between three paths is
