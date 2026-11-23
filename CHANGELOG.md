@@ -95,6 +95,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`POST /api/chat/sessions` takes an optional `title`, the chat's own title as a rename gives one, so auto-title leaves it alone. Until a chat has a title, its header names it by its first message instead of "Untitled chat".**
 - **A file you drop into a workflow run reaches its steps. A workflow that declares `file_drop` took files on its run page and stored them, but no step was ever handed one. A step now reads them through `{{run.dropped}}`, each file screened for injection and fenced with its name, and a file named `manifest.json` no longer overwrites the drop's own list.**
 - **A Code loop whose merge git refuses for anything but a conflict says what git said. Its question quotes git, and a lock file git names that was left behind is named, with when it was left. A failed merge, and a loop git step stopped for its time, are logged where the gateway's log keeps them, and the loop's status read takes no lock.**
+- **A workflow's dollar and token caps now hold its steps that run on an agent CLI.** A step on Claude Code, Codex, Gemini CLI or Kiro CLI made its model calls inside the CLI, so its usage read as no calls and the run's caps held it to nothing. Each such turn now counts toward the run. It is priced when the CLI says what it cost. When the CLI says nothing, a dollar cap pauses the run there rather than counting the step as free.
 
 ### Security
 
