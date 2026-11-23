@@ -839,7 +839,7 @@ async def _the_thread_told(
     there, and its message, which the thread holds, is not posted back. Any other turn
     is told only when it is the owner's own message from the dashboard
     (:func:`_the_owners_dashboard_turn`) and the thread is the owner's own DM with PersonalClaw
-    (``channel_links.is_the_owners_own_dm``): a channel's or a group's conversation is read by
+    (``channel_delivery.is_the_owners_own_dm``): a channel's or a group's conversation is read by
     everyone in it, and one whose readers cannot be told is read as shared. A helper's report
     (:func:`_a_helpers_report`) is answered in the thread when the turn that started the helper
     came from that thread's own message (``turn_source.STARTED_ON``, matched as above), whoever
@@ -852,7 +852,7 @@ async def _the_thread_told(
     connected, and nothing is told, never on another channel, where the thread's ids would post
     nowhere or into somebody else's conversation (#959). It is resolved before the link is read,
     which a chat on no channel never reads."""
-    from personalclaw.dashboard import channel_links
+    from personalclaw import channel_delivery
 
     provider = state.channel_provider_for(session_key)
     delivery = state.delivery_for(provider)
@@ -873,13 +873,13 @@ async def _the_thread_told(
         # (`_tell_her_dm`).
         if came_from_thread(
             started_on(turn_row), provider, thread
-        ) or await channel_links.is_the_owners_own_dm(
-            provider, channel, delivery, wait=channel_links.AUDIENCE_WAIT_SECS
+        ) or await channel_delivery.is_the_owners_own_dm(
+            provider, channel, delivery, wait=channel_delivery.AUDIENCE_WAIT_SECS
         ):
             return delivery, thread, channel, False
         return None, None, None, False
-    if _the_owners_dashboard_turn(turn_row) and await channel_links.is_the_owners_own_dm(
-        provider, channel, delivery, wait=channel_links.AUDIENCE_WAIT_SECS
+    if _the_owners_dashboard_turn(turn_row) and await channel_delivery.is_the_owners_own_dm(
+        provider, channel, delivery, wait=channel_delivery.AUDIENCE_WAIT_SECS
     ):
         return delivery, thread, channel, True
     return None, None, None, False

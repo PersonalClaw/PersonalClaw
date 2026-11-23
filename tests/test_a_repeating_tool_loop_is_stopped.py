@@ -452,7 +452,7 @@ async def test_a_breaker_stop_follows_its_turn_into_the_thread(
     own DM with PersonalClaw, and nowhere else (``chat_runner._the_thread_told``). Her dashboard
     turn in a shared thread is stopped in the chat alone. 🔴 Red before the mirror's rule: every
     ending was said in the thread."""
-    from personalclaw.dashboard import channel_links
+    from personalclaw import channel_delivery
 
     state, client = _chat_state(tmp_path, "native")
     state.tell_linked_channel = AsyncMock()
@@ -470,7 +470,7 @@ async def test_a_breaker_stop_follows_its_turn_into_the_thread(
     if not arrived_from_channel:
         session.append("user", "draft my standup")  # her message, typed in the dashboard
 
-    with patch.object(channel_links, "is_the_owners_own_dm", AsyncMock(return_value=her_dm)):
+    with patch.object(channel_delivery, "is_the_owners_own_dm", AsyncMock(return_value=her_dm)):
         await _chat_turn(state, session, arrived_from_channel=arrived_from_channel)
 
     said = [c.args[1] for c in state.tell_linked_channel.call_args_list]

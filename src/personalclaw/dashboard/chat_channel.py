@@ -5,6 +5,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import channel_delivery
 from personalclaw.dashboard import channel_links
 from personalclaw.dashboard.chat_persistence import save_session_to_history
 from personalclaw.dashboard.chat_utils import persisted_history_key
@@ -22,11 +23,11 @@ async def _what_the_link_opens_with(
 ) -> tuple[str, list[str]]:
     """What a link opens its thread with, and the rows it posts after it: the chat's title and its
     last five messages, as context, into a conversation only she reads. A thread target others read
-    (``channel_links.is_the_owners_own_dm``, failing closed) is told only that a chat is linked
+    (``channel_delivery.is_the_owners_own_dm``, failing closed) is told only that a chat is linked
     there: its title and its messages are her dashboard conversation, which a shared thread is
     shown none of (``chat_runner._the_thread_told``)."""
-    if not to_dm and not await channel_links.is_the_owners_own_dm(
-        provider, channel, wait=channel_links.AUDIENCE_WAIT_SECS
+    if not to_dm and not await channel_delivery.is_the_owners_own_dm(
+        provider, channel, wait=channel_delivery.AUDIENCE_WAIT_SECS
     ):
         return "Session linked from the dashboard.", []
     # redact_and_truncate applies both redact_exfiltration_urls + redact_credentials
@@ -245,8 +246,8 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
         )
 
     # A thread target others read is told nothing of the conversation (`handoff_to_channel`).
-    shared = bool(channel) and not await channel_links.is_the_owners_own_dm(
-        provider, channel, wait=channel_links.AUDIENCE_WAIT_SECS
+    shared = bool(channel) and not await channel_delivery.is_the_owners_own_dm(
+        provider, channel, wait=channel_delivery.AUDIENCE_WAIT_SECS
     )
 
     async def _handoff(delivery: Any, target: str) -> str:

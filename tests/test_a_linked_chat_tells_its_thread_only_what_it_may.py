@@ -372,24 +372,22 @@ async def test_a_channel_that_never_says_whose_dm_it_is_holds_no_turn(
     waited on the channel for as long as it took."""
     import asyncio
 
-    from personalclaw.dashboard import channel_links
-
     async def _never(_owner):
         await asyncio.Event().wait()
 
     import time
 
     thread.handle.open_dm = AsyncMock(side_effect=_never)
-    monkeypatch.setattr(channel_links, "AUDIENCE_WAIT_SECS", 0.05)
+    monkeypatch.setattr(channel_delivery, "AUDIENCE_WAIT_SECS", 0.05)
     # The check itself gives up within a small multiple of its wait, saying the thread is shared.
     began = time.monotonic()
     assert not await asyncio.wait_for(
-        channel_links.is_the_owners_own_dm(
-            PROVIDER, CHANNEL, thread.handle, wait=channel_links.AUDIENCE_WAIT_SECS
+        channel_delivery.is_the_owners_own_dm(
+            PROVIDER, CHANNEL, thread.handle, wait=channel_delivery.AUDIENCE_WAIT_SECS
         ),
         timeout=1,
     )
-    assert time.monotonic() - began < 20 * channel_links.AUDIENCE_WAIT_SECS
+    assert time.monotonic() - began < 20 * channel_delivery.AUDIENCE_WAIT_SECS
     async with _gateway(tmp_path, monkeypatch) as gw:
         chat = await _a_linked_chat(gw)
         before = thread.heard()
@@ -503,7 +501,7 @@ async def test_a_chat_moved_to_a_thread_others_read_posts_none_of_it_there(
     ids=["her own DM", "a channel", "no DM opened", "the channel did not answer"],
 )
 async def test_her_own_dm_is_the_one_the_channel_opens_for_her(opened, conversation, hers):
-    from personalclaw.dashboard.channel_links import is_the_owners_own_dm
+    from personalclaw.channel_delivery import is_the_owners_own_dm
 
     t = _Thread(opened)
     assert await is_the_owners_own_dm(PROVIDER, conversation, t.handle) is hers
@@ -511,8 +509,8 @@ async def test_her_own_dm_is_the_one_the_channel_opens_for_her(opened, conversat
 
 @pytest.mark.asyncio
 async def test_a_channel_not_connected_or_with_no_owner_has_no_dm_of_hers(monkeypatch):
+    from personalclaw.channel_delivery import is_the_owners_own_dm
     from personalclaw.config import credentials
-    from personalclaw.dashboard.channel_links import is_the_owners_own_dm
 
     assert await is_the_owners_own_dm(PROVIDER, HER_DM) is False, "not connected"
     monkeypatch.setattr(credentials, "owner_id_for", lambda _provider: "")
