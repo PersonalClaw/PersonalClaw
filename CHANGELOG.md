@@ -28,6 +28,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The chat's agent orb draws a tool step as what its call does: reading for a call that reads, editing for one that edits, and running a command for one that runs or doesn't say. Each step's drawing holds at least 1.2 s, so a read or an edit over in milliseconds is still seen. Settings › Design's gallery shows the two new ones.**
 - **A read of a chat (`GET /api/chat/sessions/{session}`) that asks for no page is served its newest 200 messages, with `has_more` and `total`, and `before` pages back from there; `?all=1` serves the whole history, which the dashboard's chat page asks for. Its messages are redacted off the event loop, so reading a long chat no longer holds every other chat and the rest of the API: a script reading 28 chats a minute held health checks for up to 86 s. For apps: a read of your own chat that needs all of it asks `?all=1`.**
 - **Restart to Finish the Update in the desktop app brings a gateway the app found to the new release first, through the gateway's own update, and only then installs the new app. The confirm says which gateway is updated, from and to which version, and what its restart interrupts. If the gateway can't be updated, the app keeps its download, stays as it is and says why: press Restart to Finish the Update to try again. The app now follows the home's version pin with a gateway it found too, so both land on the same release.**
+- **The dashboard's memory and workflow repairs run only when you ask for them.**
 
 ### Fixed
 

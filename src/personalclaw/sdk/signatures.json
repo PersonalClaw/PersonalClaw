@@ -1840,7 +1840,9 @@
    },
    "lint": {
     "kind": "method",
-    "params": [],
+    "params": [
+     {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "purge"}
+    ],
     "returns": "dict"
    },
    "memory_stats": {

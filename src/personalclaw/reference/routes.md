@@ -580,7 +580,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/memory/history/{day}` — one day of the daily history, as its file holds it.
 - `PUT /api/memory/history/{day}` — one day of the daily history, as its file holds it.
 - `POST /api/memory/import` — import memory from JSON (export format).
-- `GET /api/memory/lint` — run the memory-health sweep, return its report.
+- `GET /api/memory/lint` — the memory-health sweep's report, which only reads.
+- `POST /api/memory/lint` — the same sweep, and its purge of long-superseded rows.
 - `POST /api/memory/migrate` — migrate legacy markdown memory to vector store.
 - `GET /api/memory/observability` — memory health metrics and context preview.
 - `GET /api/memory/partitions` — every memory you have, each folder's named by its folder.
@@ -931,7 +932,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/agent-plans` — an agent's ``workflow_plan``, planned here.
 - `POST /api/workflows/agent-saves` — save an agent's workflow, or ask its owner to allow it.
 - `GET /api/workflows/attention` — per-template attention summaries.
-- `GET /api/workflows/audit` — Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default
+- `GET /api/workflows/audit` — Diagnose only: what a heal would change, which a heal of its own then runs.
+- `POST /api/workflows/audit/heal` — Heal the run store: terminal statuses onto runs no live controller drives.
 - `POST /api/workflows/batches` — start a batch `subagent_run` compiled (`batch_start`).
 - `GET /api/workflows/batches/{name}` — where a `subagent_run` batch stands (`batch_start`).
 - `GET /api/workflows/manifest` — the machine-readable self-description of this instance.

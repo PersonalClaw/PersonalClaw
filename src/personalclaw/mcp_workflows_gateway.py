@@ -344,9 +344,7 @@ def _audit(args: dict[str, Any]) -> str:
 
 
 def _repair(args: dict[str, Any]) -> str:
-    return gateway_answer(
-        _get("/api/workflows/audit?dry_run=false"), doing="repair the workflow runs"
-    )
+    return gateway_answer(_post("/api/workflows/audit/heal", {}), doing="repair the workflow runs")
 
 
 #: Each workflow tool, as the call this process makes on the gateway for it. Every tool

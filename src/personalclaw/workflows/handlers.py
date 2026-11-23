@@ -37,7 +37,7 @@ from aiohttp.multipart import BodyPartReader
 from personalclaw import approval_answer
 from personalclaw.config.edit_spec import LOOSEN_TITLE
 from personalclaw.dashboard.sse import stream_response
-from personalclaw.http_errors import consent_required
+from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import bool_field, json_object_body, require_string
 from personalclaw.safety_flags import confirm_granted, confirm_granted_query
 from personalclaw.sel import sel
@@ -1934,21 +1934,34 @@ async def api_run_continuations(request: web.Request) -> web.Response:
 
 
 async def api_audit(request: web.Request) -> web.Response:
-    """Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default
-    would be a foot-gun, and the engine's own default agrees."""
+    """Diagnose only: what a heal would change, which a heal of its own then runs."""
     dry_run = request.query.get("dry_run", "true").lower() not in ("false", "0", "no")
     if not dry_run:
-        denied = _guard(request, "workflow_audit_heal")
-        if denied is not None:
-            return denied
-    # Over the runs its caller reads (`chat_runs`, walked off the loop): another chat's own run is
-    # neither listed nor healed.
+        # A GET only reads: the cross-site check and the request log cover a POST, not a GET.
+        return json_error(
+            "bad_request",
+            message="This only diagnoses. To heal the runs, POST /api/workflows/audit/heal.",
+            status=400,
+        )
+    return _reply(await _audit_runs(request, dry_run=True))
+
+
+async def api_audit_heal(request: web.Request) -> web.Response:
+    """Heal the run store: terminal statuses onto runs no live controller drives."""
+    denied = _guard(request, "workflow_audit_heal")
+    if denied is not None:
+        return denied
+    result = await _audit_runs(request, dry_run=False)
+    _audit(request, "workflow_audit_heal", "success")
+    return _reply(result)
+
+
+async def _audit_runs(request: web.Request, *, dry_run: bool) -> Any:
+    """The audit over the runs its caller reads (`chat_runs`, walked off the loop): another chat's
+    own run is neither listed nor healed."""
     reader = reader_of(request, request.app.get("state"))
     only = None if reader.everyone else await asyncio.to_thread(chat_runs.live_runs_read, reader)
-    result = service.audit(dry_run=dry_run, supervisor=_supervisor(request), only=only)
-    if not dry_run:
-        _audit(request, "workflow_audit_heal", "success")
-    return _reply(result)
+    return service.audit(dry_run=dry_run, supervisor=_supervisor(request), only=only)
 
 
 async def api_manifest(request: web.Request) -> web.Response:
@@ -2015,6 +2028,7 @@ def register_workflow_routes(app: web.Application) -> None:
     """
     app.router.add_get("/api/workflows/manifest", api_manifest)
     app.router.add_get("/api/workflows/audit", api_audit)
+    app.router.add_post("/api/workflows/audit/heal", api_audit_heal)
     app.router.add_get("/api/workflows/attention", api_attention)
 
     # Runs — before the def wildcard.

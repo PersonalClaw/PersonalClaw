@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **977 registrations** over **792 distinct paths** — 970 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **979 registrations** over **793 distinct paths** — 972 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -26,8 +26,8 @@ The 135 families the surface divides into, largest first.
 |---|---|---|
 | `/api/chat` | 92 | 79 |
 | `/api/knowledge` | 80 | 64 |
-| `/api/memory` | 52 | 44 |
-| `/api/workflows` | 50 | 45 |
+| `/api/memory` | 53 | 44 |
+| `/api/workflows` | 51 | 46 |
 | `/api/models` | 38 | 30 |
 | `/api/apps` | 32 | 20 |
 | `/api/loops` | 30 | 24 |
@@ -162,7 +162,7 @@ The 135 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 970 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 972 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -740,7 +740,8 @@ The 970 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/memory/history/{day}` | one day of the daily history, as its file holds it. |
 | `PUT` | `/api/memory/history/{day}` | one day of the daily history, as its file holds it. |
 | `POST` | `/api/memory/import` | import memory from JSON (export format). |
-| `GET` | `/api/memory/lint` | run the memory-health sweep, return its report. |
+| `GET` | `/api/memory/lint` | the memory-health sweep's report, which only reads. |
+| `POST` | `/api/memory/lint` | the same sweep, and its purge of long-superseded rows. |
 | `POST` | `/api/memory/migrate` | migrate legacy markdown memory to vector store. |
 | `GET` | `/api/memory/observability` | memory health metrics and context preview. |
 | `GET` | `/api/memory/partitions` | every memory you have, each folder's named by its folder. |
@@ -1091,7 +1092,8 @@ The 970 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/workflows/agent-plans` | an agent's ``workflow_plan``, planned here. |
 | `POST` | `/api/workflows/agent-saves` | save an agent's workflow, or ask its owner to allow it. |
 | `GET` | `/api/workflows/attention` | per-template attention summaries. |
-| `GET` | `/api/workflows/audit` | Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default |
+| `GET` | `/api/workflows/audit` | Diagnose only: what a heal would change, which a heal of its own then runs. |
+| `POST` | `/api/workflows/audit/heal` | Heal the run store: terminal statuses onto runs no live controller drives. |
 | `POST` | `/api/workflows/batches` | start a batch `subagent_run` compiled (`batch_start`). |
 | `GET` | `/api/workflows/batches/{name}` | where a `subagent_run` batch stands (`batch_start`). |
 | `GET` | `/api/workflows/manifest` | the machine-readable self-description of this instance. |

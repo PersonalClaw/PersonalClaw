@@ -25,6 +25,7 @@ AGENT_TOOL_ROUTES: frozenset[str] = frozenset(
         "DELETE /api/workflows/{name}",
         "GET /api/workflows/manifest",
         "GET /api/workflows/audit",
+        "POST /api/workflows/audit/heal",
         "POST /api/workflows/runs",
         "GET /api/workflows/runs/{run_id}",
         "GET /api/workflows/runs/{run_id}/outputs/{node_id}",

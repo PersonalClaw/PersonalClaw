@@ -38,12 +38,19 @@ class LintReport:
 
     auto_fixed: dict[str, int] = field(default_factory=dict)  # check → count fixed
     flags: list[dict] = field(default_factory=list)  # {check, key, detail}
+    #: check → how many rows its fix would change, on a sweep that only reports (``purge=False``).
+    fixable: dict[str, int] = field(default_factory=dict)
 
     def add_flag(self, check: str, key: str, detail: str) -> None:
         self.flags.append({"check": check, "key": key, "detail": detail})
 
     def to_dict(self) -> dict:
-        return {"auto_fixed": self.auto_fixed, "flags": self.flags, "flag_count": len(self.flags)}
+        return {
+            "auto_fixed": self.auto_fixed,
+            "fixable": self.fixable,
+            "flags": self.flags,
+            "flag_count": len(self.flags),
+        }
 
 
 def _parse_iso(s: str | None) -> datetime | None:
@@ -63,7 +70,33 @@ def _keywords(text: str) -> set[str]:
     return {w for w in re.split(r"\W+", text.lower()) if len(w) > 2 and w not in stop}
 
 
-def lint_memory(vs, *, now: datetime | None = None, judge=None, vault=None) -> LintReport:
+def _purge_superseded(vs, report: LintReport, *, now: datetime, purge: bool) -> None:
+    """The sweep's one auto-fix: delete the rows superseded more than
+    :data:`_SUPERSEDED_RETENTION_DAYS` ago, into ``report.auto_fixed``. With *purge* off it deletes
+    nothing and counts them under ``report.fixable``. A store that can't be read purges nothing."""
+    purged = 0
+    cutoff = (now - timedelta(days=_SUPERSEDED_RETENTION_DAYS)).isoformat()
+    try:
+        rows = vs.db.execute(
+            "SELECT key FROM semantic_memory WHERE superseded_by IS NOT NULL "
+            "AND invalidated_at IS NOT NULL AND invalidated_at < ?",
+            (cutoff,),
+        ).fetchall()
+        if not purge:
+            report.fixable["superseded_purged"] = len(rows)
+        for r in rows if purge else ():
+            vs.db.execute("DELETE FROM semantic_memory WHERE key = ?", (r["key"],))
+            purged += 1
+        if purged:
+            vs.db.commit()
+    except Exception:
+        logger.debug("lint: superseded-purge failed", exc_info=True)
+    report.auto_fixed["superseded_purged"] = purged
+
+
+def lint_memory(
+    vs, *, now: datetime | None = None, judge=None, vault=None, purge: bool = True
+) -> LintReport:
     """Run the health checks over a vector store. Returns a :class:`LintReport`.
 
     ``now`` is injectable for testing. ``judge`` (optional, defaults to the
@@ -75,28 +108,17 @@ def lint_memory(vs, *, now: datetime | None = None, judge=None, vault=None) -> L
     this function must never decide by itself to go reading a directory under the
     user's real home, and a caller that has no vault gets no vault flags rather than
     a config read with a surprising side effect.
+
+    ``purge`` runs the one auto-fix, the purge of long-superseded rows. With it off the sweep
+    only reads, and the report counts what the purge would remove under ``fixable``: a GET of
+    the Health tab reports, and the purge runs only on a POST or in the maintenance pass.
     """
     now = now or datetime.now(tz=timezone.utc)
     judge = judge if judge is not None else getattr(vs, "contradiction_judge", None)
     report = LintReport()
 
     # ── Auto-fix: purge long-superseded rows (bounded cleanup) ──
-    purged = 0
-    cutoff = (now - timedelta(days=_SUPERSEDED_RETENTION_DAYS)).isoformat()
-    try:
-        rows = vs.db.execute(
-            "SELECT key FROM semantic_memory WHERE superseded_by IS NOT NULL "
-            "AND invalidated_at IS NOT NULL AND invalidated_at < ?",
-            (cutoff,),
-        ).fetchall()
-        for r in rows:
-            vs.db.execute("DELETE FROM semantic_memory WHERE key = ?", (r["key"],))
-            purged += 1
-        if purged:
-            vs.db.commit()
-    except Exception:
-        logger.debug("lint: superseded-purge failed", exc_info=True)
-    report.auto_fixed["superseded_purged"] = purged
+    _purge_superseded(vs, report, now=now, purge=purge)
 
     # Active (non-deleted, non-lesson) facts drive the remaining checks.
     facts = [
