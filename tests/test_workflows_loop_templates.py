@@ -552,14 +552,23 @@ def test_every_declared_progress_field_can_be_emitted_by_its_body():
                 continue
             checked += 1
             body = loop.get("body") or {}
+            # A transform that writes the field as a key of its `expr` emits it as computed, not
+            # as a model's answer: it can neither invent nor omit it, so nothing has to ask for
+            # it (audit-sweep's `round_end` counts what the round added).
+            computed = [
+                n
+                for n in _nodes(body)
+                if n.get("kind") == "transform"
+                and field in ((n.get("config") or {}).get("expr") or {})
+            ]
             emitters = [
                 n for n in _nodes(body) if field in ((n.get("config") or {}).get("schema") or {})
             ]
-            assert emitters, (
+            assert emitters or computed, (
                 f"{name}:{loop.get('id')} declares progress_field {field!r} but no node in "
-                "its body declares it in a schema — the engine can never read it"
+                "its body declares it in a schema or computes it — the engine can never read it"
             )
-            assert any(
+            assert computed or any(
                 field in str((n.get("config") or {}).get("prompt") or "") for n in emitters
             ), f"{name}:{loop.get('id')} never tells the body what {field!r} means"
     assert checked >= 3, (

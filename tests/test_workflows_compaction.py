@@ -558,12 +558,13 @@ class TestOnARealLongHorizonTemplate:
         return run
 
     #: One answer that carries every key a node of this template declares (the finders'
-    #: `findings`, the refuter's `refuted`/`reason`/`severity`, the critic's `new_findings` and
-    #: `uncovered`), so every step is in its schema: a step whose answer ignores its schema fails.
-    #: The refuter's values are the ones its bindings default to, and an empty findings list is
-    #: what makes the loop go dry.
+    #: `findings`, the refuter's `refuted`/`reason`/`severity`, the critic's `new_this_round`,
+    #: `new_findings` and `uncovered`), so every step is in its schema: a step whose answer ignores
+    #: its schema fails. The refuter's values are the ones its bindings default to, and an empty
+    #: findings list is what makes the loop go dry.
     ANSWER = {
         "findings": [],
+        "new_this_round": [],
         "new_findings": [],
         "uncovered": [],
         "refuted": False,
@@ -596,7 +597,8 @@ class TestOnARealLongHorizonTemplate:
         # 1. The engine really compacted, on the real template's real prompts.
         compacted = [p for p in sent if "[CONTEXT COMPACTION — REFERENCE ONLY" in p]
         assert compacted, "no node's prompt went through the ladder"
-        assert len(sent) >= 12, f"the loop did not run its cycles (only {len(sent)} calls)"
+        # Two rounds of three finders and a critic: the two that find nothing new end the sweep.
+        assert len(sent) >= 8, f"the loop did not run its cycles (only {len(sent)} calls)"
 
         # 2. Every prompt that went out respected the budget. This is the assertion that
         #    would have caught a ladder that ran but did not actually shrink anything.
