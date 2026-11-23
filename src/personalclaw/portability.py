@@ -507,6 +507,16 @@ def _remaining_export_paths(pc: Path, *, covered: frozenset[str] | None = None) 
     return out
 
 
+def _home_folders(pc: Path) -> dict[str, object]:
+    """What an export's manifest names of the home *pc* it was made in, as a snapshot's does: the
+    folders its chats worked in as the workspace, so an import into a home at another path has
+    them work in that home's (``memory_locality.take_in_restored_chats``), and the home, so a
+    comment on a file of it names the same file there (``doc_comments.take_in_restored``)."""
+    from personalclaw.memory_locality import this_homes_workspaces
+
+    return {"workspaces": list(this_homes_workspaces()), "personalclaw_dir": str(pc)}
+
+
 def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict]:
     """Create a zip archive of PersonalClaw state. Returns (zip_bytes, manifest_dict).
 
@@ -785,16 +795,12 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
             key=lambda m: str(m["path"]),
         )
         excluded = _excluded_entry_paths()
-        from personalclaw.memory_locality import this_homes_workspaces
-
         manifest = {
             "version": MANIFEST_VERSION,
             "format": "zip",
             "schema_version": _shard_schema_version(),
             "machine_id": _machine_id(pc),
-            # The folders its chats worked in as the workspace, so an import into a home at another
-            # path has them work in that home's (`memory_locality.take_in_restored_chats`).
-            "workspaces": list(this_homes_workspaces()),
+            **_home_folders(pc),
             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "hostname": socket.gethostname(),
             "user": os.environ.get("USER", "unknown"),
@@ -1357,5 +1363,9 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             from personalclaw.memory_locality import take_in_restored_chats
 
             take_in_restored_chats(snap, pc)
+            # And its comments on a file of that home anchor to the same file here.
+            from personalclaw import doc_comments
+
+            doc_comments.take_in_restored(snap)
 
     return summary

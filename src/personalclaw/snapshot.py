@@ -1680,9 +1680,7 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
                 kept = restore_engines.keep_app_engines(backup / rel, live)
         restore_items.said("stores", left, since)
     held = _hold_what_was_in_flight(pc, restored)
-    from personalclaw.memory_locality import take_in_restored_chats
-
-    take_in_restored_chats(snap, pc)
+    _take_in_a_restored_home(snap, pc)
 
     kept_names = [restore_engines.app_display_name(pc / "apps" / name) for name in kept]
     if kept_names:
@@ -1741,6 +1739,18 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
         "held_from": held_from if automations_held else "",
         "left_unchanged": left,
     }
+
+
+def _take_in_a_restored_home(snap: Path, pc: Path) -> None:
+    """What a restore of the unpacked archive *snap* into the home at *pc* does last, for a home
+    at another path: the chats that worked in its home's workspace work in this one's
+    (``memory_locality.take_in_restored_chats``), and its comments on a file of that home name
+    the same file here (``doc_comments.take_in_restored``)."""
+    from personalclaw import doc_comments
+    from personalclaw.memory_locality import take_in_restored_chats
+
+    take_in_restored_chats(snap, pc)
+    doc_comments.take_in_restored(snap)
 
 
 def _say_what_would_pause(snap: Path, pc: Path, components: list[str] | None) -> None:
@@ -2291,9 +2301,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
         from personalclaw import embedding_arrivals
 
         embedding_arrivals.arrived()
-    from personalclaw.memory_locality import take_in_restored_chats
-
-    take_in_restored_chats(snap, pc)
+    _take_in_a_restored_home(snap, pc)
     _say_merge_ended(left)
     return left
 
