@@ -75,7 +75,7 @@ describe('the two hosts wire the cache and its lifecycle (source-level)', () => 
   })
 
   it("the cockpit's programmatic closes purge the draft (they did not — the same resurrect bug)", () => {
-    expect(cockpit).toMatch(/if \(!underWs\(t\.path\)\) \{ draftStore\.delete\(t\.path\); closeNow\(t\.path\) \}/)
+    expect(cockpit).toMatch(/if \(!underWorkspace\(ws, t\.path\)\) \{ draftStore\.delete\(t\.path\); closeNow\(t\.path\) \}/)
     expect(cockpit).toMatch(/lastContentRef\.current\.delete\(d\.path\); draftStore\.delete\(d\.path\); closeNow\(d\.path\)/)
   })
 })
