@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Any
 
 from personalclaw import lasting_work, session_keys
 from personalclaw.config.loader import AppConfig
@@ -561,16 +562,12 @@ async def start(state, svc, loop_id: str) -> Loop:
         stop_sentinel_path=str(d / loop_files.STOP_SENTINEL) if d else "",
     )
     # A pause stood the parallel task workers down along with the stage worker (`pause`); a
-    # resume stands them back up, each on its loop's Mode as it is now.
+    # resume stands them back up, each on its loop's Mode as it is now, in this home's folders.
     prefix = f"{session_key(loop_id)}-"
     for task_loop in svc.list_all():
         name = str(getattr(task_loop, "session_name", ""))
-        if not name.startswith(prefix):
-            continue
-        worker = state._sessions.get(name)
-        if worker is not None:
-            _arm_posture(worker, loop)
-        await svc.update(task_loop.id, active=True)
+        if name.startswith(prefix):
+            await _resume_task_worker(state, svc, loop, task_loop, name[len(prefix) :])
     logger.info("loop: started %s (kind=%s) on session %s", loop_id, loop.kind, session.key)
     return updated
 
@@ -1064,19 +1061,63 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
     return "\n".join(lines)
 
 
-async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> str | None:
-    """Start a dedicated worker session for ``task`` in its own ``worktree_dir``.
-    Returns the session key, or None. Idempotent: a task whose worker loop is armed is returned
-    as-is. A session with no worker loop gets one even mid-turn (a turn that outlived its loop),
-    or nothing would run the task again; its first cycle fires once that turn ends."""
-    cfg = AppConfig.load().loops
-    skey = task_session_key(loop.id, task.id)
-    if svc.get_by_session(skey) is not None:
-        return skey
-    kinds.ensure_loaded()
+async def _resume_task_worker(state, svc, loop: Loop, task_loop, task_id: str) -> None:
+    """Stand one parallel task worker back up as a resume of *loop* finds it, in this home.
+
+    Its nudge row's message names its worktree and the loop's folder, and its stop file is the
+    loop folder's, each as an absolute path written when it was spawned; its kept chat records
+    the folder it works in. A home restored at another path still holds those, naming the old
+    home's folders, and switching the row back on sent the worker to work, read and write there,
+    where a stop written in this home never stopped it. So each is made again from this home, as
+    its spawn makes them (:func:`_task_worker_nudge`, :func:`_task_worker_session`), and a row
+    that already says what this home would say is only switched back on, its cycles kept.
+
+    A task that can no longer be read, or whose worktree this home does not have (a new machine
+    restores none), has nothing to stand up here: its worker goes, and its task goes back to open
+    for the loop to take again (:func:`teardown_task_worker`). A missing worktree is never cut
+    here: its branch may be another home's worktree's."""
+    import os
+
+    from personalclaw.loop import worktree
+    from personalclaw.tasks import registry
+
+    try:
+        task = await registry.get_task(task_id, provider_name="native")
+    except Exception:  # noqa: BLE001 - an unreadable task stands up nothing
+        logger.debug("loop %s: task %s unreadable at resume", loop.id, task_id, exc_info=True)
+        task = None
+    try:
+        worktree_dir = worktree.worktree_path(loop.workspace_dir, task_id, loop.tasks_project_id)
+    except ValueError:
+        worktree_dir = ""
+    if task is None or not loop.workspace_dir or not os.path.isdir(worktree_dir):
+        # Its chat stays, on its loop's Mode as it is now: a grant "This loop" gave the run
+        # before the pause is not this run's.
+        worker = state._sessions.get(task_loop.session_name)
+        if worker is not None:
+            _arm_posture(worker, loop)
+        await teardown_task_worker(svc, loop.id, task_id)
+        return
+    await _task_worker_session(state, loop, task_loop.session_name, worktree_dir)
+    message, stop = _task_worker_nudge(loop, task, worktree_dir)
+    said = (getattr(task_loop, "message", None), getattr(task_loop, "stop_sentinel_path", None))
+    if said == (message, stop):
+        await svc.update(task_loop.id, active=True)
+    else:
+        await _add_task_nudge(svc, loop, task_loop.session_name, message, stop)
+
+
+async def _task_worker_session(state, loop: Loop, skey: str, worktree_dir: str) -> Any:
+    """The chat a task worker of *loop* works in, working in *worktree_dir*, on its loop's Mode.
+
+    One task's worker carries on with its task: spawned again after a restart, its kept chat
+    comes back whole (`get_or_create_session`), and its model is given its earlier turns. That
+    chat comes back working in the folder its record names, whatever folder it is asked for, so
+    one that names another (a home restored at another path names the old home's worktree) is
+    moved to this one (`DashboardState.move_chat_to`, persisted with it)."""
+    import os
+
     strat = kinds.get_or_none(loop.kind)
-    # One task's worker carries on with its task: spawned again after a restart, its kept chat
-    # comes back whole (`get_or_create_session`), and its model is given its earlier turns.
     session = state.get_or_create_session(
         name=skey,
         agent=loop.agent or (strat.default_agent if strat else ""),
@@ -1084,6 +1125,9 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
         workspace_dir=worktree_dir,
         app="loop",
     )
+    recorded = str(getattr(session, "workspace_dir", "") or "")
+    if recorded and os.path.realpath(recorded) != os.path.realpath(worktree_dir):
+        await state.move_chat_to(session, worktree_dir)
     if loop.provider:
         session.acp_provider = loop.provider
         session.acp_provider_agent = loop.provider_agent
@@ -1099,19 +1143,46 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
     if roots:
         session._extra_tool_roots = roots
     state.push_sessions_update()
+    return session
+
+
+def _task_worker_nudge(loop: Loop, task, worktree_dir: str) -> tuple[str, str]:
+    """A task worker's nudge message and stop file, from this home's folders."""
+    d = loop_files.loop_dir(loop.id)
+    nudge = _task_cycle_nudge(loop, task, worktree_dir, str(d) if d else "")
+    message = posture.frame(posture.of(loop), "\n".join([nudge, *kinds.workspace_rules_lines()]))
+    return message, str(d / loop_files.STOP_SENTINEL) if d else ""
+
+
+async def _add_task_nudge(svc, loop: Loop, skey: str, message: str, stop: str) -> None:
+    """The task worker's nudge row on *loop*'s pace (`AutoNudgeService.add` replaces any row the
+    session has)."""
+    cfg = AppConfig.load().loops
+    await svc.add(
+        session_name=skey,
+        message=message,
+        idle_secs=loop.idle_secs or cfg.default_idle_secs,
+        max_cycles=loop.max_cycles,
+        stop_sentinel_path=stop,
+        first_idle_secs=_FIRST_CYCLE_IDLE_SECS,
+    )
+
+
+async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> str | None:
+    """Start a dedicated worker session for ``task`` in its own ``worktree_dir``.
+    Returns the session key, or None. Idempotent: a task whose worker loop is armed is returned
+    as-is. A session with no worker loop gets one even mid-turn (a turn that outlived its loop),
+    or nothing would run the task again; its first cycle fires once that turn ends."""
+    skey = task_session_key(loop.id, task.id)
+    if svc.get_by_session(skey) is not None:
+        return skey
+    kinds.ensure_loaded()
+    await _task_worker_session(state, loop, skey, worktree_dir)
     # The steers the owner sent to the whole loop reach this task too, in its first cycle's
     # message: one sent before it started reached only the task workers running then.
     loop_files.seed_task_steers(loop.id, task.id)
-    nudge = _task_cycle_nudge(loop, task, worktree_dir, str(d) if d else "")
-    msg = posture.frame(posture.of(loop), "\n".join([nudge, *kinds.workspace_rules_lines()]))
-    await svc.add(
-        session_name=skey,
-        message=msg,
-        idle_secs=loop.idle_secs or cfg.default_idle_secs,
-        max_cycles=loop.max_cycles,
-        stop_sentinel_path=str(d / loop_files.STOP_SENTINEL) if d else "",
-        first_idle_secs=_FIRST_CYCLE_IDLE_SECS,
-    )
+    message, stop = _task_worker_nudge(loop, task, worktree_dir)
+    await _add_task_nudge(svc, loop, skey, message, stop)
     try:
         from personalclaw.tasks import registry
 
