@@ -204,3 +204,26 @@ def open_call(
     for log in logs:
         log.calls.append(call)
     return call
+
+
+def settle_call(
+    call: ModelCall | None, *, tokens_in: int, tokens_out: int, dollars: float, priced: bool
+) -> None:
+    """Close the published *call* (:func:`open_call`) as answered, with the tokens its provider
+    reported and what it cost (*dollars*, *priced*: the one pricing function's). ``None`` when
+    nothing was bound."""
+    if call is None:
+        return
+    call.state = DONE
+    call.input_tokens = int(tokens_in)
+    call.output_tokens = int(tokens_out)
+    call.usage_reported = bool(tokens_in or tokens_out)
+    call.cost_usd = float(dollars)
+    call.priced = priced
+
+
+def mark_call(call: ModelCall | None, state: str) -> None:
+    """Settle a published *call* that did not complete (:data:`FAILED`, :data:`ABANDONED`). A call
+    already settled keeps its state."""
+    if call is not None and call.state == OPEN:
+        call.state = state

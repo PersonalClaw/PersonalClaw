@@ -52,7 +52,14 @@ from personalclaw.guardrails.budgets import (
     get_meter,
     prompt_tokens,
 )
-from personalclaw.guardrails.calls import ABANDONED, DONE, FAILED, OPEN, ModelCall, open_call
+from personalclaw.guardrails.calls import (
+    ABANDONED,
+    FAILED,
+    ModelCall,
+    mark_call,
+    open_call,
+    settle_call,
+)
 from personalclaw.guardrails.failure import (
     BudgetExceededError,
     CircuitOpenError,
@@ -259,8 +266,7 @@ async def admit_call(
 
 def _mark(call: ModelCall | None, state: str) -> None:
     """Settle a published call that did not complete. A call already settled keeps its state."""
-    if call is not None and call.state == OPEN:
-        call.state = state
+    mark_call(call, state)
 
 
 def _recheck_connection(provider_name: str) -> None:
@@ -1036,14 +1042,13 @@ class ModelCallGuard(ModelProvider):
         ``priced`` is the price's own (:class:`~personalclaw.routing.rates.CallPrice`): the one
         pricing function knows a local model's known zero from an unpriced blank.
         """
-        if call is None:
-            return
-        call.state = DONE
-        call.input_tokens = int(tokens_in)
-        call.output_tokens = int(tokens_out)
-        call.usage_reported = bool(tokens_in or tokens_out)
-        call.cost_usd = float(price.dollars)
-        call.priced = price.priced
+        settle_call(
+            call,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            dollars=price.dollars,
+            priced=price.priced,
+        )
 
     def _audit(
         self,

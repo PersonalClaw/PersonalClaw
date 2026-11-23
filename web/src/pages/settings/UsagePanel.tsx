@@ -10,6 +10,7 @@ import { InlineLoadError, ListSkeleton } from '../../ui/ListScaffold'
 import { BigStat, KVList } from './bento'
 import { ModelPricesSection } from './ModelPricesSection'
 import { TextLink } from '../../ui/TextLink'
+import { AGENT_CLI_CAP, AGENT_CLI_USAGE } from './agentCliSpend'
 
 /** Account-level cost/token usage.
  *
@@ -149,7 +150,7 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
   return (
     <div className="flex flex-col" style={{ minHeight: 0 }}>
       <PanelHeader title="Usage"
-        hint="What you've spent — real tokens and real USD from a per-call ledger: every turn (chat, rooms, subagents, loops, automations) and every call PersonalClaw makes around them, from a chat's title and follow-ups to judges and digests. A call that does not finish writes no row and is recorded only in a separate log; the 'By day and purpose' section states how much that is. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price is shown honestly as 'unpriced', never $0.00, until you give it one under Model prices." />
+        hint={`What you've spent — real tokens and real USD from a per-call ledger: every turn (chat, rooms, subagents, loops, automations) and every call PersonalClaw makes around them, from a chat's title and follow-ups to judges and digests. A call that does not finish writes no row and is recorded only in a separate log; the 'By day and purpose' section states how much that is. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price is shown honestly as 'unpriced', never $0.00, until you give it one under Model prices. ${AGENT_CLI_USAGE}`} />
 
       <div className="mb-l">
         <Segmented
@@ -309,7 +310,7 @@ export function DailyBudgetSection({ budget }: { budget: UsageBudget }) {
         )}
         <span className="text-on-surface-low">
           The cap counts the model calls automations, loops, subagents and background work make.
-          Your chat turns are not capped.
+          Your chat turns are not capped. {AGENT_CLI_CAP}
           {dollarCap > 0 && !budget.cap_unreadable && (
             <>
               {' '}A call that costs money starts only when what it may cost fits in what is left,

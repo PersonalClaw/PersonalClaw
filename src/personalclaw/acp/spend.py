@@ -14,7 +14,11 @@ guarded calls running with it and waiting for them when they hold the room it ne
 a ceiling is spent or a dollar one has no price for its model, charged at the turn's
 ``EVENT_COMPLETE`` in place of what it set aside with the cost the CLI reports (priced from its
 tokens by ``routing.rates.price_event`` when it reports none), recorded in the model-call log, and
-named on that event (``audit_ids``) so the turn's usage row joins it. A provider on no metered axis
+named on that event (``audit_ids``) so the turn's usage row joins it. And it is published to
+whoever bound a ``guardrails.calls`` log, as the guard publishes a call: a workflow step's usage and
+its run's budget, which held the step to nothing before. Priced when the CLI says what the turn
+cost (``acp.turn_spend``); unpriced when it says nothing, which a run's dollar cap pauses at
+rather than counting as free. A provider on no metered axis
 (a person's chat on an agent CLI) is left alone, as the chat binding is.
 
 What it does not do is the guard's other half: no hard timeout (an agent's turn runs tools and
@@ -24,6 +28,7 @@ CLI is handed as the host built it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -34,6 +39,7 @@ from personalclaw.turn_streams import closing_stream
 
 if TYPE_CHECKING:
     from personalclaw.guardrails.budgets import Budget
+    from personalclaw.routing.rates import CallPrice
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +47,19 @@ logger = logging.getLogger(__name__)
 #: spend ceiling, before it is refused. Longer than a guarded call's wait: what it waits for may
 #: be another agent's turn, which runs tools and can rightly take many minutes.
 TURN_ROOM_WAIT_SECS = 1800.0
+
+
+def _what_it_cost(event: LLMEvent, provider: str, model: str, tokens: int) -> "CallPrice":
+    """What a metered turn cost: what the CLI reported, else its tokens at its model's rate
+    (``routing.rates.price_event``). A turn whose CLI said neither (Gemini CLI's today) is
+    unpriced, never a free one: priced from no tokens, a model with a rate would read $0, and a
+    dollar ceiling would count a turn it could not count as costing nothing."""
+    from personalclaw.routing.rates import CallPrice, price_event
+
+    price = price_event(event, provider=provider, model=model)
+    if not tokens and price.source != "reported":
+        return CallPrice(dollars=0.0, priced=False)
+    return price
 
 
 class AcpTurnMeter:
@@ -101,6 +120,13 @@ class AcpTurnMeter:
             record_attempt,
         )
         from personalclaw.guardrails.budgets import current_run_key, get_meter
+        from personalclaw.guardrails.calls import (
+            ABANDONED,
+            FAILED,
+            mark_call,
+            open_call,
+            settle_call,
+        )
         from personalclaw.guardrails.failure import BudgetExceededError, FailureMode
         from personalclaw.guardrails.model_call import (
             admit_call,
@@ -108,7 +134,6 @@ class AcpTurnMeter:
             naming_the_call,
             new_audit_id,
         )
-        from personalclaw.routing.rates import price_event
 
         provider = str(getattr(self, "provider_id", "") or "acp")
         model = str(getattr(self, "agent_model", "") or "")
@@ -149,13 +174,22 @@ class AcpTurnMeter:
 
         started = now_ms()
         charged = False
+        # Published only now, past the admission: a turn refused there sent nothing.
+        call = open_call(provider, model, temperature=None)
         try:
             async with closing_stream(events) as turn:
                 async for event in turn:
                     if event.kind == EVENT_COMPLETE and not charged:
                         tokens_in = int(getattr(event, "input_tokens", 0) or 0)
                         tokens_out = int(getattr(event, "output_tokens", 0) or 0)
-                        price = price_event(event, provider=provider, model=model)
+                        price = _what_it_cost(event, provider, model, tokens_in + tokens_out)
+                        settle_call(
+                            call,
+                            tokens_in=tokens_in,
+                            tokens_out=tokens_out,
+                            dollars=price.dollars,
+                            priced=price.priced,
+                        )
                         meter.settle(
                             hold,
                             ref=f"{provider}:{model}",
@@ -180,6 +214,12 @@ class AcpTurnMeter:
                         # one charged above and recorded in the model-call log.
                         event = naming_the_call(event, audit_id, price)
                     yield event
+        except (asyncio.CancelledError, GeneratorExit):
+            mark_call(call, ABANDONED)
+            raise
+        except Exception:
+            mark_call(call, FAILED)
+            raise
         finally:
             # A turn that ended without completing charged nothing: what it set aside is given
             # back, as a settled one's already was.
