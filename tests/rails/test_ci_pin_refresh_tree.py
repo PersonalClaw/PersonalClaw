@@ -482,3 +482,156 @@ def test_publish_leaves_an_open_refresh_with_the_same_updates() -> None:
     run = _Recorder([same])
     assert pin_refresh.publish("o/r", "pin-refresh", _TEXT, "556", _TOKEN, run) is None
     assert [args[:2] for args, _ in run.calls] == [["gh", "pr"]], "it pushed or opened something"
+
+
+# The tools CI and the image install by hand, and uv's one release.
+
+
+def _pypi(*releases: tuple[str, int] | tuple[str, int, bool]) -> dict[str, object]:
+    """PyPI's JSON for a package: each (version, days ago[, yanked]) one uploaded file."""
+    files: dict[str, object] = {}
+    for version, days, *yanked in releases:
+        when = (NOW - dt.timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        files[version] = [{"upload_time_iso_8601": when, "yanked": bool(yanked and yanked[0])}]
+    return {"releases": files}
+
+
+def _on_pypi(**packages: dict[str, object]):
+    return _fetch(
+        {pin_refresh.PYPI.format(name=name): (200, body) for name, body in packages.items()}
+    )
+
+
+def test_a_tool_moves_to_its_newest_week_old_final_release_on_its_line() -> None:
+    fetch = _on_pypi(
+        **{
+            "pip-audit": _pypi(
+                ("2.10.1", 90),
+                ("2.10.3", 20),
+                ("2.10.4", 20, True),  # yanked
+                ("2.10.5rc1", 20),  # not a final release
+                ("2.11.0", 2),  # inside the cooldown
+                ("3.0.0", 30),  # another major line
+            ),
+            # A month-old release that gained a file yesterday waits: pip may pick that file.
+            "wheel": {
+                "releases": {
+                    "0.48.0": _pypi(("0.48.0", 90))["releases"]["0.48.0"],
+                    "0.48.2": [
+                        _pypi(("x", 30))["releases"]["x"][0],
+                        _pypi(("x", 1))["releases"]["x"][0],
+                    ],
+                }
+            },
+            # Below 1.0 a minor is its own line.
+            "uv": _pypi(("0.13.1", 90), ("0.13.4", 10), ("0.14.0", 30)),
+        }
+    )
+    assert pin_refresh.newest_tool(fetch, "pip-audit", "2.10.1", NOW) == ("2.10.3", "")
+    assert pin_refresh.newest_tool(fetch, "pip-audit", "2.10.3", NOW) == (None, "")
+    assert pin_refresh.newest_tool(fetch, "uv", "0.13.1", NOW) == ("0.13.4", "")
+    assert pin_refresh.newest_tool(fetch, "wheel", "0.48.0", NOW) == (None, "")
+    # Only ASCII digits make a version: PEP 440's, as PyPI serves them.
+    assert pin_refresh._final("2.\u0661\u0661.0") is None and pin_refresh._final("2.11.0") == (
+        2,
+        11,
+        0,
+    )
+    gone = pin_refresh.newest_tool(_fetch({}), "pip-audit", "2.10.1", NOW)
+    assert gone[0] is None and "unresolved" in gone[1]
+
+
+_TOOL_FILES = [
+    (".github/workflows/breadth.yml", "    run: uv pip install pip-audit==2.10.1\n"),
+    ("deploy/docker/Dockerfile.backend", "RUN pip install wheel==0.48.0 packaging==26.2\n"),
+    ("tools/ci/catalogue.toml", 'install = "uv pip install pip-audit==2.10.1"\n'),
+    # An app's own dependency in a fixture is not something CI or the image installs.
+    ("web/e2e/fixtures/app-catalog.json", '"pythonDependencies": ["rapidocr==1.2.3"]\n'),
+    # Nor a pin on a line that installs nothing, nor one the catalogue's argv list installs.
+    (".github/workflows/notes.yml", '    run: echo "V==1.2.3"\n'),
+    (
+        ".github/workflows/desktop.yml",
+        "    run: |\n      uv pip install --python .venv/bin/python \\\n"
+        "        pyinstaller==6.22.3\n",
+    ),
+]
+
+
+def test_the_tools_read_are_what_ci_and_the_image_install_outside_the_lock() -> None:
+    pins = pin_refresh.tool_pins(_TOOL_FILES, 'required-version = ">=0.13.1"\n', ["packaging"])
+    assert sorted(pins) == [
+        ("pip-audit", "2.10.1"),
+        ("pyinstaller", "6.22.3"),
+        ("uv", "0.13.1"),
+        ("wheel", "0.48.0"),
+    ]
+    argv = '{ argv = ["uv", "pip", "install", "--python", "x", "pip-audit==2.10.1"] }\n'
+    assert pin_refresh.tool_pins([("tools/ci/catalogue.toml", argv)], "", []) == {
+        ("pip-audit", "2.10.1"): "tools/ci/catalogue.toml"
+    }
+
+
+def test_a_tool_pypi_cannot_answer_for_is_not_resolved_and_not_moved() -> None:
+    fetch = _on_pypi(**{"pip-audit": _pypi(("2.10.1", 90), ("2.10.3", 20))})
+    updates, problems = pin_refresh.plan_tools(_TOOL_FILES[:1], "", [], fetch, NOW)
+    assert updates == [pin_refresh.ToolUpdate("pip-audit", "2.10.1", "2.10.3")]
+    updates, problems = pin_refresh.plan_tools(_TOOL_FILES[:2], "", ["packaging"], fetch, NOW)
+    assert [u.name for u in updates] == ["pip-audit"]
+    assert problems == [
+        "deploy/docker/Dockerfile.backend: wheel 0.48.0: unresolved: PyPI answered 404"
+    ]
+
+
+_SETUP_UV = (
+    "      - uses: astral-sh/setup-uv@" + "d" * 40 + " # v8.1.0\n"
+    "        with:\n"
+    '          version: "0.13.1"\n'
+    "          enable-cache: false\n"
+    "      - uses: docker/setup-buildx-action@" + "e" * 40 + " # v4.4.1\n"
+    "        with:\n"
+    '          version: "0.13.1"\n'
+)
+
+
+def test_a_moved_tool_moves_every_copy_but_tests_and_the_changelog(tmp_path: Path) -> None:
+    texts = {
+        ".github/workflows/breadth.yml": _SETUP_UV
+        + "        run: uv pip install pip-audit==2.10.1\n",
+        "tools/ci/catalogue.toml": 'install = "uv pip install pip-audit==2.10.1"\n',
+        "deploy/docker/Dockerfile.backend": (
+            'ARG UV_VERSION=0.13.1\nRUN pip install "uv==${UV_VERSION}"\n'
+        ),
+        "pyproject.toml": '[tool.uv]\nrequired-version = ">=0.13.1"\n',
+        "docs/maintainers/release-runbook.md": "Re-lock with `uvx --from 'uv==0.13.1' uv lock`.\n",
+        "CHANGELOG.md": "- pip-audit==2.10.1 is the audit's pin; uv 0.13.1 or newer.\n",
+        "tests/rails/test_x.py": '_PIN = "pip-audit==2.10.1"\n',
+    }
+    for rel, text in texts.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    tools = [
+        pin_refresh.ToolUpdate("pip-audit", "2.10.1", "2.10.3"),
+        pin_refresh.ToolUpdate("uv", "0.13.1", "0.13.4"),
+    ]
+    changed = pin_refresh.apply(tmp_path, sorted(texts), [], [], tools)
+    assert changed == sorted(set(texts) - {"CHANGELOG.md", "tests/rails/test_x.py"})
+    read = {rel: (tmp_path / rel).read_text() for rel in texts}
+    assert "pip-audit==2.10.3" in read[".github/workflows/breadth.yml"]
+    # setup-uv's version moves; another action's input that happens to read the same does not.
+    assert read[".github/workflows/breadth.yml"].count('version: "0.13.4"') == 1
+    assert read[".github/workflows/breadth.yml"].count('version: "0.13.1"') == 1
+    assert read["tools/ci/catalogue.toml"] == 'install = "uv pip install pip-audit==2.10.3"\n'
+    assert read["deploy/docker/Dockerfile.backend"].startswith("ARG UV_VERSION=0.13.4\n")
+    assert read["pyproject.toml"].endswith('required-version = ">=0.13.4"\n')
+    assert "'uv==0.13.4'" in read["docs/maintainers/release-runbook.md"]
+    assert read["CHANGELOG.md"] == texts["CHANGELOG.md"]
+    assert read["tests/rails/test_x.py"] == texts["tests/rails/test_x.py"]
+
+
+def test_the_body_names_each_tool_update_and_keys_it() -> None:
+    tool = pin_refresh.ToolUpdate("pip-audit", "2.10.1", "2.10.3")
+    text = pin_refresh.body([], [], [], ["breadth.yml"], "the run", [tool])
+    assert "### Tools" in text and "`pip-audit` 2.10.1 → 2.10.3" in text
+    assert "https://pypi.org/project/pip-audit/2.10.3/" in text
+    assert f"<!-- pin-refresh: {pin_refresh.key([], [], [tool])} -->" in text
+    assert pin_refresh.key([], [], [tool]) != pin_refresh.key([], [])

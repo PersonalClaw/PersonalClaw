@@ -3847,10 +3847,11 @@ arrive, and images have no separate security-update path.
   unknown registry, or a tag or platform that is gone fails it too. It holds `contents: read`
   and `issues: write`, and moves no pin itself.
 - **Tools named by hand** (`pip-audit` in the audit job, `wheel` in the gateway image,
-  `pyinstaller` in the desktop builds): nothing refreshes them yet. Moving one is a reviewed
-  edit of its line. `packaging` in `release.yml`'s notes step is named at the version
+  `pyinstaller` and its hooks in the desktop builds, and uv's one release): the refresh pull
+  request below moves them. `packaging` in `release.yml`'s notes step is named at the version
   `uv.lock` holds, and a test holds the two equal: a Dependabot python-deps PR that moves
-  packaging in `uv.lock` is red until that line follows.
+  packaging in `uv.lock` is red until that line follows, so the refresh leaves any package
+  `uv.lock` holds alone.
 - **The pin check:** `action-pins.yml` asks the GitHub API, once per release, which commit
   each pinned tag names, following an annotated tag to its commit. It reads the workflows and
   the local actions. It fails on a SHA that is not its tag's commit, a tag that is gone, and a
@@ -3863,7 +3864,13 @@ arrive, and images have no separate security-update path.
   moves each workflow image whose tag has moved to its new platform digest and index, and each
   action to the newest release on its major line that is at least a week old (Dependabot's
   cooldown), or to its own tag's new commit when that tag has moved. Every copy of an old pin in
-  the tree moves with it. When something moved, it opens one pull request on a branch of its
+  the tree moves with it. It moves each tool a workflow, a local action, a Dockerfile or the
+  catalogue installs as `name==X.Y.Z`, for a package `uv.lock` does not hold, and uv's release
+  (`[tool.uv] required-version`), to PyPI's newest final release on the same line (the same
+  major, or the same minor below 1.0) that is at least a week old. A tool's copies move under
+  `.github/`, `deploy/`, `tools/ci/`, `docs/` and `pyproject.toml`, uv's in setup-uv's
+  `version:`, the image's `ARG UV_VERSION` and the floor too, and never in `tests/` (the rails
+  read those pins from the tree) or the changelog. When something moved, it opens one pull request on a branch of its
   own (`pin-refresh/<run id>`), signed off by the pin-refresh App's bot account, and closes the
   App's older open refresh as superseded; one already open with the same updates is left alone.
   The body names each update's old and new identity and its release notes, and lists any pin it
