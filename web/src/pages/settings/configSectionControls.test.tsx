@@ -115,6 +115,23 @@ describe('Settings › Automations › Workflows writes workflows.* (issue #2801
     expect(patchConfig).toHaveBeenCalledWith('workflows.model_tier_reasoning', 'background')
   })
 
+  it('every model tier pill is a 44 px hit box at the compact widths, and the baselined pills keep theirs', async () => {
+    const { WorkflowsPanel } = await import('./WorkflowsPanel')
+    const { TOUCH_TARGET } = await import('../../ui/Toggle')
+    render(<WorkflowsPanel />)
+    // 🔴 Before: the twelve tier pills were the kit's 28 px pill at 320 to 768 px, under the UI
+    // quality matrix's 44 px floor with no baselined allowance (#3905).
+    const pills = await screen.findAllByRole('button', { name: /^(Reasoning|Standard|Fast) tier: / })
+    expect(pills).toHaveLength(12)
+    for (const pill of pills) {
+      for (const cls of TOUCH_TARGET.split(' ')) expect(pill.classList.contains(cls), `${pill.getAttribute('aria-label')} ${cls}`).toBe(true)
+    }
+    // The control: a group the matrix already holds under 44 px keeps its pill until all move.
+    const held = screen.getAllByRole('button', { name: /^Default workspace mode: / })
+    expect(held.length).toBeGreaterThan(0)
+    for (const pill of held) expect(pill.className).not.toContain('min-h-11')
+  })
+
   it('a text row commits on Enter — never per keystroke', async () => {
     const { WorkflowsPanel } = await import('./WorkflowsPanel')
     render(<WorkflowsPanel />)
