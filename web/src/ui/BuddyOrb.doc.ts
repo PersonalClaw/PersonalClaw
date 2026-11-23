@@ -12,6 +12,7 @@ const doc: UiDoc = {
     { name: 'line', description: "The state's exact line, from lib/buddy/copy.ts, cut to the surface; shown beside the orb." },
     { name: 'size', description: '18, 24, 48 (default) or 96. Below 30 px the dots are drawn larger and a plate state gives them up to its mark, as the agent orb’s are.' },
     { name: 'still', description: 'Hold even a moving state still, as a contact sheet’s frame.' },
+    { name: 'wraps', description: 'Wrap the line under its own width rather than cut it short, the orb at its first line: for a list whose rows say their whole line in a column, such as the buddy playground’s running list, where a cut-short line ran into the next column at 200% text zoom.' },
     { name: 'plate', description: 'Sit on the disc plate: the desktop’s window, over wallpaper and other windows. Off elsewhere, where the orb sits on the app’s own surface.' },
   ],
   bestPractices: [
