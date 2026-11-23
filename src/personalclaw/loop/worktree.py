@@ -988,18 +988,19 @@ def why_not_merged(workspace: str, result: MergeResult) -> str:
 def _git_runs_in(workspace: str) -> bool | None:
     """Whether a git process runs with *workspace*, or a folder in it, as its folder, read from
     ``/proc``; ``None`` where there is none to read (macOS), so a lock is never called left
-    behind on a guess."""
-    proc = Path("/proc")
-    if not (proc / "self" / "cwd").exists():
+    behind on a guess. Each entry is read by its ``/proc`` path, never joined like a file of a
+    loop's folder: what this module joins to a folder is a name it writes there, and the loop's
+    records rail reads it as one."""
+    if not Path("/proc/self/cwd").exists():
         return None
     root = os.path.realpath(workspace)
-    for entry in proc.iterdir():
+    for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue
         try:
-            if (entry / "comm").read_text(encoding="utf-8").strip() != "git":
+            if Path(f"/proc/{entry.name}/comm").read_text(encoding="utf-8").strip() != "git":
                 continue
-            cwd = os.path.realpath(os.readlink(entry / "cwd"))
+            cwd = os.path.realpath(os.readlink(f"/proc/{entry.name}/cwd"))
         except OSError:
             continue  # gone meanwhile, or another user's
         if cwd == root or cwd.startswith(root + os.sep):
