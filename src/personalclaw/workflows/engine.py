@@ -2248,6 +2248,8 @@ def apply_judge_contract(
     payload: dict[str, Any] = dict(raw or {})
     payload.update(decision.to_dict())
     payload["contract_valid"] = decision.valid and not decision.protocol_error
+    # The engine's words, never the model's: a loop's next worker reads them beside the verdict.
+    payload["set_aside"] = decision.set_aside
     result.output = payload
     return result
 

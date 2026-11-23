@@ -463,6 +463,20 @@ class JudgeVerdict:
         """
         return self.verdict is Verdict.PASS
 
+    @property
+    def set_aside(self) -> str:
+        """What the next cycle's worker reads beside a PASS the contract set aside for what the
+        work did, in the contract's own words; empty for any other verdict.
+
+        A loop's worker prompt hands it the last ruling as its verdict and the criteria scored
+        below target, and a pass set aside for a forbidden success mode has none: it read "PASS"
+        with nothing below target, and nothing told it the pass did not stand. A pass set aside
+        for the judge's own answer (`protocol_error`: no proof cited, nothing scored) says
+        nothing about the work, so it sends the worker nowhere."""
+        if self.verdict is not Verdict.PASS or not self.invalid_reason or self.protocol_error:
+            return ""
+        return f" — set aside, so it does not stand: {self.invalid_reason}"
+
     def to_dict(self) -> dict[str, Any]:
         """The record a node output carries, so a template binds VALIDATED data.
 

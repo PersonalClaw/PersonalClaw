@@ -13,6 +13,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An automation's workflow run, or its action, that the day's spend ceiling refused no longer counts toward pausing the automation: its run is held, as an agent the ceiling ended is, with the refusal's own sentence. A run its own spend cap stopped still counts, since nothing resets that cap. For apps, `personalclaw.sdk.action.ActionResult` has `budget_scope`: `"day"` on a failure classed `"budget"` that the day's ceiling refused, `"run"` for a run's own cap, and `""` when not said, which counts as before.**
 - **An automation's run is held as the day's spend ceiling's only when that ceiling refused a call during it. An app's action that said the day's ceiling stopped it, with nothing refused, put PersonalClaw's own advice to raise your ceiling on its run; such a run now counts as a failure, as any other does.**
 - **A workflow's judge gate that does not accept the work ends the run saying to fix what the judge found, not to change the step.**
+- **A loop's next cycle is told why the judge's last pass was set aside, in the general, open-ended goal and verifiable goal templates.**
 
 ## [0.4.2] — 2026-11-27
 
