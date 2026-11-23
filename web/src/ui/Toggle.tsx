@@ -2,7 +2,7 @@ import { motion } from 'framer-motion'
 import { spring } from '../design/motion'
 import { useFieldDescription } from './forms'
 
-/** The compact widths' 44 px hit box (`touchTarget`): min-h-11 and min-w-11 are 2.75rem, and `max-lg:`
+/** The compact widths' 44 px hit box, every switch's: min-h-11 and min-w-11 are 2.75rem, and `max-lg:`
  *  is under 1024 px. */
 export const TOUCH_TARGET = 'max-lg:min-h-11 max-lg:min-w-11'
 
@@ -12,7 +12,6 @@ export const TOUCH_TARGET = 'max-lg:min-h-11 max-lg:min-w-11'
  *  a11y. Replaces ~11 hand-rolled inline-styled copies scattered across pages. */
 export function Toggle({
   on, onChange, label, disabled = false, disabledReason, size = 'md', readOnly = false, decorative = false,
-  touchTarget = false,
 }: {
   on: boolean
   /** Omit + set readOnly for a display-only indicator (renders a non-interactive
@@ -39,11 +38,6 @@ export function Toggle({
    *  (a wrapping <button aria-label>). Hidden from the a11y tree so it doesn't
    *  surface as a second, unnamed switch node duplicating the button. */
   decorative?: boolean
-  /** A 44 px hit box at the compact widths (320 to 768 px), the kit's own above them. The track is
-   *  drawn the same: only the transparent box around it grows, and with it the row. Set on a
-   *  switch that has no baselined allowance under 44 px (#3905); the switches the UI quality
-   *  matrix already holds under it keep their box until every one moves at once. */
-  touchTarget?: boolean
 }) {
   // ── THE SENTENCE BESIDE THE SWITCH BECOMES THE SWITCH'S DESCRIPTION ─────────────────────────
   //
@@ -130,6 +124,11 @@ export function Toggle({
   // hint becomes its description on the same render. Announcing why a control is unusable beats
   // describing what it would do if it were.
   const describedBy = softOff ? undefined : fieldDescribedBy
+  // 🪤 EVERY SWITCH THAT TAKES A CLICK IS A 44 px TARGET BELOW THE LARGE BREAKPOINT (`TOUCH_TARGET`),
+  // the kit's 24 px box above it. The track is drawn the same: only the transparent box around it
+  // grows, and with it the row. It was an opt-in, set on one switch, while the UI quality matrix held
+  // 102 others under 44 px on 31 surfaces; they moved at once. A read-only or decorative switch is
+  // no target, so it keeps its size.
   return (
     <button
       type="button" role="switch" aria-checked={on} aria-label={label}
@@ -139,7 +138,7 @@ export function Toggle({
       aria-disabled={softOff || undefined}
       title={softOff ? disabledReason : undefined}
       onClick={() => { if (!softOff) onChange(!on) }}
-      className={`inline-flex shrink-0 items-center justify-center rounded-pill disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 ${sm ? 'h-6 -my-0.5' : 'h-6'}${touchTarget ? ` ${TOUCH_TARGET}` : ''}`}
+      className={`inline-flex shrink-0 items-center justify-center rounded-pill disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 ${sm ? 'h-6 -my-0.5' : 'h-6'} ${TOUCH_TARGET}`}
     >
       <span className={trackCls} style={trackStyle}>{knobEl}</span>
     </button>

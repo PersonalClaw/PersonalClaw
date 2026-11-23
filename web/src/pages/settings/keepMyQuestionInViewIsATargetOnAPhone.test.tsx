@@ -5,9 +5,9 @@ import { cleanup, render, screen } from '@testing-library/react'
 //
 // The switch (#3820) was new to Settings › Chat, and the UI quality matrix measured it under 44 px
 // at 320, 390, 412 and 768 px in both themes, with no allowance in the page's baseline (#3905, the
-// triage's R3). The switches beside it are held there under 44 px already, so they keep their box
-// until every switch moves at once. This one asks for a touch target (`Toggle`'s `touchTarget`):
-// the same track in a transparent 44 px box at the compact widths.
+// triage's R3). It was the first switch to take the phone's box: the same track in a transparent
+// 44 px box at the compact widths. Every switch has that box now (`toggleHitArea.test.tsx`), so the
+// switches beside it have it too.
 //
 // jsdom has no layout, so the classes that set the box are pinned; the matrix measures the box.
 
@@ -50,10 +50,10 @@ describe('Keep my question in view on a phone', () => {
     expect(classes(sw)).toEqual(expect.arrayContaining(['max-lg:min-h-11', 'max-lg:min-w-11']))
   })
 
-  it('and a switch that does not ask for one keeps the box it had', async () => {
-    const { Toggle } = await import('../../ui/Toggle')
-    render(<Toggle on={false} onChange={() => {}} label="A switch" />)
-    const sw = screen.getByRole('switch', { name: 'A switch' })
-    expect(classes(sw).some((c) => c.startsWith('max-lg:min-'))).toBe(false)
+  it('as do the switches beside it, which no longer wait for it (every switch has the box)', async () => {
+    const { ChatPanel } = await import('./ChatPanel')
+    render(<ChatPanel />)
+    const sw = await screen.findByRole('switch', { name: /^Send on Enter/ })
+    expect(classes(sw)).toEqual(expect.arrayContaining(['max-lg:min-h-11', 'max-lg:min-w-11']))
   })
 })

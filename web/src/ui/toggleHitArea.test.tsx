@@ -66,3 +66,36 @@ describe('the sm switch is a reachable target', () => {
     expect(el.className).not.toMatch(/-my-0\.5/)
   })
 })
+
+// ── Every switch is a 44 px target on a phone ───────────────────────────────────────────────────
+//
+// Below the large breakpoint a switch's hit box was 24 px tall, and the UI quality matrix held 102
+// switches on 31 surfaces under 44 px at 320 to 768 px in both themes. One switch asked for the
+// phone's box (Settings › Chat's Keep my question in view); the rest waited to move at once. Now
+// every switch that takes a click has it at the compact widths: the track is drawn the same, and
+// only the transparent box around it grows. jsdom has no layout, so the classes that set the box
+// are pinned; the matrix measures it.
+
+const PHONE_BOX = ['max-lg:min-h-11', 'max-lg:min-w-11']
+const classesOf = (el: Element) => el.className.toString().split(/\s+/)
+
+describe('every switch is a 44 px target on a phone', () => {
+  it('🔴 sm and md alike, with nothing to ask for it', () => {
+    render(<><Toggle size="sm" on={false} onChange={vi.fn()} label="Restore sessions" /><Toggle on onChange={vi.fn()} label="Send on Enter" /></>)
+    for (const name of ['Restore sessions', 'Send on Enter']) {
+      expect(classesOf(screen.getByRole('switch', { name })), name).toEqual(expect.arrayContaining(PHONE_BOX))
+    }
+  })
+
+  it('🔴 a switch that says why it is unavailable stays a target, as it stays reachable', () => {
+    render(<Toggle on={false} onChange={vi.fn()} label="Require a 2FA code" disabled disabledReason="Set a password first" />)
+    expect(classesOf(screen.getByRole('switch', { name: 'Require a 2FA code' }))).toEqual(expect.arrayContaining(PHONE_BOX))
+  })
+
+  it('a read-only or decorative switch is no target, so its box does not grow', () => {
+    render(<><Toggle on readOnly label="Enabled" /><button type="button" aria-label="Turn sync on"><Toggle on={false} decorative /></button></>)
+    expect(classesOf(screen.getByRole('switch', { name: 'Enabled' })).some((c) => c.startsWith('max-lg:min-'))).toBe(false)
+    const inner = screen.getByRole('button', { name: 'Turn sync on' }).querySelector('span')!
+    expect(classesOf(inner).some((c) => c.startsWith('max-lg:min-'))).toBe(false)
+  })
+})
