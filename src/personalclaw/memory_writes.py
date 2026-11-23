@@ -209,6 +209,9 @@ class _Source:
     #: Whether its turn is answered apart from its runtime's history (:func:`answers_apart`);
     #: ``None`` while the turn has not said.
     apart: bool | None = None
+    #: Where its turn came from (:func:`started_on`), and the marks that say so for its keys.
+    origin: Mapping[str, str] | None = None
+    origin_marks: tuple[tuple[str, object], ...] = ()
 
 
 class _Whose:
@@ -617,7 +620,8 @@ def asked_for(source: Mapping[str, str]) -> None:
     from personalclaw import session_restrictions
 
     named = dict(source) or _asked_for_its_work(scope.keys)
-    _unmark(scope)
+    for key, token in scope.marks:
+        session_restrictions.unmark_asked_by(key, token)
     marks = tuple(
         (key, session_restrictions.mark_asked_by(key, named)) for key in scope.keys if key
     )
@@ -625,13 +629,53 @@ def asked_for(source: Mapping[str, str]) -> None:
 
 
 def _unmark(scope: _Source | None) -> None:
-    """Take off the marks *scope* made for its turn (:func:`asked_for`): the turn is over."""
-    if scope is None or not scope.marks:
+    """Take off the marks *scope* made for its turn (:func:`asked_for`, :func:`started_on`): the
+    turn is over."""
+    if scope is None or not (scope.marks or scope.origin_marks):
         return
     from personalclaw import session_restrictions
 
     for key, token in scope.marks:
         session_restrictions.unmark_asked_by(key, token)
+    for key, token in scope.origin_marks:
+        session_restrictions.unmark_started_on(key, token)
+
+
+def started_on(source: Mapping[str, str]) -> None:
+    """Name where the current work's turn came from: the source of its message
+    (``turn_source.started_on``), ``{}`` when nothing says. A helper the turn starts records it
+    (:func:`origin_for`), so its reply goes back into a linked thread only when the turn came from
+    that thread. The turn engine says it beside :func:`asked_for`; it holds for the rest of the
+    scope, and marks the scope's keys so a request the turn's tools make reads it too. Outside any
+    scope it does nothing."""
+    scope = _SCOPE.get()
+    if scope is None:
+        return
+    from personalclaw import session_restrictions
+
+    for key, token in scope.origin_marks:
+        session_restrictions.unmark_started_on(key, token)
+    marks = tuple(
+        (key, session_restrictions.mark_started_on(key, source)) for key in scope.keys if key
+    )
+    _SCOPE.set(replace(scope, origin=dict(source), origin_marks=marks))
+
+
+def origin_for(session_key: str) -> dict[str, str]:
+    """Where the turn of *session_key* now running came from (:func:`started_on`): the current
+    work's own when it is that session's, else the mark its turn left. ``{}`` when nothing says,
+    which a reply reads as coming from no thread."""
+    from personalclaw import session_restrictions
+
+    scope = _SCOPE.get()
+    key = (session_key or "").strip()
+    if scope is not None and scope.origin is not None and key in scope.keys:
+        return dict(scope.origin)
+    for spelling in _spellings(key) if key else ():
+        marked = session_restrictions.started_on(spelling)
+        if marked is not None:
+            return marked
+    return {}
 
 
 def _spellings(key: str) -> tuple[str, ...]:
@@ -774,12 +818,14 @@ def turn_asked_by(session_key: str, source: Mapping[str, str], *aliases: str) ->
     named = asked_by(dict(source))
     keys = tuple(dict.fromkeys(k.strip() for k in (session_key, *aliases) if k and k.strip()))
     marks = [(key, session_restrictions.mark_asked_by(key, named)) for key in keys]
+    # Where the turn came from: the thread's message, which a helper it starts records.
+    came = [(key, session_restrictions.mark_started_on(key, source)) for key in keys]
     # The conversation's own work, under no mode of its own (its records say it): a scope that
     # names no conversation at all would refuse every write, so none is opened without a key.
     scope = _SCOPE.get()
-    held = replace(scope, asker=named) if scope is not None else None
+    held = replace(scope, asker=named, origin=dict(source)) if scope is not None else None
     if held is None and keys:
-        held = _Source(keys, None, asker=named)
+        held = _Source(keys, None, asker=named, origin=dict(source))
     token = _SCOPE.set(held) if held is not None else None
     try:
         yield
@@ -788,6 +834,8 @@ def turn_asked_by(session_key: str, source: Mapping[str, str], *aliases: str) ->
             _SCOPE.reset(token)
         for key, mark in marks:
             session_restrictions.unmark_asked_by(key, mark)
+        for key, mark in came:
+            session_restrictions.unmark_started_on(key, mark)
 
 
 # ── the models a session's work reaches ─────────────────────────────────────────────────────

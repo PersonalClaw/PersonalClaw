@@ -56,6 +56,7 @@ from personalclaw.subagent_persistence import (
     list_waiting,
     read_state,
 )
+from personalclaw.turn_source import STARTED_ON, source_of
 
 if TYPE_CHECKING:
     from personalclaw.subagent import SubagentInfo, SubagentManager
@@ -150,6 +151,8 @@ def _request_of(info: SubagentInfo) -> dict[str, Any]:
         # (`automation_version.bound_for`), after a restart too.
         "workflow_run": info.workflow_run,
         lasting_work.ASKED_BY: asked_for_work(session_keys.SUBAGENT.key(info.id)),
+        # Where the turn that started it came from: its reply goes into a thread only from there.
+        STARTED_ON: dict(info.started_on),
     }
 
 
@@ -198,6 +201,7 @@ def info_of(state: Mapping[str, Any]) -> SubagentInfo | None:
         may_change=tuple(may_change),
         held_back=_text(request.get("held_back")),
         workflow_run=_text(request.get("workflow_run")),
+        started_on=source_of(request.get(STARTED_ON)),
     )
     info._raw_task = _text(request.get("prompt")) or info.task
     return info

@@ -5,6 +5,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import channel_delivery
 from personalclaw.dashboard import channel_links
 from personalclaw.dashboard.chat_persistence import save_session_to_history
 from personalclaw.dashboard.chat_utils import persisted_history_key
@@ -15,6 +16,29 @@ from personalclaw.sel import sel
 from personalclaw.sync_bridge import handoff_to_channel
 
 logger = logging.getLogger(__name__)
+
+
+async def _what_the_link_opens_with(
+    session: Any, name: str, provider: str, channel: str, to_dm: bool
+) -> tuple[str, list[str]]:
+    """What a link opens its thread with, and the rows it posts after it: the chat's title and its
+    last five messages, as context, into a conversation only she reads. A thread target others read
+    (``channel_delivery.is_the_owners_own_dm``, failing closed) is told only that a chat is linked
+    there: its title and its messages are her dashboard conversation, which a shared thread is
+    shown none of (``chat_runner._the_thread_told``)."""
+    if not to_dm and not await channel_delivery.is_the_owners_own_dm(
+        provider, channel, wait=channel_delivery.AUDIENCE_WAIT_SECS
+    ):
+        return "Session linked from the dashboard.", []
+    # redact_and_truncate applies both redact_exfiltration_urls + redact_credentials
+    title = redact_and_truncate(session.title or name, max_chars=200)
+    context: list[str] = []
+    for m in session.messages[-5:]:
+        role = m.get("role", "")
+        txt = redact_and_truncate(m.get("content") or "", max_chars=2000)
+        if role in ("user", "assistant") and txt:
+            context.append(f"*{'You' if role == 'user' else 'Assistant'}:* {txt}")
+    return f"*{title}*\nSession linked from the dashboard.", context
 
 
 async def api_chat_session_channel_link(request: web.Request) -> web.Response:
@@ -81,9 +105,7 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
             {"ok": True, "already_linked": True, "thread_ts": existing_ts, "channel": existing_chan}
         )
 
-    # redact_and_truncate applies both redact_exfiltration_urls + redact_credentials
-    title = redact_and_truncate(session.title or name, max_chars=200)
-    opening = f"*{title}*\nSession linked from the dashboard."
+    opening, context = await _what_the_link_opens_with(session, name, provider, raw_channel, to_dm)
     if to_dm:
         # The owner's DM on the channel named, else the first channel that reaches the owner, with
         # the id that channel keeps for them.
@@ -114,16 +136,11 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
         state, session, provider=took, channel=target_channel, thread_ts=thread_ts, dm=dm
     )
 
-    # Post last 5 messages as context
-    for m in session.messages[-5:]:
-        role = m.get("role", "")
-        txt = redact_and_truncate(m.get("content") or "", max_chars=2000)
-        if role in ("user", "assistant") and txt:
-            speaker = "You" if role == "user" else "Assistant"
-            try:
-                await delivery.deliver_text(target_channel, f"*{speaker}:* {txt}", thread_ts)
-            except Exception:
-                pass
+    for line in context:
+        try:
+            await delivery.deliver_text(target_channel, line, thread_ts)
+        except Exception:
+            pass
 
     sel().log_api_access(
         caller="dashboard",
@@ -228,6 +245,11 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
             {"error": "This conversation has no messages to hand off yet."}, status=400
         )
 
+    # A thread target others read is told nothing of the conversation (`handoff_to_channel`).
+    shared = bool(channel) and not await channel_delivery.is_the_owners_own_dm(
+        provider, channel, wait=channel_delivery.AUDIENCE_WAIT_SECS
+    )
+
     async def _handoff(delivery: Any, target: str) -> str:
         ts = await handoff_to_channel(
             delivery,
@@ -236,6 +258,7 @@ async def api_chat_session_handoff(request: web.Request) -> web.Response:
             history_key,
             title=session.title if session._titled else "",
             channel=target,
+            shared=shared,
         )
         if not ts:
             raise RuntimeError("the channel created no thread")

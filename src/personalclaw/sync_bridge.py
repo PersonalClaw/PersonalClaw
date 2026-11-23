@@ -84,8 +84,15 @@ async def handoff_to_channel(
     session_key: str,
     title: str = "",
     channel: str | None = None,
+    *,
+    shared: bool = False,
 ) -> str | None:
     """Post a dashboard session's opening into a channel — the owner's DM, or ``channel``.
+
+    In a conversation others read (*shared*: a channel, a group, a DM with anyone else, or one
+    whose readers can't be told) the opening says only that a conversation continues there: its
+    title and her last message are her dashboard conversation's, which a shared thread is shown
+    none of (``chat_runner._the_thread_told``).
 
     Delivers through the provider-agnostic :class:`ChannelDelivery` (open_dm +
     deliver_text) — core never touches a vendor client. Returns the thread_ts,
@@ -114,12 +121,14 @@ async def handoff_to_channel(
     preview, _ = redact_credentials(preview)
     preview, _ = redact_exfiltration_urls(preview)
 
+    opening = (
+        "📲 A conversation from the dashboard continues here.\n\n_Reply to continue this session._"
+        if shared
+        else f"📲 *{title}*\n>{preview}\n\n_Reply to continue this session._"
+    )
     try:
         target_channel = channel or await delivery.open_dm(owner_id)
-        return await delivery.deliver_text(
-            target_channel,
-            f"📲 *{title}*\n>{preview}\n\n_Reply to continue this session._",
-        )
+        return await delivery.deliver_text(target_channel, opening)
     except Exception:
         logger.warning("Handoff to channel failed", exc_info=True)
         return None

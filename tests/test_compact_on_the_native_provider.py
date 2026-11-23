@@ -39,6 +39,7 @@ from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.context_compaction import total_chars
 from personalclaw.dashboard.chat_utils import (
     _SLASH_COMMAND_HINTS,
+    COMPACTED,
     _broadcast_compaction_result,
     stream_slash_command,
 )
@@ -333,7 +334,11 @@ class TestTheReportedSentence:
         )
         assert text is not None and text.startswith(expected)
         assert session.appended and session.appended[0][1] == text
-        assert state.told == [("dashboard:s1", text)], "the linked channel is told the same"
+        # A link that is not the owner's own DM hears only that the conversation compacted, and
+        # nothing of one that failed or folded nothing. Her DM's rows, told the sentence itself,
+        # are test_a_compaction_is_said_where_the_conversation_is's.
+        shared = [("dashboard:s1", COMPACTED)] if status == "completed" else []
+        assert state.told == shared, "a thread others may read is told only that it compacted"
 
     @staticmethod
     async def _said_after_compact(messages: list[dict], pct: float | None) -> list[str]:
@@ -423,10 +428,21 @@ class _FakeSession:
         self.appended.append((role, content, cls))
 
 
+class _NoLinks:
+    """A session store that holds no channel link: every chat is on no thread."""
+
+    def get_channel_link(self, key: str) -> tuple[str, str]:
+        return "", ""
+
+    def get_channel_provider(self, key: str) -> str:
+        return ""
+
+
 class _FakeState:
     def __init__(self) -> None:
         self.sent: list[tuple[str, Any]] = []
         self.told: list[tuple[str, str]] = []
+        self.sessions = _NoLinks()
 
     def broadcast_ws(self, kind: str, payload: Any) -> None:
         self.sent.append((kind, payload))

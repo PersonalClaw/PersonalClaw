@@ -334,6 +334,12 @@ class SubagentInfo:
     #: ``scope`` "day"). Its trigger's run is then held as a fire the ceiling holds before it runs
     #: is, and counts toward no pause (`triggers.settle.settle_agent_run`).
     ended_by: str = ""
+    #: Where the turn that started it came from (``memory_writes.origin_for`` its parent at its
+    #: start): the source of that turn's message, ``{}`` when nothing says. Its reply goes back
+    #: into its chat's channel thread only when it came from that thread
+    #: (``turn_source.came_from_thread``), wherever the chat is by then; else to the owner's DM.
+    #: Last, as above.
+    started_on: dict[str, str] = field(default_factory=dict)
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1167,6 +1173,7 @@ class SubagentManager:
             held_back=held_back or "",
             project_id=project_id or "",
             workflow_run=workflow_run or "",
+            started_on=memory_writes.origin_for(parent_session_key),
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
         return self._enter(info)

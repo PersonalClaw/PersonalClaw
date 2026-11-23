@@ -24,7 +24,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import chat_threads
+from personalclaw import channel_delivery, chat_threads
 from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -123,28 +123,16 @@ MOVED_WITHIN_THE_CHANNEL = (
 )
 
 
-async def is_the_owners_own_dm(provider: str, channel_id: str, handle: Any = None) -> bool:
-    """Whether the conversation *channel_id* on the channel *provider* is the owner's own DM with
-    PersonalClaw, which nobody but the owner reads: the one the channel itself opens for the
-    owner's id (``open_dm(owner_id_for(provider))``), as every message for the owner finds it.
-
-    A channel's conversation is read by every member of the channel, not only by the people who
-    wrote in it, and a group DM, or a DM with anyone else, by them: those are shared. So is one this
-    cannot tell of, an audience that cannot be read being shared: the channel not connected
-    (*handle*, else its connected one), no owner kept for it, or its answer failed."""
-    from personalclaw.channel_delivery import delivery_for
-    from personalclaw.config.credentials import owner_id_for
-
-    handle = handle if handle is not None else delivery_for(provider)
-    if handle is None or not channel_id:
+async def the_link_is_the_owners_own_dm(state: DashboardState, name: str) -> bool:
+    """Whether the channel thread the chat *name* is linked to is the owner's own DM with
+    PersonalClaw (``channel_delivery.is_the_owners_own_dm``), waiting its ``AUDIENCE_WAIT_SECS``
+    for the channel to say. A chat on no thread, and one whose channel can't say in time, is not."""
+    thread, channel_id = chat_link(state, name)
+    if not (thread and channel_id):
         return False
-    try:
-        owner = owner_id_for(provider)
-        theirs = str(await handle.open_dm(owner) or "") if owner else ""
-    except Exception:  # noqa: BLE001 - see the docstring: an unread audience is shared
-        logger.warning("could not tell whether a %s conversation is the owner's DM", provider)
-        return False
-    return bool(theirs) and theirs == channel_id
+    return await channel_delivery.is_the_owners_own_dm(
+        chat_channel(state, name), channel_id, wait=channel_delivery.AUDIENCE_WAIT_SECS
+    )
 
 
 def _tell_the_thread_it_left(
@@ -157,11 +145,11 @@ def _tell_the_thread_it_left(
     nothing: the note would tell other people where the owner went on with the conversation, and
     on a channel that speaks as the owner it would go out in the owner's name. The owner's DM is
     the one the channel itself opens for the owner's id (``open_dm(owner_id_for(channel))``), as
-    every message for the owner finds it (:func:`is_the_owners_own_dm`). Sent through the handle
-    of the channel the thread is on, which masks the text, and only that one: another channel's
-    handle given this thread's ids would post nowhere, or to someone else. With that channel not
-    connected nothing is said. Sent as a task on the gateway's loop, so the link never waits on a
-    channel, and a send that fails is logged and fails nothing else."""
+    every message for the owner finds it (``channel_delivery.is_the_owners_own_dm``). Sent through
+    the handle of the channel the thread is on, which masks the text, and only that one: another
+    channel's handle given this thread's ids would post nowhere, or to someone else. With that
+    channel not connected nothing is said. Sent as a task on the gateway's loop, so the link never
+    waits on a channel, and a send that fails is logged and fails nothing else."""
     from personalclaw.channel_delivery import chat_channel_names, delivery_for
 
     thread, channel_id, was_on = left
@@ -181,7 +169,7 @@ def _tell_the_thread_it_left(
 
     async def _say(handle: Any) -> None:
         try:
-            if not await is_the_owners_own_dm(was_on, channel_id, handle):
+            if not await channel_delivery.is_the_owners_own_dm(was_on, channel_id, handle):
                 logger.info(
                     "chat %s left a %s conversation that is not the owner's own DM: nothing is "
                     "said there",

@@ -1214,17 +1214,17 @@ _AUDIENCE_WAIT_SECS = 2.0
 
 async def _linked_to_a_shared_thread(state: DashboardState, name: str) -> bool:
     """Whether the chat *name* is linked to a channel thread other people read: one that is not the
-    owner's own DM with PersonalClaw (``channel_links.is_the_owners_own_dm``). Her turns from the
+    owner's own DM with PersonalClaw (``channel_delivery.is_the_owners_own_dm``). Her turns from the
     dashboard stay in the dashboard there (``chat_runner._the_thread_told``). A chat on no thread
     is not; one whose channel can't say in time, or is not connected, is (fail closed)."""
-    from personalclaw.dashboard import channel_links
+    from personalclaw import channel_delivery
 
     thread, channel_id, provider = _channel_link(state, name)
     if not (thread and channel_id):
         return False
     try:
         hers = await asyncio.wait_for(
-            channel_links.is_the_owners_own_dm(provider, channel_id), _AUDIENCE_WAIT_SECS
+            channel_delivery.is_the_owners_own_dm(provider, channel_id), _AUDIENCE_WAIT_SECS
         )
     except asyncio.TimeoutError:
         hers = False

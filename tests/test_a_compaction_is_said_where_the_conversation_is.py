@@ -25,6 +25,7 @@ from personalclaw import channel_delivery, channel_transports
 from personalclaw.channel_transports.base import ChannelTransportProvider
 from personalclaw.config.credentials import owner_id_credential
 from personalclaw.config.loader import CRED_OWNER_ID
+from personalclaw.dashboard.chat_utils import COMPACTED
 from personalclaw.llm.events import (
     COMPACTION_AUTOMATIC,
     EVENT_COMPACTION_STATUS,
@@ -208,9 +209,11 @@ async def test_the_agents_own_pass_is_said_on_the_channel_the_chat_is_on(
 
     await _turn(state, session, "why did the job fail?")
 
+    # A group is read by everyone in it: it hears that the conversation was compacted, and none
+    # of what the summary says of it (`chat_utils._say_compaction_notice`).
     notice = f"Conversation compacted: {SUMMARY}"
-    assert _told(telegram) == [(TELEGRAM_CHAT, notice, TELEGRAM_CHAT)]
-    assert notice in _said(session), "the dashboard chat says it as well"
+    assert _told(telegram) == [(TELEGRAM_CHAT, COMPACTED, TELEGRAM_CHAT)]
+    assert notice in _said(session), "the dashboard chat says all of it"
 
 
 def _compacting(*, deferred: bool):
@@ -243,7 +246,9 @@ async def test_a_compact_typed_on_a_channel_is_answered_there(
     await _turn(state, session, "/compact")
 
     notice = f"Conversation compacted: {SUMMARY}"
-    assert _told(telegram) == [(TELEGRAM_CHAT, notice, TELEGRAM_CHAT)]
+    assert _told(telegram) == [
+        (TELEGRAM_CHAT, COMPACTED, TELEGRAM_CHAT)
+    ], "a group hears the bare line"
     assert notice in _said(session)
 
 

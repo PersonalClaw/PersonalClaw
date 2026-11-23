@@ -26,6 +26,7 @@ run's result, a notification's title, a rich message, an automation's name, an a
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import dataclasses
 import inspect
@@ -882,6 +883,41 @@ def target_problem(key: str, target: str, *, transports: "Mapping[str, Any] | No
     except Exception:  # noqa: BLE001 - a broken check refuses rather than letting any id through
         logger.warning("channel %s: validate_target raised", key, exc_info=True)
         return f"{channel_shown_as(key)} couldn't check that id."
+
+
+#: How long a check of whose DM a channel conversation is waits for its channel to say
+#: (:func:`is_the_owners_own_dm`).
+AUDIENCE_WAIT_SECS = 2.0
+
+
+async def is_the_owners_own_dm(
+    provider: str, channel_id: str, handle: Any = None, *, wait: float | None = None
+) -> bool:
+    """Whether the conversation *channel_id* on the channel *provider* is the owner's own DM with
+    PersonalClaw, which nobody but the owner reads: the one the channel itself opens for the
+    owner's id (``open_dm(owner_id_for(provider))``), as every message for the owner finds it.
+
+    A channel's conversation is read by every member of the channel, not only by the people who
+    wrote in it, and a group DM, or a DM with anyone else, by them: those are shared. So is one this
+    cannot tell of, an audience that cannot be read being shared: the channel not connected
+    (*handle*, else its connected one), no owner kept for it, or its answer failed, or did not
+    come within *wait* seconds when a wait is given.
+
+    Core's, so work outside the dashboard asks it too (``subagent_endings``): the dashboard's
+    ``channel_links`` hands it on to its own callers."""
+    from personalclaw.config.credentials import owner_id_for
+
+    handle = handle if handle is not None else delivery_for(provider)
+    if handle is None or not channel_id:
+        return False
+    try:
+        owner = owner_id_for(provider)
+        opened = asyncio.wait_for(handle.open_dm(owner), wait) if owner else None
+        theirs = str(await opened or "") if opened is not None else ""
+    except Exception:  # noqa: BLE001 - see the docstring: an unread audience is shared
+        logger.warning("could not tell whether a %s conversation is the owner's DM", provider)
+        return False
+    return bool(theirs) and theirs == channel_id
 
 
 async def reach_owner(

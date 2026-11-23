@@ -76,6 +76,12 @@ FROM_OUTSIDE = "from_outside"
 #: (``dashboard.chat_persistence.channel_view``).
 SHOWN_ON_CHANNEL = "shown_on_channel"
 
+#: The ``meta`` key of a helper's report row: where the turn that started the helper came from,
+#: the source of its message (a channel thread's :func:`arrived_on`, or the dashboard's), ``{}``
+#: when nothing says. Its reply goes back into a linked thread only when it came from that thread
+#: (``chat_runner._the_thread_told``), wherever the chat is by then.
+STARTED_ON = "started_on"
+
 #: The roles of the row a turn starts with: a person's message, and the row an automation's result,
 #: a subagent's report or a loop's nudge starts one with. Every row after it, up to the next such
 #: row, is that turn's (:func:`by_turn`): its calls, its approvals, its answer.
@@ -294,6 +300,29 @@ def starts_a_turn(row: object) -> bool:
         return False
     meta = row.get("meta")
     return not (isinstance(meta, Mapping) and meta.get(STEERED))
+
+
+def started_on(row: object) -> dict[str, str]:
+    """Where the turn *row* starts came from, as the work it starts records it: a person's
+    message's own source (not words taken in from outside), or the source a helper's report row
+    carries for the turn that started that helper (:data:`STARTED_ON`); ``{}`` for any other."""
+    if not isinstance(row, Mapping):
+        return {}
+    meta = row.get("meta")
+    if row.get("role") == "user":
+        return {} if isinstance(meta, Mapping) and meta.get(FROM_OUTSIDE) else source_of(row)
+    carried = meta.get(STARTED_ON) if isinstance(meta, Mapping) else None
+    return source_of(carried) if isinstance(carried, Mapping) else {}
+
+
+def came_from_thread(source: Mapping[str, str], provider: str, thread: str) -> bool:
+    """Whether *source* is a message the channel *provider* took in on *thread*: both named, and
+    both its own. A source that names no channel thread came from none."""
+    found = source_of(source)
+    return bool(provider and thread) and (
+        found.get("source_channel"),
+        found.get("source_thread"),
+    ) == (provider, thread)
 
 
 def holds_a_turn_not_asked_by(rows: Iterable[object], asker: Mapping[str, str]) -> bool:

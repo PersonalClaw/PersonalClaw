@@ -486,6 +486,28 @@ async def test_a_move_that_lands_after_the_answer_keeps_it_and_applies_from_her_
 
 
 @pytest.mark.asyncio
+async def test_a_thread_never_told_of_the_turn_hears_nothing_of_its_move():
+    """A turn its chat's thread was not told of (``chat_runner._the_thread_told``: her dashboard
+    turn in a thread others read) stays in the dashboard when it is moved too: the chat says so,
+    the thread hears nothing. 🔴 Red before: the thread was told of a move of a turn it never saw,
+    and which agent took it."""
+    told, session, asked_again = _Told(), _moved_session(), []
+    moved = await running_turn.say_moved(
+        told,
+        session,
+        "dashboard:chat-moved-1",
+        True,
+        lambda: asked_again.append(1),
+        _not_read,
+        told=False,
+    )
+    await asyncio.sleep(0)
+    assert moved is True
+    assert [m["role"] for m in session.messages].count("notice") == 1
+    assert told.told == []
+
+
+@pytest.mark.asyncio
 async def test_a_moved_turn_that_queued_its_own_retry_asks_her_message_once():
     told, session, asked_again = _Told(), _moved_session(), []
     session.queue_retry(HER_MESSAGE)

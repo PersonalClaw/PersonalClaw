@@ -37,6 +37,7 @@ from personalclaw.channel_delivery import ChannelDelivery
 from personalclaw.config.credentials import owner_id_credential
 from personalclaw.config.loader import AppConfig
 from personalclaw.llm.events import AgentEvent
+from personalclaw.turn_source import arrived_on
 
 SECRET = "sk-ant-api03-" + ("A" * 20) + ("B" * 20) + ("C" * 15)
 MASK = "[REDACTED: credential]"
@@ -223,8 +224,10 @@ def telegram_set_up():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("thread", ["-1001234567890", None], ids=["its-thread", "the-owners-dm"])
 async def test_a_subagents_reply_reaches_the_channel_masked(telegram, telegram_set_up, thread):
-    """A subagent started from a channel conversation: its synthesized reply goes back to that
-    thread, on the channel whose id it is, or to the owner's DM when the conversation has none."""
+    """A subagent started by a message on a channel conversation: its synthesized reply goes back
+    to that thread, on the channel whose id it is, or to the owner's DM when the conversation has
+    none. Started anywhere else, it goes to her DM
+    (test_a_helpers_reply_goes_where_its_work_was_asked_for)."""
     orch, on_done = _gateway_with_subagents()
     orch.sessions.get_channel = MagicMock(return_value=thread)
     info = MagicMock(
@@ -240,6 +243,8 @@ async def test_a_subagents_reply_reaches_the_channel_masked(telegram, telegram_s
         silent=False,
         elapsed=3.0,
         started=time.monotonic() - 3.0,
+        # The turn that started it came from the thread's own message.
+        started_on=arrived_on("C123:1234.567890", OWNER, "telegram"),
     )
 
     with patch(
