@@ -592,6 +592,11 @@ def test_content_the_scanner_raises_on_gets_no_answer(monkeypatch, capsys):
 
     monkeypatch.setattr(scan_child, "is_dangerous", raises)
     monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(CLEAN_TEXT)))
+    # main() runs here, in the test's own process: it reads that process's arguments, which are
+    # pytest's when no xdist worker runs it (-n 0, as a job's rerun for diagnosis is), and its
+    # first step would make the test's process lead a session of its own. The child's are none.
+    monkeypatch.setattr(sys, "argv", ["scan_child"])
+    monkeypatch.setattr(scan_child.os, "setsid", lambda: None)
 
     with pytest.raises(RecursionError):
         scan_child.main()
