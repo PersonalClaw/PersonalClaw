@@ -6,7 +6,7 @@ import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { physics } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { Toggle } from '../../ui/Toggle'
+import { Toggle, TOUCH_TARGET } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { Surface } from '../../ui/Surface'
 import { FieldHintProvider, FieldLabelProvider, NumberField, Select, TextInput, useSyncedDraft } from '../../ui/forms'
@@ -260,10 +260,15 @@ export { Toggle } from '../../ui/Toggle'
  *  Below `sm` the options wrap onto more lines when the row is too narrow for them, with the gap
  *  they have, and the track's corners are `rounded-lg`, which draws a one-line track as the pill it
  *  is from `sm` up and keeps a wrapped one from rounding into a capsule. */
-export function SegPills<T extends string>({ value, onChange, options, ariaLabel }: {
+export function SegPills<T extends string>({ value, onChange, options, ariaLabel, touchTarget = false }: {
   /** `disabled` keeps an option shown (a stored value that is no longer offered) without letting it
    *  be picked; `title` says why. */
   value: T; onChange: (v: T) => void; options: { key: T; label: string; disabled?: boolean; title?: string }[]; ariaLabel: string
+  /** Each option a 44 px hit box at the compact widths (`TOUCH_TARGET`, 320 to 768 px), the pill's
+   *  own 28 px above them. Set on a group that has no baselined allowance under 44 px (#3905); the
+   *  groups the UI quality matrix already holds under it keep their pills until every one moves at
+   *  once, as `Toggle`'s switches do. */
+  touchTarget?: boolean
 }) {
   // Per-instance layoutId so the sliding pill in one SegPills can't fly to another.
   return (
@@ -273,7 +278,7 @@ export function SegPills<T extends string>({ value, onChange, options, ariaLabel
         return (
           <button key={o.key} type="button" onClick={() => onChange(o.key)} disabled={o.disabled} title={o.title}
             aria-label={`${ariaLabel}: ${o.label}`} aria-pressed={on}
-            data-type="body-s" className="relative rounded-pill px-3 h-7 transition-colors disabled:cursor-not-allowed"
+            data-type="body-s" className={`relative rounded-pill px-3 h-7 transition-colors disabled:cursor-not-allowed${touchTarget ? ` ${TOUCH_TARGET}` : ''}`}
             style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
             {/* The active option's fill. It moves to the new option at once: an option change is
                 a high-frequency action, and a pill sliding over says nothing the fill does not. */}
@@ -484,7 +489,7 @@ export function NumberRow({ label, hint, cfg, field, min, max, step = 1, patch }
  *  `undefined`, and `SegPills` with no matching option renders every pill unpressed — a group that
  *  shows no current value while the backend has a real default. The caller knows the dataclass
  *  default; this row cannot. */
-export function SegRow<T extends string>({ label, hint, cfg, field, options, fallback, patch }: {
+export function SegRow<T extends string>({ label, hint, cfg, field, options, fallback, patch, touchTarget }: {
   label: string
   hint?: string
   cfg: Record<string, unknown>
@@ -494,6 +499,8 @@ export function SegRow<T extends string>({ label, hint, cfg, field, options, fal
   fallback: T
   /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. */
   patch: (k: string, v: never, cb: () => void, label?: string) => void
+  /** Its pills a 44 px hit box at the compact widths (`SegPills`' `touchTarget`). */
+  touchTarget?: boolean
 }) {
   const [saved, flash] = useSavedFlash()
   const raw = cfg[field]
@@ -507,7 +514,7 @@ export function SegRow<T extends string>({ label, hint, cfg, field, options, fal
             `<T>` IS such a `>`, so the sliced props read as empty and the call site scores as
             unnamed. `T` infers from `options` anyway. Same class as the depth-tracking undercount
             `fieldHintCounts` documents — a JSX shape a scanner cannot see. */}
-        <SegPills ariaLabel={label} value={value} options={options}
+        <SegPills ariaLabel={label} value={value} options={options} touchTarget={touchTarget}
           onChange={(v) => patch(field, v as never, flash, label)} />
       </div>
     </Row>

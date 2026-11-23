@@ -84,13 +84,13 @@ export function WorkflowsPanel() {
 
       <Section title="Model tiers" hint="Templates name an intent — reasoning, standard, fast — never a model, so they stay portable. This maps each intent onto one of your model use cases, for the steps that make their own model call: infer steps and judge gates. A stage step's agent runs on Orchestration, or on the model the step names, whatever its tier.">
         <RowGroup>
-          <SegRow label="Reasoning tier" cfg={cfg} field="model_tier_reasoning" patch={patch}
+          <SegRow label="Reasoning tier" cfg={cfg} field="model_tier_reasoning" patch={patch} touchTarget
             options={[...TIER_USE_CASES]} fallback="reasoning"
             hint="Which model use case a step asking for the reasoning tier runs on." />
-          <SegRow label="Standard tier" cfg={cfg} field="model_tier_standard" patch={patch}
+          <SegRow label="Standard tier" cfg={cfg} field="model_tier_standard" patch={patch} touchTarget
             options={[...TIER_USE_CASES]} fallback="orchestration"
             hint="Use case for the standard tier. Keep it distinct from Fast: if both point at one use case the three tiers are decorative, and a step asking for a mid-capability model silently gets the cheapest one." />
-          <SegRow label="Fast tier" cfg={cfg} field="model_tier_fast" patch={patch}
+          <SegRow label="Fast tier" cfg={cfg} field="model_tier_fast" patch={patch} touchTarget
             options={[...TIER_USE_CASES]} fallback="background"
             hint="Use case for the fast tier." />
         </RowGroup>
