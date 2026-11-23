@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Bot, ClipboardList, Eye, FolderCog, Hammer, MessageSquare, Shield, ShieldCheck, Zap, type LucideIcon } from 'lucide-react'
+import { Bot, ClipboardList, Eye, FolderCog, Hammer, MessageSquare, Shield, ShieldCheck, ShieldOff, type LucideIcon } from 'lucide-react'
 import { Eyebrow } from '../../../ui/Eyebrow'
 import { Popover, MenuRow } from '../../../ui/Popover'
 import { PillButton } from '../../../ui/composer/controls'
@@ -40,7 +40,8 @@ export const PERMISSION_MODES: Mode<ApprovalMode>[] = [
   { id: 'normal', label: 'Normal', icon: Shield, hint: 'a tool that only reads runs; the rest ask when they need approval' },
   { id: 'trust_reads', label: 'Trust reads', icon: Eye, hint: 'read-only shell commands run without asking too' },
   { id: 'trust', label: 'Trust', icon: ShieldCheck, hint: 'auto-approve every tool in this chat' },
-  { id: 'yolo', label: 'YOLO', icon: Zap, hint: 'auto-approve everywhere; auto-expires, re-enable to extend' },
+  // Approvals switched off, beside the shields of the others; the bolt is Automations'.
+  { id: 'yolo', label: 'YOLO', icon: ShieldOff, hint: 'auto-approve everywhere; auto-expires, re-enable to extend' },
 ]
 
 /** The task modes, orthogonal to the permission mode: which tools run and how the agent frames the
