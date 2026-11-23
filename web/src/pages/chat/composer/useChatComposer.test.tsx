@@ -34,6 +34,7 @@ const h = vi.hoisted(() => ({
   createChatSession: vi.fn(),
   sendChat: vi.fn(),
   setApprovalMode: vi.fn(),
+  setSessionAgent: vi.fn(),
   setSessionReplyStyle: vi.fn(),
   transcribeAudio: vi.fn(),
   notify: vi.fn(),
@@ -42,7 +43,7 @@ const h = vi.hoisted(() => ({
 vi.mock('../../../lib/api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../lib/api')>()
   const api = new Proxy({
-    createChatSession: h.createChatSession, sendChat: h.sendChat, setApprovalMode: h.setApprovalMode,
+    createChatSession: h.createChatSession, sendChat: h.sendChat, setApprovalMode: h.setApprovalMode, setSessionAgent: h.setSessionAgent,
     setSessionReplyStyle: h.setSessionReplyStyle, transcribeAudio: h.transcribeAudio,
   } as Record<string, unknown>, {
     get(t, p: string) { return p in t ? t[p] : (t[p] = () => Promise.resolve({})) },
@@ -90,6 +91,7 @@ beforeEach(async () => {
   h.createChatSession.mockResolvedValue({ key: NEW_KEY })
   h.sendChat.mockImplementation(receiptFor('started'))
   h.setApprovalMode.mockResolvedValue({})
+  h.setSessionAgent.mockResolvedValue({})
   h.setSessionReplyStyle.mockResolvedValue({ ok: true, reply_style: 'terse', reply_style_effective: 'terse', reply_style_source: 'conversation' })
   ;({ useChatComposer } = await import('./useChatComposer'))
 })
@@ -1065,6 +1067,25 @@ describe('useChatComposer applies the selection', () => {
     const m = mount({ sessionId: NEW_KEY })
     await act(async () => { m.result.current.c.applySelection({ approval: 'yolo' }); await Promise.resolve() })
     expect(h.notify).toHaveBeenCalledWith("Couldn't apply this approval mode to this session: session is busy", 'error')
+  })
+
+  it('🔴 counts an agent binding as answered only once the gateway answers it, taken or refused', async () => {
+    // The open chat's Execution Boundary is read again on this count (`bindingsAnswered`): counted
+    // at the pick, it reads the agent the chat is leaving, since the gateway has not bound the new one.
+    let answer = () => {}
+    h.setSessionAgent.mockImplementationOnce(() => new Promise((r) => { answer = () => r({}) }))
+    const m = mount({ sessionId: NEW_KEY })
+    act(() => m.result.current.c.applySelection({ agent: 'reviewer' }))
+    expect(h.setSessionAgent).toHaveBeenCalledWith(NEW_KEY, 'reviewer')
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(m.result.current.c.bindingsAnswered, 'counted while the binding was on its way').toBe(0)
+    await act(async () => { answer(); await Promise.resolve() })
+    await waitFor(() => expect(m.result.current.c.bindingsAnswered).toBe(1))
+
+    h.setSessionAgent.mockRejectedValueOnce(new Error('no such agent'))
+    await act(async () => { m.result.current.c.applySelection({ agent: 'writer' }); await Promise.resolve() })
+    await waitFor(() => expect(m.result.current.c.bindingsAnswered, 'a refused binding is answered too').toBe(2))
+    expect(h.notify).toHaveBeenCalledWith("Couldn't apply this agent to this session: no such agent", 'error')
   })
 
   it('takes the posture, memory mode, voice and recall history from the chat’s first read', () => {
