@@ -119,6 +119,9 @@ const FUNCTIONS = [
   "sendToFoundGateway",
   "pressUpdateTheGateway",
   "confirmGatewayUpdate",
+  "bringGatewayAlong",
+  "bringGatewayAlongNow",
+  "heldForTheAppUpdate",
 ];
 
 /** Every session and pair a fake handed out or the jar was given, and every window made: what the
@@ -1621,6 +1624,74 @@ describe("Update the Gateway: a gateway the app found, older than itself, update
     assert.equal(out.ok, true, JSON.stringify(out));
     assert.equal(w.box.confirms.length, 1);
     assert.equal(w.box.updateSessions.length, 0, "a session was kept");
+  });
+
+  // Restart to Finish the Update's gateway step (`bringGatewayAlong`): the same gateway and engine,
+  // asked from the app update's press with the step its confirm showed.
+  const STEP = { port: 5000, from: "0.3.7", to: "0.3.8" };
+
+  it("Restart to Finish the Update brings the found gateway along as its confirm showed it, over two press sessions, and leaves none open", async () => {
+    const w = older();
+    const out = await w.box.bringGatewayAlong(STEP);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(w.minted.map((m) => m.ttl), ["5m", "30m"]);
+    const keys = credentialed(w).map((r) => `${r.method} ${r.path}`);
+    assert.deepEqual(keys.filter((k) => k === "POST /api/update"), ["POST /api/update"], keys.join(", "));
+    for (const r of credentialed(w)) assert.ok(gatewayFirst.ALLOWED_REQUESTS.includes(`${r.method} ${r.path}`), `${r.method} ${r.path}`);
+    assert.ok(w.ended.includes(w.minted[0].token), "the plan session was not ended");
+    assert.equal(w.box.updateSessions.length, 0, "a press session was left open");
+    for (const m of w.minted) assert.ok(![...w.cookieJar.cookies.values()].includes(m.token), "a press session reached the jar");
+  });
+
+  it("Restart to Finish the Update signs nothing in and sends nothing to a gateway other than the one its confirm showed", async () => {
+    for (const step of [{ ...STEP, port: 5001 }, { ...STEP, from: "0.3.6" }]) {
+      const w = older();
+      const out = await w.box.bringGatewayAlong(step);
+      assert.equal(out.ok, false, JSON.stringify(step));
+      assert.deepEqual(w.minted, [], JSON.stringify(step));
+      assert.deepEqual(credentialed(w), [], JSON.stringify(step));
+      assert.doesNotMatch(out.sentence || "", /Update the Gateway/, "the hold names the other press");
+    }
+  });
+
+  it("Restart to Finish the Update mints no update session once the start it planned on is gone", async () => {
+    const w = older();
+    const logout = w.gateways.logout;
+    w.gateways.logout = (headers) => {
+      const out = logout(headers);
+      // The plan's session ends, and another start is proven on the port before the update's.
+      if (w.minted.length === 1) w.gateways.proof = { ok: true, gateway: { ...OLD, pid: 301, secretDigest: "found-start-9", windowDoor: true } };
+      return out;
+    };
+    const out = await w.box.bringGatewayAlong(STEP);
+    assert.equal(out.ok, false, JSON.stringify(out));
+    assert.deepEqual(w.minted.map((m) => m.ttl), ["5m"]);
+    assert.ok(!credentialed(w).some((r) => r.method === "POST" && r.path === "/api/update"), "the update was asked of another start");
+  });
+
+  it("a throw inside Restart to Finish the Update's plan ends the press's sessions, and the app update holds", async () => {
+    const w = older();
+    w.box.planGatewayUpdate = async () => {
+      throw new Error("the plan broke");
+    };
+    const out = await w.box.bringGatewayAlong(STEP);
+    // An object of main's realm: its fields, not its prototype, are what the step answered.
+    assert.equal(out.ok, false, JSON.stringify(out));
+    assert.equal(out.sentence, "", JSON.stringify(out));
+    assert.ok(!credentialed(w).some((r) => r.method === "POST" && r.path === "/api/update"), "the update was asked");
+    assert.equal(w.box.updateSessions.length, 0, "a press session was left open");
+    assert.ok(w.ended.includes(w.minted[0].token), "the plan session was not ended");
+  });
+
+  it("a hold of Restart to Finish the Update's gateway step names that press, not Update the Gateway", async () => {
+    const w = older();
+    // The gateway's door doesn't sign the app in: the engine's own sentence names Update the Gateway.
+    w.box.homeGateway.signIn = async () => ({ ok: false, status: 401 });
+    const out = await w.box.bringGatewayAlong(STEP);
+    assert.equal(out.ok, false, JSON.stringify(out));
+    assert.match(gatewayFirst.holdSentence("signed_out", {}), /Update the Gateway/, "the engine's sentence moved");
+    assert.match(out.sentence, /Press Restart to Finish the Update again/, out.sentence);
+    assert.doesNotMatch(out.sentence, /Update the Gateway/, out.sentence);
   });
 });
 
