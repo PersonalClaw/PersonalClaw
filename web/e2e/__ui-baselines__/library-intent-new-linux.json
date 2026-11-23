@@ -3,7 +3,7 @@
     "targets": {
       "320": [
         "button \"Cancel\"",
-        "button \"Say what to look out for first.\"",
+        "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Files\"",
         "button[role=radio] \"Library\"",
@@ -15,7 +15,7 @@
       ],
       "390": [
         "button \"Cancel\"",
-        "button \"Say what to look out for first.\"",
+        "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
         "button[role=switch] \"Write a report from what it finds\"",
@@ -24,7 +24,7 @@
       ],
       "412": [
         "button \"Cancel\"",
-        "button \"Say what to look out for first.\"",
+        "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
         "button[role=switch] \"Write a report from what it finds\"",
@@ -33,7 +33,7 @@
       ],
       "768": [
         "button \"Cancel\"",
-        "button \"Say what to look out for first.\"",
+        "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
         "button[role=switch] \"Write a report from what it finds\"",
@@ -51,7 +51,7 @@
     "targets": {
       "320": [
         "button \"Cancel\"",
-        "button \"Say what to look out for first.\"",
+        "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Files\"",
         "button[role=radio] \"Library\"",
@@ -63,7 +63,7 @@
       ],
       "390": [
         "button \"Cancel\"",
-        "button \"Say what to look out for first.\"",
+        "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
         "button[role=switch] \"Write a report from what it finds\"",
@@ -72,7 +72,7 @@
       ],
       "412": [
         "button \"Cancel\"",
-        "button \"Say what to look out for first.\"",
+        "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
         "button[role=switch] \"Write a report from what it finds\"",
@@ -81,7 +81,7 @@
       ],
       "768": [
         "button \"Cancel\"",
-        "button \"Say what to look out for first.\"",
+        "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
         "button[role=switch] \"Write a report from what it finds\"",

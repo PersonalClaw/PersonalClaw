@@ -2,29 +2,29 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
+        "button \"Write it up\"",
         "button[role=radio] \"Monthly\"",
         "button[role=radio] \"Off\"",
         "button[role=radio] \"Weekly\""
       ],
       "390": [
-        "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
+        "button \"Write it up\"",
         "button[role=radio] \"Monthly\"",
         "button[role=radio] \"Off\"",
         "button[role=radio] \"Weekly\""
       ],
       "412": [
-        "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
+        "button \"Write it up\"",
         "button[role=radio] \"Monthly\"",
         "button[role=radio] \"Off\"",
         "button[role=radio] \"Weekly\""
       ],
       "768": [
-        "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
+        "button \"Write it up\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",
@@ -46,29 +46,29 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
+        "button \"Write it up\"",
         "button[role=radio] \"Monthly\"",
         "button[role=radio] \"Off\"",
         "button[role=radio] \"Weekly\""
       ],
       "390": [
-        "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
+        "button \"Write it up\"",
         "button[role=radio] \"Monthly\"",
         "button[role=radio] \"Off\"",
         "button[role=radio] \"Weekly\""
       ],
       "412": [
-        "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
+        "button \"Write it up\"",
         "button[role=radio] \"Monthly\"",
         "button[role=radio] \"Off\"",
         "button[role=radio] \"Weekly\""
       ],
       "768": [
-        "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
+        "button \"Write it up\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",
