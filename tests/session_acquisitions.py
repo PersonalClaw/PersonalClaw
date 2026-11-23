@@ -117,31 +117,45 @@ def acquires(node: ast.AST, parent: ast.AST | None = None) -> bool:
 def acquisitions(source: str | ast.Module) -> list[str]:
     """The qualified name of the function around each acquisition in *source* (text, or its
     tree): each ``….get_or_create(…)`` call and each bind of it (:func:`acquires`), once each;
-    :data:`MODULE` for one outside every function."""
+    :data:`MODULE` for one outside every function.
+
+    One walk of the tree, each node read once with the function it is in: a function's own
+    decorators and defaults are its, a class's body outside its methods is the code around the
+    class's, and a nested function is no part of the one around it. Walking each function apart
+    walked a nested one again for every function around it, which made the census rows cross
+    their time limit on a loaded machine."""
     tree = _parsed(source)
-    up = parents(tree)
     out: list[str] = []
-    for qualname, func in _functions(tree).items():
-        inner = {
-            id(n)
-            for f in ast.walk(func)
-            if f is not func and isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
-            for n in ast.walk(f)
-        }
-        for node in ast.walk(func):
-            if acquires(node, up.get(id(node))) and id(node) not in inner:
-                out.append(qualname)
-    # Code outside every function runs once, at import: what it acquires or names is its module's.
-    in_one = {id(n) for f in _functions(tree).values() for n in ast.walk(f)}
-    for node in ast.walk(tree):
-        if id(node) not in in_one and acquires(node, up.get(id(node))):
-            out.append(MODULE)
+    stack: list[tuple[ast.AST, tuple[str, ...], str]] = [(tree, (), MODULE)]
+    while stack:
+        node, scope, owner = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                name = (*scope, child.name)
+                stack.append((child, name, ".".join(name)))
+            elif isinstance(child, ast.ClassDef):
+                stack.append((child, (*scope, child.name), owner))
+            else:
+                if acquires(child, node):
+                    out.append(owner)
+                stack.append((child, scope, owner))
     return out
 
 
+#: Each package tree's acquisitions, kept with the tree they were read from: the index holds a tree
+#: for the process's life (``source_index``), so every row of every census asks for the trees as
+#: before (what each rail reads is recorded at that ask) and reads each one once. The tree is kept
+#: too and checked, since an id can name another object once the first is gone.
+_FOUND: dict[int, tuple[ast.Module, list[str]]] = {}
+
+
 def _census() -> list[tuple[str, str]]:
+    """Every acquisition in the package, as ``(module, function)``."""
     sites: list[tuple[str, str]] = []
     for path, tree in source_index.package_trees():
         rel = path.relative_to(SRC).as_posix()
-        sites.extend((rel, q) for q in acquisitions(tree))
+        kept = _FOUND.get(id(tree))
+        if kept is None or kept[0] is not tree:
+            kept = _FOUND[id(tree)] = (tree, acquisitions(tree))
+        sites.extend((rel, q) for q in kept[1])
     return sites
