@@ -645,12 +645,25 @@ describe("Update the Gateway sends only its own requests, over sessions of its o
   const DESKTOP = path.join(__dirname, "..");
   const sources = fs.readdirSync(DESKTOP).filter((f) => f.endsWith(".js"));
 
-  it("asks a gateway to update from one place, the engine, which only the press reaches", () => {
+  it("asks a gateway to update from one place, the engine, which only the two confirmed presses reach", () => {
     const asking = sources.filter((f) => /"POST", "\/api\/update"[,)]/.test(fs.readFileSync(path.join(DESKTOP, f), "utf8")));
     assert.deepEqual(asking, ["gatewayFirst.js"]);
-    assert.equal([...MAIN.matchAll(/runGatewayUpdate\(/g)].length, 1, "the engine gained a caller");
+    // Update the Gateway, after its own box, and Restart to finish the app's update, after the app
+    // update's confirm showed the gateway step (`appUpdate.js` asks it only then).
+    assert.equal([...MAIN.matchAll(/runGatewayUpdate\(/g)].length, 2, "the engine gained a caller");
     assert.match(body("pressUpdateTheGateway"), /const out = await runGatewayUpdate\(\{/);
+    assert.match(body("bringGatewayAlongNow"), /const out = await runGatewayUpdate\(\{/);
     assert.doesNotMatch(fs.readFileSync(path.join(DESKTOP, "appUpdate.js"), "utf8"), /gatewayFirst|\/api\/update"/, "the updater's own check reaches the gateway's update");
+  });
+
+  it("brings a gateway along for the app's update only as the confirm showed it, signing in only after the versions are compared", () => {
+    const along = body("bringGatewayAlongNow");
+    const compared = along.indexOf("compareVersions(gateway.version, from) !== 0");
+    assert.ok(compared > 0, "the gateway the confirm showed is not checked against the one found");
+    assert.ok(compared < along.indexOf("updateSession(gateway, PLAN_SESSION_TTL, press)"), "a session is minted before the gateway is checked");
+    assert.ok(along.indexOf("await endUpdateSession(first);") < along.indexOf("updateSession(again.gateway, UPDATE_SESSION_TTL, press)"));
+    assert.match(along, /if \(!again\.ok \|\| startKey\(startOf\(again\.gateway\)\) !== startKey\(start\)\)/);
+    assert.match(fs.readFileSync(path.join(DESKTOP, "appUpdate.js"), "utf8"), /if \(step && \(!showed\(shown, step\) \|\| typeof bringGateway !== "function"\)\)/);
   });
 
   it("sends one of six requests, each right after a proof of its start, as Node http to 127.0.0.1 with no User-Agent and no cookie store", () => {
@@ -674,7 +687,7 @@ describe("Update the Gateway sends only its own requests, over sessions of its o
     // Headers only: no body is written, POST /api/update's included.
     assert.doesNotMatch(send, /User-Agent|Cookie|cookies\.set|net\.request|loadURL|token=|\.write\(/i);
     // An answer the press's session gets refused to is the press's hold, never this app's sign-in ending.
-    for (const fn of ["updateFoundGatewayNow", "pressUpdateTheGateway", "askOver", "sendToFoundGateway", "holdUpdate"]) {
+    for (const fn of ["updateFoundGatewayNow", "pressUpdateTheGateway", "bringGatewayAlong", "bringGatewayAlongNow", "askOver", "sendToFoundGateway", "holdUpdate"]) {
       assert.doesNotMatch(body(fn), /noteShellRefusal/, `${fn} ends this app's sign-in on the press's refusal`);
     }
   });

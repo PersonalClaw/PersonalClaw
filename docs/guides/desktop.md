@@ -852,8 +852,9 @@ Updates…** (on Linux, **Help › Check for Updates…**) looks now and opens T
 presses. **Update** downloads and checks the new version in the background, and changes nothing
 beside the app; when it is ready, This app and the row say **Restart to Finish the Update**. That
 press, once you confirm, installs it; the confirm says whether your gateway restarts with the app,
-and how many running agents that interrupts. Nothing is downloaded before the first press, and
-nothing in Applications changes before the second.
+and how many running agents that interrupts. With a gateway the app found serving your home on an
+older release, it says that gateway is updated to the new release first. Nothing is downloaded
+before the first press, and nothing in Applications changes before the second.
 
 What **Update** does:
 
@@ -876,7 +877,16 @@ What **Update** does:
 
 What **Restart to Finish the Update** does:
 
-4. The checked copy is used only while it is still the one that was checked: its folder the same
+4. A gateway the app found serving your home ([one already serving it](#when-a-gateway-already-serves-your-home)),
+   older than the new release, is updated first, through its own update, as **Update the
+   Gateway** updates it, and the app waits until that gateway is proven back on the new release.
+   The confirm named that gateway (its port, the version it is on and the one it moves to) and what
+   its restart interrupts; a press whose confirm didn't show that step is answered with one
+   sentence and nothing is sent. If the gateway can't be brought along, the app stays as it is,
+   keeps its download and says why: press **Restart to Finish the Update** again to try again. A
+   gateway already on the release keeps running, and the app's own gateway updates with the app.
+   The update settings are read once more right after, so a pin set meanwhile still holds.
+5. The checked copy is used only while it is still the one that was checked: its folder the same
    one, your account's and readable by you only. It is copied beside the running app as
    `.PersonalClaw-<version>.app.incoming` and checked again there: the bundle id, the version,
    this Mac's architecture, and exactly the build the disk image held (its CDHash); an AppImage
@@ -889,7 +899,7 @@ What **Restart to Finish the Update** does:
    the old one moves to
    `.PersonalClaw-<old>.app.previous` beside it, the new one to `PersonalClaw.app`. The app starts
    again, on the new copy.
-5. Once the new copy and its gateway are up, the old copy goes to the Trash. Until then it is kept:
+6. Once the new copy and its gateway are up, the old copy goes to the Trash. Until then it is kept:
    if the new one doesn't start, move it to the Trash and rename the old one back (it is hidden;
    in Terminal, `mv /Applications/.PersonalClaw-<old>.app.previous /Applications/PersonalClaw.app`).
 
@@ -935,9 +945,10 @@ drop, so This app says the file couldn't be read instead.
 - **Version pin** (`updates.pin`) — pin `0.1.3` and neither the panel nor the app offers newer
   releases, which is how you stay on a known-good build while you finish something. It must be
   an exact release version; a pin that matches no published release is flagged rather than
-  silently stopping updates. Clear it to follow the channel again. The app follows the pin while
-  it runs its own gateway; a gateway it found serving your home is pinned by its own install. A
-  pin older than the app is said, not installed: the app doesn't roll back.
+  silently stopping updates. Clear it to follow the channel again. The app follows the pin whichever
+  gateway serves your home: one it found follows the same pin, and Restart to Finish the Update
+  brings it to the app's release first, so both land on the same one. A pin older than the app is
+  said, not installed: the app doesn't roll back.
 - **Roll back** — download the older release from the
   [releases page](https://github.com/PersonalClaw/PersonalClaw/releases) and install it over
   this one, then set `updates.pin` to that version so neither the panel nor the app offers the

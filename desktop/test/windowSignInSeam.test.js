@@ -785,7 +785,7 @@ describe("a gateway the app found: used only at this app's version or newer, wit
         assert.deepEqual(w.signIns, [5000], what);
         // A version without a version's shape reaches neither the updater nor the log.
         const told = version === "0.3.9<script>" ? "" : version;
-        assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: told }), `${what}: the updater wasn't told`);
+        assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: told, port: 5000 }), `${what}: the updater wasn't told`);
         assert.ok(!w.said.some((line) => line.includes("<script>")), `${what}: an unread version reached the log`);
         if (version === "0.3.9+local") {
           assert.ok(w.said.some((line) => line.includes("reports version 0.3.9+local") && line.endsWith("it is used")), `${what}: no line says it is used`);
@@ -838,7 +838,7 @@ describe("a gateway the app found: used only at this app's version or newer, wit
     assert.ok(w.dialog.includes("closeChooser"), "the chooser stayed open");
     assert.notEqual(main.loads.at(-1), "file:loading.html?state=offline", "the main window stayed on the offline page");
     assert.equal(main.loads.at(-1), "http://127.0.0.1:5000");
-    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: "0.3.8" }));
+    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: "0.3.8", port: 5000 }));
   });
 
   it("leaves a found gateway's watch armed when Try Again is pressed on its refused start, answers with the row, and starts nothing", async () => {
@@ -929,7 +929,7 @@ describe("a gateway the app found: used only at this app's version or newer, wit
     rowIs(w, "adopted", "the same start's lift left the refusal on the row");
     assert.equal(w.box.startFailure, null);
     assert.equal(w.box.refusedStart, "");
-    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: "0.3.8" }));
+    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: "0.3.8", port: 5000 }));
   });
 
   it("ends a refusal at a Sign In Again that signs the windows in at a found gateway, so Try Again then starts", async () => {
@@ -967,7 +967,7 @@ describe("a gateway the app found: used only at this app's version or newer, wit
     w.box.windowDoorInUse = true;
     w.box.localGatewayUrl = "http://127.0.0.1:5000";
     assert.equal((await w.box.signInAgain()).ok, true);
-    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: "0.3.9" }));
+    assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "adopted", version: "0.3.9", port: 5000 }));
     w.box.adoptedGone({ pid: 300, port: 5000 });
     assert.equal(JSON.stringify(w.box.appUpdater.noted.at(-1)), JSON.stringify({ kind: "none", version: "" }));
     const own = world();

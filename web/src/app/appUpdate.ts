@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { desktopBridge, type AppUpdateStart, type AppUpdateState } from '../lib/desktopBridge'
+import { desktopBridge, type AppUpdateShown, type AppUpdateStart, type AppUpdateState } from '../lib/desktopBridge'
 
 /** The desktop app's own update, as a page of the app holds it. */
 export interface AppUpdate {
@@ -9,8 +9,9 @@ export interface AppUpdate {
   check: () => Promise<void>
   /** Update: download and check *version*, the one on offer, in the background. */
   download: (version: string) => Promise<AppUpdateStart>
-  /** Restart to finish the update to *version*, the one ready, once the confirm named it. */
-  finish: (version: string) => Promise<AppUpdateStart>
+  /** Restart to finish the update to *version*, the one ready, once the confirm named it, with what
+   *  the confirm showed of the gateway step (*shown*). */
+  finish: (version: string, shown?: AppUpdateShown) => Promise<AppUpdateStart>
 }
 
 const NO_ANSWER = 'The app did not answer. Try again, or install from the releases page.'
@@ -37,9 +38,9 @@ export function useAppUpdate(): AppUpdate | null {
     if (!bridge) return { ok: false, sentence: NO_ANSWER }
     try { return await bridge.download(version) } catch { return { ok: false, sentence: NO_ANSWER } }
   }, [bridge])
-  const finish = useCallback(async (version: string): Promise<AppUpdateStart> => {
+  const finish = useCallback(async (version: string, shown: AppUpdateShown = {}): Promise<AppUpdateStart> => {
     if (!bridge) return { ok: false, sentence: NO_ANSWER }
-    try { return await bridge.finish(version) } catch { return { ok: false, sentence: NO_ANSWER } }
+    try { return await bridge.finish(version, shown) } catch { return { ok: false, sentence: NO_ANSWER } }
   }, [bridge])
   return bridge ? { state, check, download, finish } : null
 }

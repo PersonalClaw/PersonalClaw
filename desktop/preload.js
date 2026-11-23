@@ -253,15 +253,19 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
 
   /** The app's own update (`appUpdate.js`). `status()` and `check()` resolve what it stands at:
    * `{current, how, phase, available, checkedAt, progress, sentence, last, ready, releasesPage,
-   * restartsGateway}`. `download()` downloads and checks the version the page's Update named, in a
-   * private folder, and `finish()` is Restart to finish for the version ready; each resolves `{ok,
+   * restartsGateway, gatewayStep}`. `download()` downloads and checks the version the page's Update
+   * named, in a private folder, and `finish()` is Restart to finish for the version ready, with what
+   * its confirm showed of the gateway step; each resolves `{ok,
    * sentence?}` at once, and the progress arrives on `on()`. Nothing downloads before `download()`,
    * and nothing beside the app changes before `finish()`. */
   appUpdate: {
     status: () => ipcRenderer.invoke(IPC_CHANNELS.appUpdateStatus),
     check: () => ipcRenderer.invoke(IPC_CHANNELS.appUpdateCheck),
     download: (version) => ipcRenderer.invoke(IPC_CHANNELS.appUpdateDownload, String(version ?? "")),
-    finish: (version) => ipcRenderer.invoke(IPC_CHANNELS.appUpdateFinish, String(version ?? "")),
+    // With what its confirm showed of the gateway step (`{gateway: {from, to}}`), which main keeps
+    // only as two plain versions (`registerAppUpdateIpc`).
+    finish: (version, shown) =>
+      ipcRenderer.invoke(IPC_CHANNELS.appUpdateFinish, String(version ?? ""), shown && typeof shown === "object" ? shown : {}),
     /** Subscribe to the update's state as it moves on. Returns an unsubscribe fn. */
     on: (cb) => {
       if (typeof cb !== "function") return () => {};

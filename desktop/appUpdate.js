@@ -10,9 +10,9 @@
  *
  * The check reads the repository's release list over TLS, follows no redirect, and picks the
  * release this copy should move to: the newest full release newer than it, or the newest with
- * release candidates when the home follows the beta channel, or exactly the home's pin when the
- * app runs its own gateway (a pin there pins the app, whose version is its gateway's; a gateway the
- * app found running is pinned by its own install).
+ * release candidates when the home follows the beta channel, or exactly the home's pin, whichever
+ * gateway serves the home: a gateway the app found follows the same pin, and Restart to finish brings
+ * it to the app's release first (*bringGateway*), so the app and its gateway land on one release.
  *
  * The update takes that release's copy for this computer and nothing else: on macOS exactly
  * `PersonalClaw-<version>-<arch>.dmg`, from Linux's AppImage exactly `PersonalClaw-<version>.AppImage`,
@@ -32,7 +32,11 @@
  * guard against a process running as the owner, which could change the image as it downloads:
  * that is an already-compromised account, outside SECURITY.md's scope.
  *
- * Restart to finish uses the ready copy only if it is still the one that was checked: its folder
+ * Restart to finish first brings a gateway the app found, older than the ready copy, to that release
+ * through the gateway's own update (*bringGateway*, main's `bringGatewayAlong`), and only on a press
+ * whose confirm showed that step (`gatewayStep`): a gateway that can't be brought along keeps the
+ * app as it is, and its download, for the next press. Then it uses the ready copy only if it is
+ * still the one that was checked: its folder
  * the same one, this account's and 0700, and the copy in it. It copies it beside the running app,
  * under a hidden name, and checks it again there: the bundle id, version and architecture, and
  * exactly the build the image held (`placeMac`, by its CDHash), or the release's digest
@@ -142,7 +146,7 @@ function isPrerelease(text) {
 
 /**
  * The release this copy (*current*) should be offered: `{release}`, or `{release: null, why}`.
- * With a *pin* (the app's own gateway only), exactly the pinned release when it is newer: a pin
+ * With a *pin*, exactly the pinned release when it is newer: a pin
  * older than this copy is not offered, since the app does not roll back (`pin_older`), and a pin no
  * release matches is said (`pin_missing`). Otherwise the newest full release newer than this copy,
  * or the newest of any release on the beta channel. Drafts never.
@@ -266,6 +270,10 @@ function sentenceFor(why, detail = {}) {
       return `The new version couldn't be put in place, and this copy couldn't be moved back: it is at ${detail.path}. Rename it to PersonalClaw.app.`;
     case "unreadable_config":
       return `PersonalClaw couldn't read ${detail.file}, so this app doesn't know which release it follows. Fix the file, or install from the releases page.`;
+    case "gateway_not_shown":
+      return `Restart to finish now updates the gateway on port ${detail.port} from ${detail.from} to ${detail.to} first, which restarts it. Press Restart to Finish the Update again to see what that interrupts.`;
+    case "gateway_held":
+      return `The gateway on port ${detail.port} couldn't be updated to ${detail.to}, so the app wasn't updated either. The download is kept: press Restart to Finish the Update to try again.`;
     default:
       return "The update didn't finish. This copy is unchanged; install it from the releases page.";
   }
@@ -286,14 +294,15 @@ class UpdateFailure extends Error {
  * they are needed, so a change in Settings › Updates holds from the next check: `{channel, pin,
  * checkEnabled}`, or `{unreadable}` naming the file. Only `beta` is a line of its own; every other
  * channel rides `stable`, as the gateway's resolver does (`nightly` follows a checkout's branch,
- * and no app is built from one). The pin is followed only while the home's gateway is the app's
- * own (*ownGateway*): a gateway the app found serving the home is pinned by its own install.
+ * and no app is built from one). The pin is followed whichever gateway serves the home: a gateway
+ * the app found follows the same pin, and the app's update brings it to the app's release first
+ * (`makeAppUpdater`'s *bringGateway*), so the app's target is the gateway's.
  *
  * Fails closed: a file that is there but cannot be read or parsed offers nothing, since the pin it
  * may hold is a limit, and dropping it would offer more than the owner chose. No file, or an empty
  * one, is the defaults, as the gateway reads it.
  */
-function readUpdatePolicy({ home, ownGateway, readFile = fs.readFileSync }) {
+function readUpdatePolicy({ home, readFile = fs.readFileSync }) {
   const file = path.join(home, "config.json");
   let raw;
   try {
@@ -315,7 +324,7 @@ function readUpdatePolicy({ home, ownGateway, readFile = fs.readFileSync }) {
   const pin = typeof updates.pin === "string" ? updates.pin.trim() : "";
   return {
     channel: updates.channel === "beta" ? "beta" : "stable",
-    pin: ownGateway ? pin : "",
+    pin,
     checkEnabled: updates.check_enabled !== false && updates.check_enabled !== "false",
   };
 }
@@ -668,6 +677,11 @@ const ATTEMPT_KEY = "app-update:attempt";
  * the app to start again on *program* once it has exited. *store* is the shell's store, where the
  * update a copy started waits for the next start (`ATTEMPT_KEY`). *ownsGateway()* says whether the
  * app's quit stops the home's gateway, which a restart for an update then interrupts.
+ *
+ * *bringGateway({port, from, to})* updates a gateway the app found, older than the ready copy,
+ * through the gateway's own update, and resolves `{ok}` once it is proven back on *to* or newer, or
+ * `{ok: false, sentence}`. Restart to finish asks it first, and only for a press whose confirm showed
+ * that step (`gatewayStep`); a gateway on the release, the app's own or none is left as it is.
  */
 function makeAppUpdater({
   current,
@@ -685,6 +699,7 @@ function makeAppUpdater({
   request,
   store = null,
   ownsGateway = () => false,
+  bringGateway = null,
   log = () => {},
   onState = () => {},
   now = Date.now,
@@ -717,7 +732,7 @@ function makeAppUpdater({
     /** Why the last check failed (`sentenceFor`'s key), or "" when it didn't. */
     why: "",
     /** The gateway the app uses, as main last proved it (`noteGateway`): `{kind, version, order,
-     *  plan}`, or null until main has said. */
+     *  port, plan}`, or null until main has said. */
     gateway: null,
     releasesPage: RELEASES_PAGE_URL,
   };
@@ -754,7 +769,19 @@ function makeAppUpdater({
   const retriedFor = new Set();
   let retryTimer = null;
 
-  const view = () => ({ ...state, restartsGateway: Boolean(ownsGateway()) });
+  /** What Restart to finish does first to the gateway the app uses: one it found (`adopted`), older
+   *  than the ready copy, is brought to that release (*bringGateway*): `{port, from, to}`; null for a
+   *  gateway on it or newer, one whose version can't be compared, the app's own, or none. */
+  const gatewayStep = () => {
+    const g = state.gateway;
+    const to = state.ready && state.ready.version;
+    if (!to || !g || g.kind !== "adopted" || compareVersions(g.version, to) !== -1) return null;
+    return { port: g.port || 0, from: g.version, to };
+  };
+  /** Whether *shown*, what the press's confirm showed, is *step*: the same versions. */
+  const showed = (shown, step) =>
+    Boolean(shown && shown.gateway && sameVersion(shown.gateway.from, step.from) && sameVersion(shown.gateway.to, step.to));
+  const view = () => ({ ...state, restartsGateway: Boolean(ownsGateway()), gatewayStep: gatewayStep() });
   const set = (patch) => {
     state = { ...state, ...patch };
     const shown = view();
@@ -1021,7 +1048,7 @@ function makeAppUpdater({
    *  under a hidden name, then quit as the app always does, whose last step is the swap
    *  (`swapIfStaged`). Answers at once: `{ok}` once it is under way, else `{ok: false, sentence}`. A
    *  copy that cannot be put beside the app leaves the app as it was, and says so. */
-  function finish(version) {
+  function finish(version, shown = {}) {
     if (stopping) return { ok: false, sentence: "The app is quitting." };
     if (busy) return { ok: false, sentence: "An update is already under way." };
     if (!readyCopy || !sameVersion(readyCopy.version, version)) return { ok: false, sentence: "That version is not the one ready. Check again." };
@@ -1040,10 +1067,45 @@ function makeAppUpdater({
       set({ phase: "available", ready: null, progress: null, sentence });
       return { ok: false, sentence };
     }
+    // A gateway the app found, older than the ready copy, is brought to its release first, and only
+    // on a press whose confirm said so: one that didn't show it gets a sentence, and nothing is sent.
+    const step = gatewayStep();
+    if (step && (!showed(shown, step) || typeof bringGateway !== "function")) {
+      return { ok: false, sentence: sentenceFor("gateway_not_shown", step) };
+    }
     busy = true;
     const ready = readyCopy;
     track((async () => {
       try {
+        if (step) {
+          set({ phase: "gateway", sentence: `Updating the gateway on port ${step.port} to ${step.to} first…` });
+          let out;
+          try {
+            out = await bringGateway(step);
+          } catch (err) {
+            log(`the gateway on port ${step.port} could not be brought to ${step.to}: ${err && err.message}`);
+            out = { ok: false, sentence: "" };
+          }
+          if (stopping) {
+            log(`the app is quitting: the update to ${ready.version} is not put in place`);
+            return;
+          }
+          if (!out || out.ok !== true) {
+            // The download is kept: the next press tries the gateway again.
+            const sentence = (out && out.sentence) || sentenceFor("gateway_held", step);
+            log(`the app update to ${ready.version} waits: the gateway on port ${step.port} was not brought to it`);
+            set({ phase: "ready", ready: { version: ready.version }, progress: null, sentence });
+            return;
+          }
+          // The final check, right before the copy is put in place: the settings and the copy as
+          // they stand now, after the gateway's update.
+          const rules = policy();
+          if (!readyAllowed(rules)) {
+            dropDisallowed(rules);
+            check({ asked: false }).catch(() => {});
+            return;
+          }
+        }
         set({ phase: "placing", sentence: `Putting PersonalClaw ${ready.version} in place…` });
         if (readyState(ready) !== "ok") throw new UpdateFailure("put_in_place");
         const incoming =
@@ -1224,10 +1286,11 @@ function makeAppUpdater({
    * run, as an automatic check: with automatic checks off it doesn't. Found before `start()`, that
    * check is the start's first.
    */
-  function noteGateway({ kind = "none", version = "" } = {}) {
+  function noteGateway({ kind = "none", version = "", port = 0 } = {}) {
     const known = kind === "own" || kind === "adopted";
     const order = kind === "own" ? "same" : kind === "adopted" ? ORDER_WORD[String(compareVersions(version, current))] || "unknown" : "";
-    set({ gateway: known ? { kind, version: kind === "own" ? current : String(version), order, plan: null } : { kind: "none", version: "", order: "", plan: null } });
+    const at = Number.isInteger(port) && port > 0 && port < 65536 ? port : 0;
+    set({ gateway: known ? { kind, version: kind === "own" ? current : String(version), order, port: at, plan: null } : { kind: "none", version: "", order: "", port: 0, plan: null } });
     if (kind !== "adopted" || order !== "ahead" || where.how === "dev") return;
     const key = versionKey(version);
     if (checkedFor.has(key)) return;
@@ -1294,7 +1357,13 @@ function registerAppUpdateIpc({ ipcMain, channels, updater, isAppWindow, log = (
   answer(channels.appUpdateCheck, (u) => u.check({ asked: true }));
   const named = (version) => (typeof version === "string" ? version.slice(0, 64) : "");
   answer(channels.appUpdateDownload, (u, version) => u.download(named(version)));
-  answer(channels.appUpdateFinish, (u, version) => u.finish(named(version)));
+  // What the confirm showed of the gateway step: two plain versions, and nothing else it may hold.
+  const shownStep = (shown) => {
+    const g = shown && typeof shown === "object" ? shown.gateway : null;
+    if (!g || typeof g !== "object" || typeof g.from !== "string" || typeof g.to !== "string") return {};
+    return { gateway: { from: g.from.slice(0, 64), to: g.to.slice(0, 64) } };
+  };
+  answer(channels.appUpdateFinish, (u, version, shown) => u.finish(named(version), shownStep(shown)));
 }
 
 module.exports = {

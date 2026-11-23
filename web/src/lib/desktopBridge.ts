@@ -90,7 +90,7 @@ export interface BuddyPlace { mode: 'docked' | 'floating'; displayId?: number }
 export interface AppUpdateState {
   current: string
   how: 'mac' | 'appimage' | 'page' | 'dev'
-  phase: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'verifying' | 'ready' | 'placing' | 'restarting' | 'failed'
+  phase: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'verifying' | 'ready' | 'gateway' | 'placing' | 'restarting' | 'failed'
   available: { version: string; installable: boolean } | null
   /** When the last check answered, in ms since the epoch; 0 before the first. */
   checkedAt: number
@@ -105,7 +105,15 @@ export interface AppUpdateState {
   releasesPage: string
   /** Whether the restart an update makes stops this home's gateway: true while it is the app's own. */
   restartsGateway: boolean
+  /** What Restart to finish does first to a gateway the app found, older than the ready copy: it is
+   *  updated through its own update to that release (phase `gateway`), on *port*, from *from* to *to*;
+   *  null (or absent, from a shell before it) when there is no such step. */
+  gatewayStep?: { port: number; from: string; to: string } | null
 }
+
+/** What the confirm showed with the press of Restart to finish: the gateway step, when it named one.
+ *  A press that did not show a step the app then needs is answered with one sentence instead. */
+export interface AppUpdateShown { gateway?: { from: string; to: string } }
 
 /** The app's answer to Update or Restart to finish: `ok` once it is under way (its progress is the
  *  state's), else the sentence that says why it did not start. */
@@ -175,8 +183,8 @@ export interface DesktopBridge {
     check: () => Promise<AppUpdateState>
     /** Update: download and check *version* in a private folder. Nothing beside the app changes. */
     download: (version: string) => Promise<AppUpdateStart>
-    /** Restart to finish the update to *version*, the one ready. */
-    finish: (version: string) => Promise<AppUpdateStart>
+    /** Restart to finish the update to *version*, the one ready, with what its confirm showed. */
+    finish: (version: string, shown?: AppUpdateShown) => Promise<AppUpdateStart>
     on: (cb: (state: AppUpdateState) => void) => () => void
   }
   /** This machine's buddy rows in Settings (#3901): where the buddy's window sits and whether it

@@ -3383,7 +3383,8 @@ function signOutAtPort(session, port, { windowDoor, timeoutMs = 5000 }) {
  *  update replaced go to the Trash. */
 function sawGateway(kind, gateway) {
   if (!appUpdater) return;
-  appUpdater.noteGateway({ kind, version: gateway ? shapedVersion(gateway.version) : "" });
+  // A gateway it found says its port too: Restart to finish names it when it brings that gateway along.
+  appUpdater.noteGateway({ kind, version: gateway ? shapedVersion(gateway.version) : "", ...(kind === "adopted" && gateway ? { port: gateway.port } : {}) });
   if (kind !== "none") trashPreviousOnce();
 }
 
@@ -3524,6 +3525,82 @@ async function pressUpdateTheGateway(press) {
  *  stopped) stays as it is; a gateway that stopped during the update is said on a stopped row,
  *  unless the watch has put a gateway back in use since (no start's failure stands then). A later
  *  take-back or follow ends that row as it ends a refusal (`endRefusal`). */
+/**
+ * Restart to finish's first step (`appUpdate.js`'s *bringGateway*): the gateway this app found,
+ * older than the release the app installs (*to*), brought to it through its own update, as Update
+ * the Gateway brings it, with no box of its own: the app update's confirm showed this step (*port*,
+ * *from*, *to*), and a gateway that is no longer that one is not sent anything. Resolves `{ok}` once
+ * it is proven on *to* or newer (or already was), else `{ok: false, sentence}`: the app is then not
+ * updated, and its download is kept for the next press.
+ */
+async function bringGatewayAlong({ port, from, to }) {
+  const press = { gateway: null, sessions: [] };
+  try {
+    return await bringGatewayAlongNow({ port, from, to }, press);
+  } catch (err) {
+    console.warn(`desktop: bringing the gateway along stopped on an error: ${err && err.message}`);
+    for (const held of press.sessions) {
+      held.inUse = false;
+      if (updateSessions.includes(held)) await endUpdateSession(held).catch(() => false);
+    }
+    return { ok: false, sentence: "" };
+  }
+}
+
+/** A hold of the gateway step, said for the press that asked: Restart to Finish the Update, which
+ *  the engine's sentences (written for Update the Gateway) are retold for. */
+function heldForTheAppUpdate(sentence) {
+  return { ok: false, sentence: String(sentence || "").replaceAll("Update the Gateway", "Restart to Finish the Update") };
+}
+
+async function bringGatewayAlongNow({ port, from, to }, press) {
+  await signOutUpdateSessions(2000);
+  const found = await findHomeGateway();
+  if (!found.ok) return { ok: false, sentence: found.sentence };
+  const gateway = found.gateway;
+  press.gateway = gateway;
+  const d = { to, port: gateway.port, pid: gateway.pid };
+  // Already on the release or newer (it updated alone, from a browser tab): nothing is sent.
+  const order = compareVersions(gateway.version, to);
+  if (order === 0 || order === 1) return { ok: true };
+  // Another gateway, or this one on another version, than the confirm showed: held, nothing sent.
+  if (gateway.port !== port || compareVersions(gateway.version, from) !== 0) return heldForTheAppUpdate(holdSentence("plan_changed", d));
+  const start = startOf(gateway);
+  const first = await updateSession(gateway, PLAN_SESSION_TTL, press);
+  if (!first) return heldForTheAppUpdate(holdSentence("signed_out", d));
+  const planned = await planGatewayUpdate({ G: gateway.version, T: to, ask: askOver(first, start), press: true, pid: gateway.pid, port: gateway.port });
+  first.inUse = false;
+  await endUpdateSession(first);
+  if (planned.step === "none") return { ok: true };
+  if (planned.step !== "update") return heldForTheAppUpdate(planned.sentence || holdSentence(planned.why, d));
+  const again = await findHomeGateway();
+  if (!again.ok || startKey(startOf(again.gateway)) !== startKey(start)) return heldForTheAppUpdate(holdSentence("plan_changed", d));
+  const second = await updateSession(again.gateway, UPDATE_SESSION_TTL, press);
+  if (!second) return heldForTheAppUpdate(holdSentence("signed_out", d));
+  console.log(`desktop: the app update to ${to} brings the gateway on port ${gateway.port} along first`);
+  const out = await runGatewayUpdate({
+    G: gateway.version,
+    T: to,
+    start,
+    planned,
+    ask: askOver(second, start),
+    prove: () => homeGateway.reach(PERSONALCLAW_HOME),
+    pidIsAlive: (pid) => homeGateway.pidIsAlive(pid),
+    stopping: () => isQuitting,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    log: (line) => console.log(`desktop: ${line}`),
+    onRestart: () => {
+      second.afterRestart = true;
+    },
+  });
+  second.inUse = false;
+  second.afterRestart = second.afterRestart || Boolean(out.restarted);
+  if (updateSessions.includes(second)) await endUpdateSession(second);
+  if (!out.ok) return out.why === "stopping" ? { ok: false, sentence: "" } : heldForTheAppUpdate(out.sentence);
+  console.log(`desktop: the gateway on port ${gateway.port} is on ${shownVersion(to)} or newer; the app update goes on`);
+  return { ok: true };
+}
+
 function holdUpdate(gateway, why, detail, sentence) {
   const said = sentence || holdSentence(why, { to: app.getVersion(), port: gateway.port, pid: gateway.pid, ...detail });
   console.log(`desktop: Update the Gateway held: ${why}`);
@@ -3688,9 +3765,9 @@ function makeThisAppsUpdater() {
     isPackaged: app.isPackaged,
     execPath: process.execPath,
     appImage: process.env.APPIMAGE || "",
-    // The pin, unless the home is served by a gateway the app found running: its own install pins it.
-    // The kind of gateway, not what the row says (a signed-out row is still one kind or the other).
-    policy: () => readUpdatePolicy({ home: PERSONALCLAW_HOME, ownGateway: !adoptedGateway && !["served", "behind", "unusable", "updating"].includes(localState.state) }),
+    // The home's pin, whichever gateway serves it: a gateway the app found follows the same pin, and
+    // Restart to finish brings it to the app's release first (`bringGatewayAlong`).
+    policy: () => readUpdatePolicy({ home: PERSONALCLAW_HOME }),
     // The app's own folder, which the system's temp cleaning never empties under a waiting update
     // and no other account can make: the updater keeps it 0700.
     workDir: path.join(app.getPath("userData"), "app-update"),
@@ -3703,6 +3780,7 @@ function makeThisAppsUpdater() {
     request: require("https").request,
     store: shellStore,
     ownsGateway: () => gatewayWatch.kind === "own",
+    bringGateway: (step) => bringGatewayAlong(step),
     log: (msg) => console.log(`desktop: ${msg}`),
     onState: (state) => pushToBridged(BaseWindow.getAllWindows(), IPC_CHANNELS.appUpdateState, state),
   });
