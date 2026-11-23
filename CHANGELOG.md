@@ -25,6 +25,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The lightning bolt marks Automations only. YOLO in a chat's permission menu, a tool step that ran without asking, and an automation that acts on its own wear a crossed-out shield, beside the menu's other shields.**
 - **A button that's unavailable says why in the app's own tooltip: when you point at it, when you tab to it, and when you tap it on a phone, instead of the browser's slow native tooltip.**
 - **On a phone, a project's detail opens as a full-height sheet over the page, closed with Close or Esc, with the focus on Close as it opens. It used to take the lower half of the page under the work.**
+- **On a phone, every switch is a 44 px target: the switch is drawn the same, and the space you can tap around it grows, with its row. Only Settings › Chat's Keep my question in view had it before.**
 
 ### Fixed
 
