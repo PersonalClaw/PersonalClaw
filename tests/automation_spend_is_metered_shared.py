@@ -103,12 +103,13 @@ class Site:
 class _Census(ast.NodeVisitor):
     """Every call *counted* answers for, with the function it sits in."""
 
-    def __init__(
-        self, path: str, counted: Callable[[ast.Call], bool], up: dict[int, ast.AST]
-    ) -> None:
+    def __init__(self, path: str, counted: Callable[[ast.Call], bool], tree: ast.AST) -> None:
         self.path = path
         self.counted = counted
-        self.up = up
+        self.tree = tree
+        #: Each node's parent, mapped only when a node that names the method needs its own:
+        #: a map of every tree cost more than the rest of the census together.
+        self.up: dict[int, ast.AST] | None = None
         self.stack: list[str] = []
         self.funcs: list[ast.AST] = []
         self.sites: list[Site] = []
@@ -127,6 +128,11 @@ class _Census(ast.NodeVisitor):
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
+    def _parent(self, node: ast.AST) -> ast.AST | None:
+        if self.up is None:
+            self.up = parents(self.tree)
+        return self.up.get(id(node))
+
     def visit_Call(self, node: ast.Call) -> None:
         if self.counted(node):
             func = self.funcs[-1] if self.funcs else None
@@ -136,7 +142,8 @@ class _Census(ast.NodeVisitor):
     def visit_Attribute(self, node: ast.Attribute) -> None:
         # Any other read of `….get_or_create` (an alias, a bind under another name, a callback):
         # an acquisition whose keywords nothing here reads, so it is read as a call with none.
-        if self.counted is _acquires and acquires(node, self.up.get(id(node))):
+        named = node.attr == "get_or_create"
+        if named and self.counted is _acquires and acquires(node, self._parent(node)):
             func = self.funcs[-1] if self.funcs else None
             bare = ast.Call(
                 func=node, args=[], keywords=[], lineno=node.lineno, col_offset=node.col_offset
@@ -147,7 +154,8 @@ class _Census(ast.NodeVisitor):
     def visit_Constant(self, node: ast.Constant) -> None:
         # The method named by a string (`attrgetter`, `methodcaller`, `__getattribute__`, a name a
         # later getattr reads): an acquisition whose keywords nothing reads, as a read is.
-        if self.counted is _acquires and acquires(node, self.up.get(id(node))):
+        named = node.value == "get_or_create"
+        if named and self.counted is _acquires and acquires(node, self._parent(node)):
             func = self.funcs[-1] if self.funcs else None
             bare = ast.Call(
                 func=node, args=[], keywords=[], lineno=node.lineno, col_offset=node.col_offset
@@ -169,7 +177,7 @@ def _resolves(call: ast.Call) -> bool:
 
 
 def census(tree: ast.AST, path: str, counted: Callable[[ast.Call], bool] = _acquires) -> list[Site]:
-    visitor = _Census(path, counted, parents(tree))
+    visitor = _Census(path, counted, tree)
     visitor.visit(tree)
     return visitor.sites
 
