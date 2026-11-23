@@ -1,21 +1,10 @@
 {
   "dark": {
     "targets": {
-      "320": [
-        "button \"More actions\"",
-        "button \"New agent\""
-      ],
-      "390": [
-        "button \"More actions\"",
-        "button \"New agent\""
-      ],
-      "412": [
-        "button \"More actions\"",
-        "button \"New agent\""
-      ],
+      "320": [],
+      "390": [],
+      "412": [],
       "768": [
-        "button \"More actions\"",
-        "button \"New agent\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",
@@ -33,21 +22,10 @@
   },
   "light": {
     "targets": {
-      "320": [
-        "button \"More actions\"",
-        "button \"New agent\""
-      ],
-      "390": [
-        "button \"More actions\"",
-        "button \"New agent\""
-      ],
-      "412": [
-        "button \"More actions\"",
-        "button \"New agent\""
-      ],
+      "320": [],
+      "390": [],
+      "412": [],
       "768": [
-        "button \"More actions\"",
-        "button \"New agent\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",

@@ -2,25 +2,21 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"New skill\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\""
       ],
       "390": [
-        "button \"New skill\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\""
       ],
       "412": [
-        "button \"New skill\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\""
       ],
       "768": [
-        "button \"New skill\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Browse\"",
@@ -42,25 +38,21 @@
   "light": {
     "targets": {
       "320": [
-        "button \"New skill\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\""
       ],
       "390": [
-        "button \"New skill\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\""
       ],
       "412": [
-        "button \"New skill\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\""
       ],
       "768": [
-        "button \"New skill\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Browse\"",

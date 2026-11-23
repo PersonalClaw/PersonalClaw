@@ -6,11 +6,8 @@
         "button \"Fact\"",
         "button \"Lesson\"",
         "button[role=radio] \"Audit\"",
-        "button[role=radio] \"Files\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Recall\"",
         "button[role=radio] \"Settings\"",
         "button[role=radio] \"Studio\""
@@ -66,11 +63,8 @@
         "button \"Fact\"",
         "button \"Lesson\"",
         "button[role=radio] \"Audit\"",
-        "button[role=radio] \"Files\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Recall\"",
         "button[role=radio] \"Settings\"",
         "button[role=radio] \"Studio\""

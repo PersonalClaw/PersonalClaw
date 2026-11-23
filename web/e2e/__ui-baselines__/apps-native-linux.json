@@ -39,7 +39,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
@@ -81,7 +80,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
@@ -123,7 +121,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
@@ -165,7 +162,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Install from URL\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",
@@ -223,7 +219,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
@@ -265,7 +260,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
@@ -307,7 +301,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Install from URL\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
@@ -349,7 +342,6 @@
         "button \"Actions for UI Docs Tools\"",
         "button \"Actions for Vector Memory\"",
         "button \"Actions for Workflow Tools\"",
-        "button \"Install from URL\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",

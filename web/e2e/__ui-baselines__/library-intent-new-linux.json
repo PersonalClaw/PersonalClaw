@@ -5,9 +5,6 @@
         "button \"Cancel\"",
         "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Only these kinds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""
@@ -49,9 +46,6 @@
         "button \"Cancel\"",
         "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Only these kinds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""

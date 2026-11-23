@@ -2,20 +2,14 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"More actions\"",
-        "button \"Reload the audit log\"",
         "button[role=radio] \"Audit\"",
-        "button[role=radio] \"Files\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Recall\"",
         "button[role=radio] \"Settings\"",
         "button[role=radio] \"Studio\""
       ],
       "390": [
-        "button \"Reload the audit log\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -24,7 +18,6 @@
         "button[role=radio] \"Studio\""
       ],
       "412": [
-        "button \"Reload the audit log\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -33,7 +26,6 @@
         "button[role=radio] \"Studio\""
       ],
       "768": [
-        "button \"Reload the audit log\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -51,20 +43,14 @@
   "light": {
     "targets": {
       "320": [
-        "button \"More actions\"",
-        "button \"Reload the audit log\"",
         "button[role=radio] \"Audit\"",
-        "button[role=radio] \"Files\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Recall\"",
         "button[role=radio] \"Settings\"",
         "button[role=radio] \"Studio\""
       ],
       "390": [
-        "button \"Reload the audit log\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -73,7 +59,6 @@
         "button[role=radio] \"Studio\""
       ],
       "412": [
-        "button \"Reload the audit log\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -82,7 +67,6 @@
         "button[role=radio] \"Studio\""
       ],
       "768": [
-        "button \"Reload the audit log\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",

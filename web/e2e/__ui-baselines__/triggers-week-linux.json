@@ -2,7 +2,6 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"New trigger\"",
         "button \"Next week\"",
         "button \"Previous week\"",
         "button[role=radio] \"Automations\"",
@@ -19,7 +18,6 @@
         "td[role=button] \"Wed, Nov 4 08:00\""
       ],
       "390": [
-        "button \"New trigger\"",
         "button \"Next week\"",
         "button \"Previous week\"",
         "button[role=radio] \"Automations\"",
@@ -34,7 +32,6 @@
         "td[role=button] \"Tue, Nov 3 22:00\""
       ],
       "412": [
-        "button \"New trigger\"",
         "button \"Next week\"",
         "button \"Previous week\"",
         "button[role=radio] \"Automations\"",
@@ -46,7 +43,6 @@
         "td[role=button] \"Sat, Nov 7 22:00\""
       ],
       "768": [
-        "button \"New trigger\"",
         "button \"Next week\"",
         "button \"Previous week\"",
         "button[role=radio] \"Automations\"",
@@ -64,7 +60,6 @@
   "light": {
     "targets": {
       "320": [
-        "button \"New trigger\"",
         "button \"Next week\"",
         "button \"Previous week\"",
         "button[role=radio] \"Automations\"",
@@ -81,7 +76,6 @@
         "td[role=button] \"Wed, Nov 4 08:00\""
       ],
       "390": [
-        "button \"New trigger\"",
         "button \"Next week\"",
         "button \"Previous week\"",
         "button[role=radio] \"Automations\"",
@@ -96,7 +90,6 @@
         "td[role=button] \"Tue, Nov 3 22:00\""
       ],
       "412": [
-        "button \"New trigger\"",
         "button \"Next week\"",
         "button \"Previous week\"",
         "button[role=radio] \"Automations\"",
@@ -108,7 +101,6 @@
         "td[role=button] \"Sat, Nov 7 22:00\""
       ],
       "768": [
-        "button \"New trigger\"",
         "button \"Next week\"",
         "button \"Previous week\"",
         "button[role=radio] \"Automations\"",

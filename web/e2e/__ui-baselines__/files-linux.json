@@ -2,30 +2,20 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"More actions\"",
-        "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
-        "button[role=radio] \"Context: Repeatable\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
+        "button[role=radio] \"Context: Repeatable\""
       ],
       "390": [
-        "button \"More actions\"",
-        "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
         "button[role=radio] \"Uploads\""
       ],
       "412": [
-        "button \"More actions\"",
-        "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
         "button[role=radio] \"Uploads\""
       ],
       "768": [
-        "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
         "button[role=radio] \"Outbox\"",
@@ -43,30 +33,20 @@
   "light": {
     "targets": {
       "320": [
-        "button \"More actions\"",
-        "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
-        "button[role=radio] \"Context: Repeatable\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
+        "button[role=radio] \"Context: Repeatable\""
       ],
       "390": [
-        "button \"More actions\"",
-        "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
         "button[role=radio] \"Uploads\""
       ],
       "412": [
-        "button \"More actions\"",
-        "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
         "button[role=radio] \"Uploads\""
       ],
       "768": [
-        "button \"Show explorer\"",
         "button[role=radio] \"Context: Personal\"",
         "button[role=radio] \"Context: Repeatable\"",
         "button[role=radio] \"Outbox\"",

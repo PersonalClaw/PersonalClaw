@@ -2,28 +2,24 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"New snippet\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
         "button[role=radio] \"User\""
       ],
       "390": [
-        "button \"New snippet\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
         "button[role=radio] \"User\""
       ],
       "412": [
-        "button \"New snippet\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
         "button[role=radio] \"User\""
       ],
       "768": [
-        "button \"New snippet\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Bundled\"",
@@ -46,28 +42,24 @@
   "light": {
     "targets": {
       "320": [
-        "button \"New snippet\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
         "button[role=radio] \"User\""
       ],
       "390": [
-        "button \"New snippet\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
         "button[role=radio] \"User\""
       ],
       "412": [
-        "button \"New snippet\"",
         "button[role=radio] \"Bundled\"",
         "button[role=radio] \"Snippets\"",
         "button[role=radio] \"System\"",
         "button[role=radio] \"User\""
       ],
       "768": [
-        "button \"New snippet\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Bundled\"",

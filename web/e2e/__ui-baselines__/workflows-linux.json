@@ -3,7 +3,6 @@
     "targets": {
       "320": [
         "button \"Browse all definitions\"",
-        "button \"Start from template\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -11,7 +10,6 @@
       ],
       "390": [
         "button \"Browse all definitions\"",
-        "button \"Start from template\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -19,7 +17,6 @@
       ],
       "412": [
         "button \"Browse all definitions\"",
-        "button \"Start from template\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -27,7 +24,6 @@
       ],
       "768": [
         "button \"Browse all definitions\"",
-        "button \"Start from template\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -44,7 +40,6 @@
     "targets": {
       "320": [
         "button \"Browse all definitions\"",
-        "button \"Start from template\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -52,7 +47,6 @@
       ],
       "390": [
         "button \"Browse all definitions\"",
-        "button \"Start from template\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -60,7 +54,6 @@
       ],
       "412": [
         "button \"Browse all definitions\"",
-        "button \"Start from template\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -68,7 +61,6 @@
       ],
       "768": [
         "button \"Browse all definitions\"",
-        "button \"Start from template\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
