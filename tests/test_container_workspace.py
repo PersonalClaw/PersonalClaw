@@ -389,11 +389,14 @@ class TestTeardown:
 
         monkeypatch.setattr(CliContainerBackend, "remove", fake_remove)
 
-        ws = tmp_path / "ws"
-        ws.mkdir()
         run = WorkflowRun(id="r11", workflow_name="w", inputs={})
+        # The folder a container workspace works in: the run's own scratch folder, which only
+        # this home makes (a record naming another is left, `provisioning._another_homes_folder`).
+        ws = provisioning.scratch_location(run.id)
+        ws.mkdir(parents=True)
         run.extra[provisioning.WORKSPACE_KEY] = {
             "path": str(ws),
+            "mode": "container",
             "isolated": True,
             "container_id": "pclaw-run-r11",
             "container_backend": "docker",
@@ -407,11 +410,14 @@ class TestTeardown:
             return BackendResult(False, reason="daemon gone")
 
         monkeypatch.setattr(CliContainerBackend, "remove", fake_remove)
-        ws = tmp_path / "ws2"
-        ws.mkdir()
         run = WorkflowRun(id="r12", workflow_name="w", inputs={})
+        # The folder a container workspace works in: the run's own scratch folder, which only
+        # this home makes (a record naming another is left, `provisioning._another_homes_folder`).
+        ws = provisioning.scratch_location(run.id)
+        ws.mkdir(parents=True)
         run.extra[provisioning.WORKSPACE_KEY] = {
             "path": str(ws),
+            "mode": "container",
             "isolated": True,
             "container_id": "pclaw-run-r12",
             "container_backend": "docker",

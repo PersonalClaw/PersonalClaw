@@ -151,7 +151,6 @@
 {"site": "src/personalclaw/workflows/engine.py::dispatch_gate", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 472, "complexity": 67}
 {"site": "src/personalclaw/workflows/engine.py::dispatch_stage", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 261, "complexity": 32}
 {"site": "src/personalclaw/workflows/mutations.py::validate_batch", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 149, "complexity": 35}
-{"site": "src/personalclaw/workflows/provisioning.py::teardown", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 99, "complexity": 31}
 {"site": "src/personalclaw/workflows/service.py::inspect_node", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 179, "complexity": 38}
 {"site": "src/personalclaw/workflows/service.py::start_run", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 291, "complexity": 39}
 {"site": "src/personalclaw/workflows/template_lint.py::_check_anti_patterns", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 167, "complexity": 43}
