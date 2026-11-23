@@ -17,6 +17,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **An agent's settings say its tool list holds for the PersonalClaw tools an agent CLI is offered, and that the CLI's own built-in tools follow its permission mode.**
+- **Saving the tool list of an agent on an agent CLI warns of each entry that lets the CLI call nothing.**
 
 ### Fixed
 

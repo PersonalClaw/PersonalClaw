@@ -2386,6 +2386,12 @@ def _aggregated_list_tools() -> list[dict[str, Any]]:
     ]
 
 
+def own_tool_names() -> list[str]:
+    """The name of every tool PersonalClaw's own ``mcp-core`` surface serves an agent CLI: the
+    tools an agent's tool list can hold there (``agents.tool_list``, ``mcp_shared``)."""
+    return [str(tool.get("name") or "") for tool in _aggregated_list_tools()]
+
+
 def own_tool(name: str) -> dict[str, Any] | None:
     """The tool dict PersonalClaw's own ``mcp-core`` surface serves as *name*, or ``None``.
 

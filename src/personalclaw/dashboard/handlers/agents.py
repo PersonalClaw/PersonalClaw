@@ -1623,7 +1623,32 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
         source="dashboard",
         resources=f"{name} ({','.join(changed)})",
     )
-    return web.json_response({"ok": True, "name": name, "revision": revision_of(saved)})
+    revision = revision_of(saved)
+    warnings = await asyncio.to_thread(cli_tool_list_warnings, name, agent)
+    if warnings:
+        return web.json_response(
+            {"ok": True, "name": name, "revision": revision, "warnings": warnings}
+        )
+    return web.json_response({"ok": True, "name": name, "revision": revision})
+
+
+def cli_tool_list_warnings(name: str, agent: Any) -> list[str]:
+    """What the agent *name*'s tool list holds nothing for, when it runs on an agent CLI: each entry
+    that matches no PersonalClaw tool a CLI is offered (``mcp_core.own_tool_names``), such as a tool
+    of PersonalClaw's own runtime, another tool server's tool or a typo. The save stands, since the
+    list still holds the tools it does match; its answer warns of each such entry."""
+    tools = list(getattr(agent, "tools", None) or [])
+    if not tools or not str(getattr(agent, "provider", "") or "").startswith("acp"):
+        return []
+    from personalclaw import mcp_core
+    from personalclaw.agents.tool_list import AgentTools
+
+    unmatched = AgentTools.of(name, tools).unmatched(mcp_core.own_tool_names())
+    return [
+        f"“{entry}” is not one of the PersonalClaw tools an agent CLI is offered, so on this agent "
+        "it lets the CLI call nothing. The CLI's own built-in tools follow its permission mode."
+        for entry in unmatched
+    ]
 
 
 def _agent_edited(
