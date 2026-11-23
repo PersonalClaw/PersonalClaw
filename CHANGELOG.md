@@ -91,6 +91,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An app that adds an automation action, such as A2A Agent Call or HTTP Webhook, no longer offers its action's fields under Apps › Configure, where they were saved as settings nothing read, so an automation set up there failed on every run. Its Configure is now Set up in an automation, which opens the Automations page, where each automation's action takes those fields.**
 - **A workflow's model tiers offer only the use cases its steps run on, and say what a stage runs on.** Settings › Workflows › Model tiers offered Chat and Code & tools for each tier, and a step that makes its own model call (an `infer` step, a judge gate) never runs on either: a tier set to one ran on Reasoning, and nothing said so. Each tier now offers Reasoning, Background, Orchestration and Loops, the setting refuses anything else, and the page says a stage step's agent runs on Orchestration, or on the model the step names. A tier saved as Chat or Code & tools reads as its default (Reasoning, Orchestration or Background), and the log names it.
 - **A run page's Document panel shows the note a step keeps as soon as the step settles, without a reload, and a run that ended without its document says so instead of "The worker has not written it yet."**
+- **The buddy playground's Running now list wraps each line in its column at 200% text zoom. A line cut short ran into Focused work beside it.**
 
 ### Security
 

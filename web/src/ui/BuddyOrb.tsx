@@ -40,9 +40,12 @@ export interface BuddyOrbProps {
   still?: boolean
   /** Sit on the disc plate: the desktop's window, over wallpaper and other windows. */
   plate?: boolean
+  /** Wrap the line under its own width rather than cut it short: for a list whose rows say their
+   *  whole line in a column, as the playground's running list does. */
+  wraps?: boolean
 }
 
-export function BuddyOrb({ state, line, size = 48, still = false, plate = false }: BuddyOrbProps) {
+export function BuddyOrb({ state, line, size = 48, still = false, plate = false, wraps = false }: BuddyOrbProps) {
   const [motion, contrast] = useSyncExternalStore(onOrbMediaChange, mediaNow, mediaNow).split('|') as ['reduced' | 'motion', ReturnType<typeof orbContrast>]
   const reduced = motion === 'reduced'
   const shown = useSyncExternalStore(onVisibilityChange, pageShown, pageShown)
@@ -88,7 +91,7 @@ export function BuddyOrb({ state, line, size = 48, still = false, plate = false 
       data-buddy-orb={reduced ? 'still' : 'animated'} data-buddy-state={state} data-buddy-family={family} data-buddy-scene={scene}
       data-buddy-moving={String(running)} data-buddy-change={morph.changing} data-buddy-ink={ink ?? ''} data-buddy-ink-token={inkToken}
       data-buddy-contrast={contrast} {...(plate ? { 'data-buddy-plate': '' } : {})}
-      className="inline-flex min-w-0 items-center gap-2"
+      className={wraps ? 'flex min-w-0 items-start gap-2' : 'inline-flex min-w-0 items-center gap-2'}
     >
       <span className="relative inline-block shrink-0" style={{ width: size, height: size }}>
         {/* Decoration (#3902): its state is said in words beside it, by the line or, without one,
@@ -100,7 +103,7 @@ export function BuddyOrb({ state, line, size = 48, still = false, plate = false 
         />
       </span>
       {/* Without a line nothing sits beside the art, so an orb in a slot is in its middle (#5216). */}
-      {line ? <span data-buddy-line="" data-type="body-s" className="min-w-0 truncate text-on-surface">{line}</span> : <span data-buddy-words="" className="sr-only">{wordsOf(state)}</span>}
+      {line ? <span data-buddy-line="" data-type="body-s" className={`min-w-0 text-on-surface ${wraps ? 'break-words' : 'truncate'}`}>{line}</span> : <span data-buddy-words="" className="sr-only">{wordsOf(state)}</span>}
     </span>
   )
 }
