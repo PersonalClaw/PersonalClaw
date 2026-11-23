@@ -818,7 +818,13 @@ def _domain_counts(stage: Path) -> dict[str, dict[str, int]]:
                 except (OSError, UnicodeDecodeError):
                     continue
         elif entry.kind == inv.KIND_JSON_ENTITY_DIR and staged.is_dir():
-            bucket["rows"] += sum(1 for _ in staged.rglob("*.json"))
+            # A file the gateway keeps for the store itself is one of the domain's files, never one
+            # of its rows: a fresh home's once-written digest table read as automation data.
+            bucket["rows"] += sum(
+                1
+                for doc in staged.rglob("*.json")
+                if not inv.is_bookkeeping(entry, doc.relative_to(staged).as_posix())
+            )
     return out
 
 

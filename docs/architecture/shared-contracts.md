@@ -371,7 +371,8 @@ Every path under the home is claimed by a `StateEntry` in `src/personalclaw/dura
 `kind` (`json_entity_dir`, `json_file`, `jsonl_append`, `sqlite`, `tree`), `domain`, `merge`
 (`union_by_id`, `lww_by_updated_at`, `append_dedup`, `sqlite_attach_ignore`, `replace_only`) and the flags
 `secret`, `credential`, `derived`, `machine_local`, `machine_local_within` (globs inside a tree that never
-leave the machine, `inventory.py:116`), `merged_in`, `records`, `arrives`, `compared`,
+leave the machine, `inventory.py:116`), `bookkeeping_within` (files inside a tree the gateway keeps for
+the store itself, which a snapshot counts as files and never as rows), `merged_in`, `records`, `arrives`, `compared`,
 `edit_arrives`. An append-only folder of files (`jsonl_append` with a suffix-less path, such as
 `sessions` and `cron-history`) is neither sent nor taken by a sync (`append_only_folder`, `:2409-2414`).
 
