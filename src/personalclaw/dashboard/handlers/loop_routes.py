@@ -1086,11 +1086,16 @@ async def api_loop_action(request: web.Request) -> web.Response:
     return web.json_response(_loop_view(cid))
 
 
-def _loop_chats(state, loop_id: str) -> list[str]:
+async def _loop_chats(state, loop_id: str) -> list[str]:
     """Every chat loop *loop_id* made, by its bare name: each one open here and each one whose
     transcript is kept on disk (as after a restart) that the loop's own key reader maps to it
-    (``manager.session_loop``), its stage worker, each of its task workers and its planner."""
+    (``manager.session_loop``), its stage worker, each of its task workers and its planner.
+
+    The transcripts are listed off the gateway's event loop, as the history route lists them
+    (``chat_handlers._disk_listing``): a listing is a stat of every transcript and a read of each
+    one that changed, seconds on a home with many chats."""
     from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
+    from personalclaw.dashboard.chat_handlers import _disk_listing
     from personalclaw.history import RECORDED_KEY
 
     names = [
@@ -1100,7 +1105,7 @@ def _loop_chats(state, loop_id: str) -> list[str]:
     listed: list[tuple[dict, Any]] = []
     if log is not None:
         try:
-            listed = log.list_sessions_with_metadata()
+            listed = await asyncio.to_thread(_disk_listing, log)
         except Exception:
             logger.debug("loop delete: transcripts not listed for %s", loop_id, exc_info=True)
     for entry, meta in listed:
@@ -1120,7 +1125,7 @@ async def _reap_loop_sessions(state, loop_id: str, *, by: str) -> tuple[str, ...
     transcript could not be removed."""
     from personalclaw.dashboard.chat_forget import delete_chats
 
-    chats = _loop_chats(state, loop_id)
+    chats = await _loop_chats(state, loop_id)
     if not chats:
         return ()
     return (await delete_chats(state, chats, by=by)).failed

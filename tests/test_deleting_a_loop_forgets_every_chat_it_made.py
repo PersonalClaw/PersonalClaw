@@ -9,11 +9,14 @@ hand, transcript only, so their tool results and checkpoints stayed, and no audi
 were deleted. Now each chat the loop's own key reader (``loop.manager.session_loop``) maps to the
 loop, live or kept on disk, goes through the one chat delete (``chat_forget.delete_chats``).
 
-🔴 Red before: every row here but the one that keeps other loops' and a person's chats.
+🔴 Red before: every row here but the one that keeps other loops' and a person's chats. The row
+that the transcripts are listed off the event loop is red at this fix's first version, which listed
+them on it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -204,3 +207,42 @@ async def test_a_loop_chat_that_could_not_be_removed_is_named_in_the_answer(stat
 
     assert body["ok"] is True, "the loop itself was deleted"
     assert body["chats_kept"] == [f"loop-{cid}-{TASK}"]
+
+
+@pytest.mark.asyncio
+async def test_the_transcripts_are_listed_off_the_gateways_event_loop(state, monkeypatch):
+    """A listing stats every transcript and reads each one that changed: seconds on a home with
+    many chats, which the gateway's event loop would spend answering nothing else."""
+    cid = _loop()
+    task = _chat(state, f"loop-{cid}-{TASK}", live=False)
+    real = state.conversation_log.list_sessions_with_metadata
+    on_the_loop: list[bool] = []
+
+    def listing():
+        try:
+            asyncio.get_running_loop()
+            on_the_loop.append(True)
+        except RuntimeError:
+            on_the_loop.append(False)
+        return real()
+
+    monkeypatch.setattr(state.conversation_log, "list_sessions_with_metadata", listing)
+
+    await _delete(state, cid)
+
+    assert on_the_loop and not any(on_the_loop), on_the_loop
+    assert not _kept(state, task)
+
+
+@pytest.mark.asyncio
+async def test_a_loop_chat_open_here_with_no_transcript_yet_goes_too(state):
+    """A worker started this turn whose first save has not happened: it is found by its live
+    session alone, and leaves the gateway with the loop."""
+    cid = _loop()
+    name = f"loop-{cid}-{TASK}"
+    state.get_or_create_session(name=name)
+    assert not _kept(state, persisted_history_key(state.conversation_log, name))
+
+    await _delete(state, cid)
+
+    assert name not in state._sessions, "a loop chat open here with no transcript stayed open"
