@@ -3,10 +3,7 @@
     "targets": {
       "320": [
         "button \"Back to Library\"",
-        "button \"Try again\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
+        "button \"Try again\""
       ],
       "390": [
         "button \"Back to Library\"",
@@ -31,10 +28,7 @@
     "targets": {
       "320": [
         "button \"Back to Library\"",
-        "button \"Try again\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
+        "button \"Try again\""
       ],
       "390": [
         "button \"Back to Library\"",

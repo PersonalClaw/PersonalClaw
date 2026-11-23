@@ -2,10 +2,7 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
-        "button \"New task\"",
-        "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
@@ -15,11 +12,8 @@
         "button[role=radio] \"List view\""
       ],
       "390": [
-        "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
         "button \"Garden: its page\"",
-        "button \"New task\"",
-        "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
@@ -29,11 +23,8 @@
         "button[role=radio] \"List view\""
       ],
       "412": [
-        "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
         "button \"Garden: its page\"",
-        "button \"New task\"",
-        "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
@@ -43,11 +34,8 @@
         "button[role=radio] \"List view\""
       ],
       "768": [
-        "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
         "button \"Garden: its page\"",
-        "button \"New task\"",
-        "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
@@ -66,10 +54,7 @@
   "light": {
     "targets": {
       "320": [
-        "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
-        "button \"New task\"",
-        "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
@@ -79,11 +64,8 @@
         "button[role=radio] \"List view\""
       ],
       "390": [
-        "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
         "button \"Garden: its page\"",
-        "button \"New task\"",
-        "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
@@ -93,11 +75,8 @@
         "button[role=radio] \"List view\""
       ],
       "412": [
-        "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
         "button \"Garden: its page\"",
-        "button \"New task\"",
-        "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",
@@ -107,11 +86,8 @@
         "button[role=radio] \"List view\""
       ],
       "768": [
-        "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
         "button \"Garden: its page\"",
-        "button \"New task\"",
-        "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
         "button \"Select: Order the soil\"",
         "button \"Select: Plant the beans\"",

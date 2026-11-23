@@ -2,10 +2,7 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Regenerate intelligence\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
+        "button \"Regenerate intelligence\""
       ],
       "390": [
         "button \"Regenerate intelligence\""
@@ -28,10 +25,7 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Regenerate intelligence\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
+        "button \"Regenerate intelligence\""
       ],
       "390": [
         "button \"Regenerate intelligence\""

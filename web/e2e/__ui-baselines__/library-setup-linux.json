@@ -1,11 +1,7 @@
 {
   "dark": {
     "targets": {
-      "320": [
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
-      ],
+      "320": [],
       "390": [],
       "412": [],
       "768": []
@@ -18,11 +14,7 @@
   },
   "light": {
     "targets": {
-      "320": [
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
-      ],
+      "320": [],
       "390": [],
       "412": [],
       "768": []
