@@ -36,8 +36,9 @@ export function CapabilityPermissions({ rows }: { rows: PermissionRow[] }) {
 const listed = (items: readonly string[] | undefined, none: string) => (items && items.length > 0 ? items.join(', ') : none)
 
 /** A native agent's permissions: how its tool calls are approved, and the tools and skills it may
- *  use. `runsOn` names the agent CLI it runs on, where PersonalClaw's lists do not hold. The words
- *  are the editor's own (`AgentForm`). */
+ *  use. `runsOn` names the agent CLI it runs on, where its tool list holds for the PersonalClaw tools
+ *  the CLI is offered, its skill list not at all, and the CLI's own tools follow its permission mode.
+ *  The words are the editor's own (`AgentForm`). */
 export function agentPermissions(agent: SavedAgent, runsOn?: string): PermissionRow[] {
   const mode = agent.approval_mode ?? ''
   return [
@@ -45,7 +46,7 @@ export function agentPermissions(agent: SavedAgent, runsOn?: string): Permission
     {
       label: 'Tools',
       value: runsOn
-        ? `Not applied: ${runsOn} runs its own tools, and a tool list holds only on PersonalClaw's own agent.`
+        ? `${agent.tools?.length ? `PersonalClaw's ${agent.tools.join(', ')}` : "All of PersonalClaw's tools"}. ${runsOn}'s own built-in tools follow its permission mode.`
         : listed(agent.tools, 'All available tools'),
     },
     {

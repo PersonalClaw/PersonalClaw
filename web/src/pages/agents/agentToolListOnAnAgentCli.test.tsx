@@ -1,11 +1,9 @@
 /**
- * An agent's tool list is held on PersonalClaw's own agent, so the editor says what it does there
- * and that it does not apply to an agent that runs on an agent CLI.
- *
- * PersonalClaw's own runtime shows an agent's model only the tools its list allows and refuses a
- * call to any other. An agent CLI runs its own tools where no list of PersonalClaw's can hold them,
- * so on such an agent the picker saying "Tools this agent may call" would promise a limit nothing
- * enforces. It names the CLI and says the list is not applied instead.
+ * An agent's tool list says where it holds: on PersonalClaw's own agent, every tool its model may
+ * call; on an agent that runs on an agent CLI, the PersonalClaw tools the CLI is offered and may
+ * call (its tool servers hold the list), while the CLI's own built-in tools follow its permission
+ * mode, which no list of PersonalClaw's reaches. It used to say the list was not applied there at
+ * all, since nothing held it.
  *
  * An entry the catalog does not offer still holds the agent: a pattern (`mcp/files/*`), or a tool
  * that is not installed here now. The picker lists only the catalog's tools, so such an entry was
@@ -39,10 +37,10 @@ describe("an agent's tool list says where it holds", () => {
     expect(screen.getByText('Tools this agent may call. None selected = all available tools.')).toBeTruthy()
   })
 
-  it('on an agent CLI: that it is not applied, naming the CLI', () => {
+  it("on an agent CLI: the PersonalClaw tools it may call, and that the CLI's own follow its mode", () => {
     render(<AgentForm draft={{ ...emptyDraft(), name: 'reviewer' }} onChange={vi.fn()} runsOn="Claude Code" />)
     expect(screen.getByText(
-      "Not applied: Claude Code runs its own tools, and a tool list holds only on PersonalClaw's own agent.",
+      "PersonalClaw tools Claude Code may call. None selected = all of them. Claude Code's own built-in tools follow its permission mode.",
     )).toBeTruthy()
     expect(screen.queryByText('Tools this agent may call. None selected = all available tools.')).toBeNull()
   })

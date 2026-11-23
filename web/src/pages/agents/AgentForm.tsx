@@ -225,7 +225,7 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, r
         : 'Skills this agent may use. None selected = all available skills.'} options={skills} value={draft.skills} onChange={(v) => set('skills', v)}
         unlisted={() => (skillsLoaded ? 'No skill of this name is here now' : '')} />
       <CheckList label="Tools" hint={runsOn
-        ? `Not applied: ${runsOn} runs its own tools, and a tool list holds only on PersonalClaw's own agent.`
+        ? `PersonalClaw tools ${runsOn} may call. None selected = all of them. ${runsOn}'s own built-in tools follow its permission mode.`
         : 'Tools this agent may call. None selected = all available tools.'} options={tools} value={draft.tools} onChange={(v) => set('tools', v)}
         unlisted={(entry) => (/[*?[]/.test(entry) ? 'Pattern: every tool whose name fits it' : toolsLoaded ? 'No tool of this name is here now' : '')} />
       <CheckList label="Triggers" hint="Lifecycle triggers that fire for this agent (the agent-scoped allow-list)." options={lifecycleTriggers} value={draft.triggers} onChange={(v) => set('triggers', v)} />

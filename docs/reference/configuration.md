@@ -400,7 +400,7 @@ agent name. Every field is optional — empty inherits the global default.
 | `agents.*.model` | string | `""` | Default model for this agent. Overridable per-chat. |
 | `agents.*.approval_mode` | string | `""` | `auto`, `interactive`, or empty (inherit global). |
 | `agents.*.skills` | list | `[]` | The skills this agent may use: skill names. Empty is every skill. Held on PersonalClaw's own agent, not on an agent CLI — see [An agent's skill list](#an-agents-skill-list-agentsskills). |
-| `agents.*.tools` | list | `[]` | The tools this agent may use: tool names, or patterns over them. Empty is every tool. A save that widens it asks you first. Held on PersonalClaw's own agent, not on an agent CLI — see [An agent's tool list](#an-agents-tool-list-agentstools). |
+| `agents.*.tools` | list | `[]` | The tools this agent may use: tool names, or patterns over them. Empty is every tool. A save that widens it asks you first. Held on PersonalClaw's own agent, and on an agent CLI for the PersonalClaw tools it is offered — see [An agent's tool list](#an-agents-tool-list-agentstools). |
 | `agents.*.triggers` | list | `[]` | Referenced lifecycle-trigger IDs. A lifecycle trigger fires ONLY for agents that list it. |
 | `agents.*.source` | string | `personalclaw` | Agent origin: `personalclaw`, `marketplace`, or `builtin`. |
 
@@ -455,9 +455,15 @@ every tool PersonalClaw offers it. A list is the whole of what the agent may use
   (`subagent_run`, a workflow, a loop) starts it held to the list of the agent the work runs as: a
   spawn that names no agent runs as the agent of the chat that started it. Leave those tools off
   the list to keep an agent to its own tools.
-- **An agent CLI (`acp:<cli>`) is not held to it.** The CLI runs its own tools in its own process,
-  where no list of PersonalClaw's tool names can hold them, so the Agents page says the list is not
-  applied to an agent that runs on one.
+- **On an agent CLI (`acp:<cli>`) it holds PersonalClaw's tools, not the CLI's own.** The CLI is
+  handed PersonalClaw's tools through PersonalClaw's tool servers, which offer it only the ones the
+  list allows and refuse a call to any other in the same words, with an audit row (`refused`,
+  `agent_tools`). A session that names no agent runs as the default agent there too. The CLI's own
+  built-in tools (its shell, its file edits) run in its own process, where no list of PersonalClaw's
+  reaches: they follow the CLI's permission mode, as the Agents page says. While a tool server has
+  not yet read its session's policy (a session the gateway has not registered yet, or a gateway it
+  cannot reach), it offers every tool, and it holds the list from the first call after the read; a
+  saved list reaches an open session at its next turn.
 
 ### An agent's skill list (`agents.*.skills`)
 

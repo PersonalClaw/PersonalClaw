@@ -14,6 +14,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A message you are typing survives a reload, and one sent while PersonalClaw is away goes once it is back. Each chat keeps its draft in this browser (its text, what you pasted, attached and mentioned) through a reload, a closed tab or a quit desktop app, and its row in the chat list says Draft. A message sent while the connection is down or PersonalClaw restarts waits above the composer as Waiting to send and goes once, as one bubble, when the chat is connected again; after a day it asks Send now or Remove. A Temporary or Incognito chat keeps no draft. Deleting a chat takes its draft and its waiting messages, so nothing is sent into it afterwards, and signing out takes them all.**
 - **A chat reply that says work happened which its own turn did not do now gets a short note after it. A reply saying a helper completed its work, from a turn that ran no helper, or that a file is staged when the repository has not staged it, ends with one line naming what the answer says and what the turn's record or the repository shows; a reply whose claims match gets none. `personalclaw run` also prints the check-work offer for a turn that earns it.**
 
+### Changed
+
+- **An agent's settings say its tool list holds for the PersonalClaw tools an agent CLI is offered, and that the CLI's own built-in tools follow its permission mode.**
+
 ### Fixed
 
 - **A chat's permission and task mode controls show the mode it runs in when it was set elsewhere: a pick in another tab or on another device, or YOLO turned on, off or running out. An open chat's Execution Boundary reads its sandbox again once a switch of its agent has been taken, and a project's start box never shows a permission mode this computer's operator settings would refuse: it keeps Normal and says why.**
