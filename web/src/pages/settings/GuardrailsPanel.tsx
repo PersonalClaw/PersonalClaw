@@ -10,6 +10,7 @@ import { RungChip } from '../../ui/RungChip'
 import { rungMeta } from '../../lib/rungs'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { confirm } from '../../ui/dialog'
+import { AGENT_CLI_CAP } from './agentCliSpend'
 
 /** Guardrails — the personal safety floor. Six groups:
  *  the incident kill switch, the browse kill switch, daily spend budgets, the outbound secret/PII scan mode,
@@ -81,7 +82,7 @@ export function GuardrailsPanel() {
       <IncidentSection />
       <BrowseKillSection />
 
-      <Section title="Daily budget" hint="Cap what your automations, Unattended loops, subagents and background work spend in a day; your chat turns and Attended loops, whose calls you answer, are not capped. Each ceiling resets at midnight. 0 = unlimited.">
+      <Section title="Daily budget" hint={`Cap what your automations, Unattended loops, subagents and background work spend in a day; your chat turns and Attended loops, whose calls you answer, are not capped. ${AGENT_CLI_CAP} Each ceiling resets at midnight. 0 = unlimited.`}>
         <RowGroup>
           <NumberRow label="Max tokens / day" hint="Counts every unattended call, local models' too. At the ceiling, unattended runs are skipped (a cron fire is paused, a subagent spawn refused) until it resets."
             value={cfg.budgets?.max_tokens_per_day ?? 0} min={0} step={1000} onSave={budget('max_tokens_per_day')} />

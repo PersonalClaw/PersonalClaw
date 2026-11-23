@@ -283,7 +283,7 @@
     - text: Unattended browsing On — unattended browse runs can start.
     - switch "Unattended browsing" [checked]
     - heading "Daily budget" [level=#]
-    - paragraph: Cap what your automations, Unattended loops, subagents and background work spend in a day; your chat turns and Attended loops, whose calls you answer, are not capped. Each ceiling resets at midnight. # = unlimited.
+    - paragraph: Cap what your automations, Unattended loops, subagents and background work spend in a day; your chat turns and Attended loops, whose calls you answer, are not capped. The cap counts an agent CLI's turn (Claude Code, Codex, Gemini CLI, Kiro CLI) only by what the CLI says it cost. A turn it says nothing of is billed on the CLI's own account, and the cap leaves its dollars out. Each ceiling resets at midnight. # = unlimited.
     - text: Max tokens / day Counts every unattended call, local models' too. At the ceiling, unattended runs are skipped (a cron fire is paused, a subagent spawn refused) until it resets.
     - status
     - spinbutton "Max tokens / day": "#"

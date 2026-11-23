@@ -97,6 +97,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A Code loop whose merge git refuses for anything but a conflict says what git said. Its question quotes git, and a lock file git names that was left behind is named, with when it was left. A failed merge, and a loop git step stopped for its time, are logged where the gateway's log keeps them, and the loop's status read takes no lock.**
 - **A workflow's dollar and token caps now hold its steps that run on an agent CLI.**
 - **A turn on Claude Code (or any agent CLI that says what its turn cost) now writes its Usage row and counts toward spend.**
+- **The Usage page and the daily budget say which agent CLI turns they leave out.**
 
 ### Security
 

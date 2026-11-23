@@ -28,7 +28,7 @@
   - button "Settings"
   - text: Usage
   - heading "Usage" [level=#]
-  - paragraph: "What you've spent — real tokens and real USD from a per-call ledger: every turn (chat, rooms, subagents, loops, automations) and every call PersonalClaw makes around them, from a chat's title and follow-ups to judges and digests. A call that does not finish writes no row and is recorded only in a separate log; the 'By day and purpose' section states how much that is. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price is shown honestly as 'unpriced', never $#.#, until you give it one under Model prices."
+  - paragraph: "What you've spent — real tokens and real USD from a per-call ledger: every turn (chat, rooms, subagents, loops, automations) and every call PersonalClaw makes around them, from a chat's title and follow-ups to judges and digests. A call that does not finish writes no row and is recorded only in a separate log; the 'By day and purpose' section states how much that is. Observation only: nothing here caps or throttles a turn (that's Guardrails). A model with no price is shown honestly as 'unpriced', never $#.#, until you give it one under Model prices. An agent CLI's turn (Claude Code, Codex, Gemini CLI, Kiro CLI) counts here only by what the CLI says it cost. A turn it says nothing of is billed on the CLI's own account and isn't counted here."
   - radiogroup "Usage period":
     - radio "Today" [checked]
     - radio "# days"
