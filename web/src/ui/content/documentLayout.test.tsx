@@ -8,6 +8,7 @@ import type {
   DocumentPageSetup,
   DocumentParagraphStyle,
 } from '../../lib/api'
+import { TIP_COPY, describedBy } from '../../test/describedBy'
 
 // ── The layout controls, the values they show, and the preview ────────────────────
 //
@@ -311,7 +312,7 @@ describe('a layout edit is what gets saved', () => {
     // FOCUSABLE on purpose, so a keyboard user can reach it and hear why it is unavailable.
     const save = screen.getByRole('button', { name: /^save$/i })
     expect(save).toHaveAttribute('aria-disabled', 'true')
-    expect(save).toHaveAttribute('title', 'No changes to save yet.')
+    expect(describedBy(save)).toEqual('No changes to save yet.')
   })
 
   it('a read-only host shows no layout controls at all, and says why', async () => {
@@ -323,7 +324,7 @@ describe('a layout edit is what gets saved', () => {
     expect(screen.queryByLabelText('Page size')).toBeNull()
     expect(screen.queryByLabelText('Orientation')).toBeNull()
     expect(screen.queryByRole('switch', { name: /number the pages/i })).toBeNull()
-    expect(screen.getByText(/read-only/i)).toBeInTheDocument()
+    expect(screen.getByText(/read-only/i, { ignore: TIP_COPY })).toBeInTheDocument()
     // The PREVIEW stays: reading a historical version's geometry is not editing it.
     expect(screen.getByRole('img', { name: /approximate a4 landscape page/i })).toBeInTheDocument()
   })

@@ -5,6 +5,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { join } from 'node:path'
 import { ruleGloss, SCAN_RULE_GLOSS } from './scanFindings'
 import { filesUnder, readSource } from '../test/sourceTree'
+import { describedBy } from '../test/describedBy'
 
 // ── Every surface that lists a scan finding says what the rule MEANS (#2535) ─────────────────────
 //
@@ -208,7 +209,7 @@ describe('a refused install stops offering itself', () => {
     // order so the reason is reachable, and refuses the click itself (`softOff`). Asserting
     // `.disabled` here would have read the fix as absent.
     expect(btn.getAttribute('aria-disabled'), 'a refused install is not on offer').toBe('true')
-    expect(btn.getAttribute('title') || '', 'and says why').toMatch(/cannot be overridden/)
+    expect(describedBy(btn) || '', 'and says why').toMatch(/cannot be overridden/)
   })
 
   it('leaves it enabled on a consentable warning — that install is still possible', async () => {

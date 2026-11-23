@@ -15,6 +15,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import type { UsageBudget, WorkflowRunDetailData } from '../../lib/api'
 import { WorkflowRunDetail } from './WorkflowRunDetail'
 import { capsHaveRoom, capResetTime, retryWindow, spendCapStop } from './attentionMeta'
+import { describedBy } from '../../test/describedBy'
 
 const workflowRun = vi.fn<(id: string) => Promise<WorkflowRunDetailData>>()
 const usageBudget = vi.fn<() => Promise<UsageBudget>>()
@@ -148,7 +149,7 @@ describe('a run a spend cap stopped', () => {
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
     const button = await screen.findByRole('button', { name: /retry/i })
     await waitFor(() => expect(button.getAttribute('aria-disabled')).toBe('true'))
-    expect(button.getAttribute('title')).toMatch(/Raise it in Settings → Security → Guardrails, or Retry after it resets at 12:00\sAM/)
+    expect(describedBy(button)).toMatch(/Raise it in Settings → Security → Guardrails, or Retry after it resets at 12:00\sAM/)
     expect(screen.getByText(/Retry is offered once the cap has room\./)).toBeTruthy()
     fireEvent.click(button)
     expect(forkWorkflowRun).not.toHaveBeenCalled()

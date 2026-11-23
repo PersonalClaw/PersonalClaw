@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ModelRatesView } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 // ── "Model prices": where a model gets the price its calls are counted at ────────────────────
 //
@@ -117,9 +118,9 @@ describe('Model prices', () => {
     // The reason rides the button (its tooltip and accessible description), as the kit's do.
     const save = () => screen.getByRole('button', { name: 'Save' })
     expect(save().getAttribute('aria-disabled')).toBe('true')
-    expect(save().getAttribute('title')).toBe('Give the output rate, in dollars per 1M tokens.')
+    expect(describedBy(save())).toBe('Give the output rate, in dollars per 1M tokens.')
     typeInto('Output, $ per 1M tokens', '-2')
-    expect(save().getAttribute('title')).toBe('The output rate must be zero or more dollars.')
+    expect(describedBy(save())).toBe('The output rate must be zero or more dollars.')
     fireEvent.click(save())
     expect(setModelRate).not.toHaveBeenCalled()
   })
@@ -214,7 +215,7 @@ describe('Model prices', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add a size or quality/ }))
     typeInto('Size up to, price 2', 'big')
     const save = () => screen.getByRole('button', { name: 'Save' })
-    expect(save().getAttribute('title')).toBe('A size is a width x height in pixels, such as 1024x1024.')
+    expect(describedBy(save())).toBe('A size is a width x height in pixels, such as 1024x1024.')
     typeInto('Size up to, price 2', '2048x2048')
     typeInto('$ per image, price 2', '0.06')
     typeInto('Default size', '1024x1024')

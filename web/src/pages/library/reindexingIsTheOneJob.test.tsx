@@ -10,6 +10,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { answer, answers, calls, resetGateway, route, row } from '../../test/libraryHarness'
 import type { ReindexJob } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 class FakeSource {
   static all: FakeSource[] = []
@@ -71,7 +72,7 @@ describe("Library settings' Re-index is the one re-index", () => {
     await waitFor(() => expect(calls.startEmbeddingReindex).toHaveLength(1))
     expect(await screen.findByText('Re-indexing · 0 of 10')).toBeTruthy()
     const again = screen.getByRole('button', { name: 'Re-index' })
-    expect(again.getAttribute('title') ?? '', 'no second start offered').toContain("It's re-indexing now.")
+    expect(describedBy(again) ?? '', 'no second start offered').toContain("It's re-indexing now.")
   })
 
   it('🔑 shows a re-index the gateway started, with no offer to start it again', async () => {
@@ -79,7 +80,7 @@ describe("Library settings' Re-index is the one re-index", () => {
     answers.knowledgeStats = stats({ embedded_items: 1, stale_items: 0 })
     mount()
     expect(await screen.findByText('Re-indexing · 3 of 10')).toBeTruthy()
-    expect((await reindexButton()).getAttribute('title') ?? '').toContain("It's re-indexing now.")
+    expect(describedBy(await reindexButton())).toContain("It's re-indexing now.")
     expect(calls.startEmbeddingReindex).toBeUndefined()
   })
 
@@ -107,7 +108,7 @@ describe("Library settings' Re-index is the one re-index", () => {
     mount()
     fireEvent.click(await reindexButton())
     const pending = screen.getByRole('button', { name: 'Re-index' })
-    expect(pending.getAttribute('title') ?? '').toContain('Starting…')
+    expect(describedBy(pending) ?? '').toContain('Starting…')
     fireEvent.click(pending)
     await act(async () => { done(job({ done: 0 })) })
     expect(await screen.findByText('Re-indexing · 0 of 10')).toBeTruthy()

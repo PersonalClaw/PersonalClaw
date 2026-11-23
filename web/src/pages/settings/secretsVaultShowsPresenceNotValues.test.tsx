@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { describedBy } from '../../test/describedBy'
 
 // ── The secrets vault shows PRESENCE, and renders its three scopes as three things ──
 //
@@ -165,7 +166,7 @@ describe('an inherit-from-host row is not a vault row', () => {
     // aria-disabled, not the native attribute: a natively disabled control leaves the tab order,
     // so a keyboard user could never discover WHY it is off.
     expect(remove.getAttribute('aria-disabled')).toBe('true')
-    expect(remove.getAttribute('title') ?? '').toMatch(/gateway's environment/i)
+    expect(describedBy(remove) ?? '').toMatch(/gateway's environment/i)
     await act(async () => { remove.click() })
     expect(deleteSecret).not.toHaveBeenCalled()
   })

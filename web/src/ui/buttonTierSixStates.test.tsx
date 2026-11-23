@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { QuietButton } from './QuietButton'
+import { describedBy } from '../test/describedBy'
 
 // ── Three button tiers were missing half of DESIGN.md:221's six states ────────────────────────
 //
@@ -76,7 +77,7 @@ describe('QuietButton has a disabled state at all — the tier had none', () => 
     )
     const el = screen.getByRole('button', { name: 'Choose files' })
     // Exactly `SquareIconButton`'s composition, em dash and order included.
-    expect(el.getAttribute('title')).toBe('Choose files to hand to this run — A hand-over is already in flight')
+    expect(describedBy(el)).toBe('Choose files to hand to this run — A hand-over is already in flight')
     // …and the reason must NOT reach the accessible name: an sr-only span inside the button would
     // be concatenated into it and the action would stop being findable by its own name.
     expect(el.textContent).toBe('Choose files')
@@ -84,7 +85,7 @@ describe('QuietButton has a disabled state at all — the tier had none', () => 
 
   it('composes a bare reason when the caller passed no title', () => {
     render(<QuietButton onClick={vi.fn()} disabled disabledReason="Only the owner can do this">Delete</QuietButton>)
-    expect(screen.getByRole('button', { name: 'Delete' }).getAttribute('title')).toBe('Only the owner can do this')
+    expect(describedBy(screen.getByRole('button', { name: 'Delete' }))).toBe('Only the owner can do this')
   })
 
   it('does not fire onClick', () => {

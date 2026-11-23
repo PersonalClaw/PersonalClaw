@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { RoomMembersPanel } from './RoomMembersPanel'
 import type { RoomDetail, RoomMemberRecord, RoomRecord, SavedAgent } from '../../lib/api'
+import { TIP_COPY, describedBy } from '../../test/describedBy'
 
 function member(name: string, extra: Partial<RoomMemberRecord> = {}): RoomMemberRecord {
   return { name, role_blurb: '', listen_policy: 'all', profile_narrowing: {}, ...extra }
@@ -301,9 +302,9 @@ describe('🔴 the member ceiling is refused in the panel, not offered and then 
     const add = screen.getByRole('button', { name: /Add/ })
     // Reachable but unavailable — the tab stop keeps its reason — and the click does nothing.
     expect(add.getAttribute('aria-disabled')).toBe('true')
-    expect(add.getAttribute('title')).toMatch(/maximum of 3 members/)
+    expect(describedBy(add)).toMatch(/maximum of 3 members/)
     // The reason is a visible sentence, not only a hover tooltip, and it says what to do.
-    expect(screen.getByText(/This room holds its maximum of 3 members/)).toBeTruthy()
+    expect(screen.getByText(/This room holds its maximum of 3 members/, { ignore: TIP_COPY })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Settings › Chat' }).getAttribute('href')).toBe('#/settings/chat')
     await userEvent.click(add)
     // A free agent EXISTS (critic) — the old panel offered it. Now no picker opens at all.
@@ -337,7 +338,7 @@ describe('🔴 the member ceiling is refused in the panel, not offered and then 
     // Another tab filled the room; the poll brings the third member in.
     rerender(<RoomMembersPanel detail={d([...members, member('writer')])} {...props} />)
     expect(screen.queryByRole('combobox', { name: 'Agent' })).toBeNull()
-    expect(screen.getByText(/This room holds its maximum of 3 members/)).toBeTruthy()
+    expect(screen.getByText(/This room holds its maximum of 3 members/, { ignore: TIP_COPY })).toBeTruthy()
   })
 })
 

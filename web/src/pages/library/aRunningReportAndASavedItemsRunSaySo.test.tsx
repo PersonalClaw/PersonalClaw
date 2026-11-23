@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { answers, resetGateway, row } from '../../test/libraryHarness'
+import { describedBy } from '../../test/describedBy'
 
 vi.mock('../../lib/api', async (orig) => {
   const { gatewayApi } = await import('../../test/libraryHarness')
@@ -39,7 +40,7 @@ describe('a running report and a saved-items run say so', () => {
     const run = screen.getByRole('button', { name: /Run now/ })
     expect(run.getAttribute('aria-disabled') === 'true' || (run as HTMLButtonElement).disabled).toBe(true)
     // The reason rides the button's title, its tooltip and its description (`Button`'s `disabledReason`).
-    expect(run.getAttribute('title') ?? '').toContain("It's already writing one")
+    expect(describedBy(run) ?? '').toContain("It's already writing one")
   })
 
   it('🔑 the intent\'s set-up row counts the check, with Stop', async () => {

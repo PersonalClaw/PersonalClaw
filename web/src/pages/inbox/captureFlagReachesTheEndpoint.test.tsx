@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { InboxPage } from './InboxPage'
 import type { InboxItem, InboxStatus } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 // ── The tray's `?capture=1` must WRITE, not just navigate ───────────────────────────────────
 //
@@ -194,6 +195,6 @@ describe('A capture that fails must not eat the note', () => {
     fireEvent.click(screen.getByRole('button', { name: /save to inbox/i }))
     expect(createInboxNote).not.toHaveBeenCalled()
     // And the disabled control says WHY rather than being inertly greyed out.
-    expect(screen.getByRole('button', { name: /save to inbox/i })).toHaveAttribute('title', 'Write the note first')
+    expect(describedBy(screen.getByRole('button', { name: /save to inbox/i }))).toBe('Write the note first')
   })
 })

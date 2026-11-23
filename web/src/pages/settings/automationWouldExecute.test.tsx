@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
+import { describedBy } from '../../test/describedBy'
 
 // ── The automation would-execute description ───────────────────────────────────────────────────
 //
@@ -268,7 +269,7 @@ describe('the surfaces around it', () => {
     // control that is off for a reason the user cannot read is the shape the disabled-reason
     // census exists to keep out.
     const btn = screen.getByRole('button', { name: /describe/i })
-    expect(btn.getAttribute('title')).toContain('no automations yet')
+    expect(describedBy(btn)).toContain('no automations yet')
     expect(btn.getAttribute('aria-disabled')).toBe('true')
   })
 
@@ -289,6 +290,6 @@ describe('the surfaces around it', () => {
       await new Promise((res) => setTimeout(res, 0))
     })
     const btn = screen.getByRole('button', { name: /describe/i })
-    expect(btn.getAttribute('title')).toContain('Pick an automation first')
+    expect(describedBy(btn)).toContain('Pick an automation first')
   })
 })

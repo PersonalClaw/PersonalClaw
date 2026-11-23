@@ -90,6 +90,7 @@ import { EssentialsStep, laneOf, candidatesByLane, typesMissingFromCatalog } fro
 import { launchChat } from '../../app/appSdk'
 import { invalidateKeys } from '../../lib/data'
 import { ApiError } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 function entry(over: Partial<AppCatalogEntry> & { name: string }): AppCatalogEntry {
   return {
@@ -1349,7 +1350,7 @@ describe('the model lane reads ready only after a build check', () => {
     await waitFor(() => expect(onboardingModelCheck).toHaveBeenCalled())
     const cont = screen.getByRole('button', { name: /Continue/ })
     expect(cont.getAttribute('aria-disabled')).toBe('true')
-    expect(cont.getAttribute('title') || '').toMatch(/still checking/i)
+    expect(describedBy(cont) || '').toMatch(/still checking/i)
     fireEvent.click(cont)
     expect(onDone).not.toHaveBeenCalled()
 
@@ -1520,7 +1521,7 @@ describe('the model lane asks the answering provider whether it answers', () => 
     // Continue is refused, and its reason says the check ANSWERED — not "still checking".
     const cont = screen.getByRole('button', { name: /Continue/ })
     expect(cont.getAttribute('aria-disabled')).toBe('true')
-    expect(cont.getAttribute('title') || '').toMatch(/can't use what is set up/i)
+    expect(describedBy(cont) || '').toMatch(/can't use what is set up/i)
     fireEvent.click(cont)
     expect(onDone).not.toHaveBeenCalled()
   })

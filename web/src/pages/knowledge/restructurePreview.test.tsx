@@ -22,6 +22,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ReadingView } from './ReadingView'
 import { RestructureControl } from './RestructureControl'
 import { api, type KnowledgeItem, type KnowledgeRestructurePlan } from '../../lib/api'
+import { TIP_COPY } from '../../test/describedBy'
 
 const BODY = 'opening words\n\n## Eviction policy\nleast recently used\n'
 
@@ -280,7 +281,7 @@ describe('a verb whose precondition is missing explains itself', () => {
       })
     })
 
-    expect(screen.getByText(/select a passage in the article first/i)).toBeInTheDocument()
+    expect(screen.getByText(/select a passage in the article first/i, { ignore: TIP_COPY })).toBeInTheDocument()
   })
 
   it('says there is nothing to merge rather than offering an empty picker', async () => {

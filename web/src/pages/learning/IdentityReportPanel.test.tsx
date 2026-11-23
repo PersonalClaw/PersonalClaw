@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { IdentityReportPanel } from './IdentityReportPanel'
 import { api, type IdentityReportView } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 // ── The periodic identity report panel ────────────────────────────────────────────────
 //
@@ -167,7 +168,7 @@ describe('IdentityReportPanel', () => {
     const button = screen.getByRole('button', { name: /Write it up/ })
     expect(button.getAttribute('aria-disabled')).toBe('true')
     expect(button.hasAttribute('disabled')).toBe(false)
-    expect(button.getAttribute('title')).toContain('Nothing has been learned yet')
+    expect(describedBy(button)).toContain('Nothing has been learned yet')
 
     // The gate really holds: clicking a reachable-but-unavailable button must not deliver.
     fireEvent.click(button)
