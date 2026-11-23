@@ -35,7 +35,7 @@ from test_a_turn_someone_else_started_changes_no_memory_on_its_own import (
 from personalclaw import channel_delivery
 
 #: The owner's own DM with PersonalClaw on the channel, as the channel opens it for her.
-HER_DM = "D0MIRADM01"
+HER_DM = "D0OWNERDM1"
 #: What a helper's report to her held.
 REPORT = "Helper report: the landlord's number is 555-0142"
 #: What she writes in the chat on the dashboard.

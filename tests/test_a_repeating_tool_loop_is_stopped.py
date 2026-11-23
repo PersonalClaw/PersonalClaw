@@ -459,7 +459,7 @@ async def test_a_breaker_stop_follows_its_turn_into_the_thread(
     delivery = AsyncMock()
     state.channel_provider_for = lambda _key: "teamchat"
     state.delivery_for = lambda provider: delivery if provider == "teamchat" else None
-    state.sessions.get_channel_link = MagicMock(return_value=("1790800000.000100", "C0SHARED01"))
+    state.sessions.get_channel_link = MagicMock(return_value=("1790800000.000100", "C0EXAMPLE01"))
     stopped = lb.repeat_circuit_message(lb.REPEAT_CIRCUIT_THRESHOLD + 1)
     client.stream = MagicMock(
         side_effect=lambda *a, **kw: _events(
