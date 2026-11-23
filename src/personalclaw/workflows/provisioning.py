@@ -1148,6 +1148,9 @@ async def teardown(
     path = str(state.get("path", "") or "")
     spec_teardown = str(state.get("teardown", "") or "")
     isolated = bool(state.get("isolated", False))
+    # 🔴 A record is not a trust boundary: only a folder this home made for the run is torn down.
+    foreign = _another_homes_folder(run, state, out)
+    path = "" if foreign else path
     alive = bool(path) and Path(path).is_dir()
 
     # The run's durable worker dies WITH the run, FIRST — before teardown steps and
@@ -1162,21 +1165,11 @@ async def teardown(
     except Exception:
         logger.debug("durable session kill failed at teardown", exc_info=True)
 
-    container_id = str(state.get("container_id", "") or "")
-    container_binary = str(state.get("container_backend", "") or "")
-    if container_id and container_binary:
+    if not foreign:
         # BEFORE any directory work: the container mounts the workspace dir, and removing the
         # dir under a live container is the deletion-first inversion this function's docstring
-        # forbids for teardown commands. `--force` stops and removes in one verb; failure is
-        # recorded, not raised — a gone backend must not leave an undeletable run row.
-        from personalclaw.workflows.container_env import CliContainerBackend
-
-        removal = await CliContainerBackend(container_binary).remove(container_id)
-        (out.ran if removal.ok else out.failed).append(
-            f"remove container {container_id}"
-            if removal.ok
-            else f"remove container {container_id}: {removal.reason}"[:500]
-        )
+        # forbids for teardown commands.
+        await _remove_container(state, out)
 
     plan = worktrees.plan_teardown(
         teardown=spec_teardown, ephemeral=isolated and not state.get("name"), keep_open=keep_open
@@ -1222,6 +1215,46 @@ async def teardown(
             isolated=isolated,
         )
     return out
+
+
+def _another_homes_folder(run: Any, state: dict[str, Any], out: TornDown) -> bool:
+    """Whether *run*'s record names an isolated folder this home did not make for it, saying so
+    on *out* when it does.
+
+    An isolated workspace's folder is one this home made for the run (`_own_isolated_dir`). A
+    record that names any other folder (restored from another home on this machine, whose
+    folders it names) gets no teardown step run there, no commit and no removal, and neither
+    does the container that worked in it: that folder, and what runs in it, are another home's.
+    """
+    path = str(state.get("path", "") or "")
+    if not (state.get("isolated") and path) or _own_isolated_dir(run, path, state):
+        return False
+    left = "nothing ran there, nothing was committed and nothing was removed"
+    if state.get("container_id"):
+        left += ", and the container that worked in it was left as it is"
+    out.failed.append(
+        f"left {path}: it is not a folder this home made for this run (its record may have been "
+        f"restored from another home on this machine), so {left}"
+    )
+    return True
+
+
+async def _remove_container(state: dict[str, Any], out: TornDown) -> None:
+    """Remove the container the run's record names, saying on *out* how it went. `--force` stops
+    and removes in one verb; a failure is recorded, not raised: a gone backend must not leave an
+    undeletable run row."""
+    container_id = str(state.get("container_id", "") or "")
+    container_binary = str(state.get("container_backend", "") or "")
+    if not (container_id and container_binary):
+        return
+    from personalclaw.workflows.container_env import CliContainerBackend
+
+    removal = await CliContainerBackend(container_binary).remove(container_id)
+    (out.ran if removal.ok else out.failed).append(
+        f"remove container {container_id}"
+        if removal.ok
+        else f"remove container {container_id}: {removal.reason}"[:500]
+    )
 
 
 def _commit_outstanding(path: str, branch: str, *, preserved: list[str]) -> bool:
