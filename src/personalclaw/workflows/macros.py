@@ -257,8 +257,11 @@ def _verify_panel(node: dict[str, Any]) -> dict[str, Any]:
     answer is layered over it as the item's output (`node_bindings.subtree_output`). The refuter
     may fail without failing the item (`allow_failure`): a verifier that errored, timed out or
     answered outside its schema is not evidence the finding is fake, so the finding is KEPT, still
-    `refuted: null`. `_confirmed` drops only an explicit `refuted: true`, reading the fan-out's own
-    output, the list of every item's result:
+    `refuted: null`. So is a finding whose verifier cited no line of what it was shown (`cited`
+    empty), whatever its verdict said: a ruling that rests on nothing it saw is a guess, and a
+    guess must neither drop a finding nor confirm it (`| if_empty('cited', 'refuted', null)`).
+    `_confirmed` drops only an explicit `refuted: true`, reading the fan-out's own output, the
+    list of every item's result:
 
     * `kept` — every finding not refuted: the survivors and the unverified, each marked;
     * `survived` — the ones a verifier ruled on and did not refute;
@@ -273,6 +276,8 @@ def _verify_panel(node: dict[str, Any]) -> dict[str, Any]:
     cfg = node.get("config") or {}
     extra = str(cfg.get("guidance", "") or "")
     context = str(cfg.get("context", "") or "")
+    # Every item's result, a ruling that cites nothing it was shown read as no ruling.
+    ruled = f"nodes.{mid}_verify.output | if_empty('cited', 'refuted', null)"
 
     return {
         "kind": "sequence",
@@ -315,9 +320,15 @@ def _verify_panel(node: dict[str, Any]) -> dict[str, Any]:
                                     "refuted=true when you are uncertain — a finding that "
                                     "survives a genuine attempt to disprove it is worth acting "
                                     "on; one that merely sounds plausible is not."
+                                    "\n\nRule only on what you were shown: quote in `cited` the "
+                                    "lines or passage of it you judged by. If what you were "
+                                    "shown does not hold what the finding is about, you cannot "
+                                    "judge it: answer refuted=null, leave `cited` empty and say "
+                                    "in `refute_reason` what you could not see. A ruling that "
+                                    "cites nothing is kept as unverified."
                                     + (f"\n\n{extra}" if extra else "")
-                                    + '\n\nReturn JSON: {"refuted": bool, '
-                                    '"refute_reason": "why"}.'
+                                    + '\n\nReturn JSON: {"refuted": true | false | null, '
+                                    '"refute_reason": "why", "cited": "the lines you judged by"}.'
                                     "\n\nFinding:\n{{item}}"
                                     + (
                                         f"\n\nWhat the finding is about:\n{context}"
@@ -325,7 +336,11 @@ def _verify_panel(node: dict[str, Any]) -> dict[str, Any]:
                                         else ""
                                     )
                                 ),
-                                "schema": {"refuted": "boolean", "refute_reason": "string"},
+                                "schema": {
+                                    "refuted": "boolean",
+                                    "refute_reason": "string",
+                                    "cited": "string",
+                                },
                             },
                         },
                     ],
@@ -336,13 +351,9 @@ def _verify_panel(node: dict[str, Any]) -> dict[str, Any]:
                 "id": f"{mid}_confirmed",
                 "config": {
                     "expr": {
-                        "kept": f"{{{{nodes.{mid}_verify.output | reject('refuted', true)}}}}",
-                        "survived": (
-                            f"{{{{nodes.{mid}_verify.output | filter('refuted', false)}}}}"
-                        ),
-                        "unverified": (
-                            f"{{{{nodes.{mid}_verify.output | filter('refuted', null)}}}}"
-                        ),
+                        "kept": f"{{{{{ruled} | reject('refuted', true)}}}}",
+                        "survived": f"{{{{{ruled} | filter('refuted', false)}}}}",
+                        "unverified": f"{{{{{ruled} | filter('refuted', null)}}}}",
                     }
                 },
             },

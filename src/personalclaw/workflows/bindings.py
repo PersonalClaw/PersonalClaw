@@ -359,6 +359,31 @@ def _pipe_tag(value: Any, key: str = "", tagged: Any = None) -> Any:
     return [{**v, key: tagged} if isinstance(v, dict) else {"value": v, key: tagged} for v in value]
 
 
+def _pipe_if_empty(value: Any, key: str = "", field: str = "", set_to: Any = None) -> Any:
+    """`if_empty('cited', 'refuted', null)` — each record of a list whose `key` is empty (absent,
+    null, an empty string or an empty list) with `field` set to `set_to`; the others as they are,
+    in their order. On a single record, that record so.
+
+    How a template says "a ruling that cites nothing is no ruling": `verify_panel` leaves a
+    finding whose verifier cited no line of what it was shown as unverified, whatever the verdict
+    said. A copy of each record, never an edit of the step's output."""
+    if not key or not field:
+        raise BindingError("if_empty requires a key and a field: if_empty('key', 'field', value)")
+
+    def one(record: Any) -> Any:
+        if not isinstance(record, dict) or record.get(key) not in (None, "", []):
+            return record
+        return {**record, field: set_to}
+
+    if isinstance(value, dict):
+        return one(value)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise BindingError("if_empty expects a list or an object")
+    return [one(v) for v in value]
+
+
 def _pipe_reject(value: Any, key: str = "", expected: Any = None) -> Any:
     """`reject('refuted', true)` — the records of a list EXCEPT those whose `key` is exactly
     `expected`. `filter`'s complement, with one difference that is the reason it exists: a record
@@ -662,6 +687,7 @@ PIPES: dict[str, Any] = {
     "flatten": _pipe_flatten,
     "tag": _pipe_tag,
     "reject": _pipe_reject,
+    "if_empty": _pipe_if_empty,
     "slice": _pipe_slice,
     "count": _pipe_count,
     "default": _pipe_default,

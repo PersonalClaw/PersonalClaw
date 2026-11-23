@@ -309,12 +309,17 @@ def _without_stamps(value: Any) -> Any:
     return value
 
 
-def verdict_on(output: Any, judged: Any) -> tuple[str, bool, str] | None:
+def verdict_on(
+    output: Any, judged: Any, *, needs_cited: bool = False
+) -> tuple[str, bool, str] | None:
     """``(stamp, refuted, reason)`` when a step judging one finding, *judged* (its item, as handed
     to it, carrying :data:`REVIEW_KEY`), answered *output* with a verdict on it (``refuted`` true or
     false, a verify panel's verifier), else None. The stamp is the finding's own, from what the
     step was given, so a verifier that words the finding its own way still judges the row it was
-    handed. An item with no stamp gives ``("", refuted, reason)``: a verdict on no row."""
+    handed. An item with no stamp gives ``("", refuted, reason)``: a verdict on no row.
+
+    *needs_cited*: the step was asked to quote what it judged by (a `cited` field in its schema),
+    and a verdict that quotes nothing is none, as the panel reads it (`macros._verify_panel`)."""
     if not isinstance(judged, Mapping):
         return None
     stamp = str(judged.get(REVIEW_KEY, "") or "")
@@ -326,6 +331,8 @@ def verdict_on(output: Any, judged: Any) -> tuple[str, bool, str] | None:
         except (TypeError, ValueError):
             return None
     if not isinstance(output, Mapping) or not isinstance(output.get("refuted"), bool):
+        return None
+    if needs_cited and output.get("cited") in (None, "", []):
         return None
     reason = " ".join(str(output.get("refute_reason", "") or "").split())[:500]
     return stamp, output["refuted"], reason
