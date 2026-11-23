@@ -16,7 +16,8 @@ per test (no randomness at run time), so a run that passes did not pass by luck.
   item's answer selects;
 * branch record: a step after a branch in each item reads what ITS item's case produced;
 * restart: the read after a controller is rebuilt from disk part-way through the fan-out;
-* outside: a read from after the fan-out keeps its meaning, the last item to finish;
+* outside: a read of an item's step from after the fan-out is refused at save, naming the
+  fan-out's own read (`{{nodes.<foreach>.output}}`);
 * fail closed: a context scoped to an item that has not produced a node does not hand it another
   item's output (a unit check on ``BindingContext.scoped_to``; the scheduler does not let a step
   read a sibling before it has produced in its own item, so no run reaches this today).
@@ -33,7 +34,7 @@ import pytest
 
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices, RunController
-from personalclaw.workflows.models import RunStatus, WorkflowRun, spec_path, walk
+from personalclaw.workflows.models import Node, RunStatus, WorkflowRun, spec_path, walk
 from personalclaw.workflows.tick import Limits
 
 pytestmark = pytest.mark.anyio
@@ -406,24 +407,63 @@ async def test_a_controller_rebuilt_mid_fan_out_reads_each_items_own_step() -> N
     assert _mismatched(pairs) == [], f"items read another item's step: {_mismatched(pairs)}"
 
 
-async def test_a_read_from_after_the_fan_out_still_gives_the_last_item() -> None:
-    """Outside every item the node id keeps its meaning: the item that wrote it last. One model
-    call at a time, so the last item to finish is the last item."""
-    after = [
-        {
-            "kind": "transform",
-            "id": "after",
-            "config": {"expr": {"seen": "{{nodes.echo.output.echoed}}"}},
-        }
+def _refused(spec: dict) -> list[str]:
+    from personalclaw.workflows.validator import validate_spec
+
+    return [
+        i.message
+        for i in validate_spec(spec).issues
+        if i.code == "WF_FAN_OUT_STEP_READ_FROM_OUTSIDE"
     ]
-    spec = _spec([_PAIR], after=after)
-    run = _run(spec)
-    ctl = RunController(
-        run,
-        spec,
-        services=EngineServices(
-            completion=_echo({}), lane_limits=Limits(lanes={"llm": 1, "io": 2, "compute": 64})
-        ),
+
+
+def _root(spec: dict) -> Node:
+    return Node.from_dict(spec["root"])
+
+
+def _after(expr: object) -> list[dict]:
+    return [{"kind": "transform", "id": "after", "config": {"expr": expr}}]
+
+
+def test_a_read_of_an_items_step_from_after_the_fan_out_is_refused_at_save() -> None:
+    """🔴 Before: it saved clean and named whichever item's step finished last, so a step meant
+    to combine the fan-out's results worked from one of them without a word."""
+    (said,) = _refused(_spec([_PAIR], after=_after({"seen": "{{nodes.echo.output.echoed}}"})))
+    assert "'after' reads {{nodes.echo…}} from outside 'fan'" in said, said
+    assert "{{nodes.fan.output}}" in said and "| map('<field>')" in said, said
+    # The read that works saves clean, and so does a read inside the item (its own step).
+    assert (
+        _refused(_spec([_PAIR], after=_after({"all": "{{nodes.fan.output | map('seen')}}"}))) == []
     )
-    assert await ctl.run_to_completion(timeout=60) == RunStatus.COMPLETE
-    assert ctl._outputs["after"] == {"seen": ITEMS[-1]}
+    assert _refused(_spec([_PAIR])) == []
+
+
+def test_a_read_from_inside_an_outer_item_names_the_inner_fan_out() -> None:
+    """A step in an outer item reading a step of an inner fan-out reads the inner one's list, its
+    own item's; from after both, the outer one's."""
+    inner = {
+        "kind": "foreach",
+        "id": "inner",
+        "config": {"items": ["a", "b"]},
+        "body": {"kind": "transform", "id": "leaf", "config": {"expr": {"v": "{{item}}"}}},
+    }
+    beside = {"kind": "transform", "id": "beside", "config": {"expr": "{{nodes.leaf.output.v}}"}}
+    spec = _spec([inner, beside], after=_after("{{nodes.leaf.output.v}}"))
+    first, second = sorted(_refused(spec))
+    assert "'after' reads {{nodes.leaf…}} from outside 'fan'" in first, first
+    assert "Read {{nodes.fan.output}}" in first, first
+    assert "'beside' reads {{nodes.leaf…}} from outside 'inner'" in second, second
+    assert "Read {{nodes.inner.output}}" in second, second
+
+
+def test_the_bundled_templates_read_no_items_step_from_outside_its_fan_out() -> None:
+    from personalclaw.workflows.bundled_defs import read_template, template_names
+
+    fanned = 0
+    for name in template_names():
+        template = read_template(name)
+        assert template is not None, name
+        spec = template.to_dict()
+        fanned += any(node.kind.value == "foreach" for _p, node in walk(_root(spec)))
+        assert _refused(spec) == [], name
+    assert fanned >= 3, "vacuity floor: the bundled templates that fan out were read"

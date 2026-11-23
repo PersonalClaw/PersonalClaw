@@ -322,6 +322,7 @@ def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
     # admit work. Deriving it twice is the defect all three rules exist to remove.
     edges = dep_ordering_edges(nodes, ids_seen)
     unreadable = _validate_recorded_outputs(res, dict(nodes), edges)
+    _validate_reads_from_outside_a_fan_out(res, dict(nodes), edges)
     _validate_dep_ordering(res, [edge for edge in edges if edge not in unreadable])
     _validate_branch_reads(res, dict(nodes), edges)
     _validate_output_contract(res, nodes, edges)
@@ -1315,6 +1316,59 @@ def _validate_recorded_outputs(
             edge.reader_path,
         )
     return unreadable
+
+
+def _validate_reads_from_outside_a_fan_out(
+    res: ValidationResult, tree: dict[str, Node], edges: list[DepEdge]
+) -> None:
+    """Refuse a read of a step inside a fan-out from outside it, naming the fan-out's own read.
+
+    Every item of a `foreach` runs the same body, so its steps share their ids. Inside an item a
+    read of one is that item's own step (`BindingContext.scoped_to`); from outside every item it
+    names no item, and resolved to whichever item's step finished last: a step combining a
+    fan-out's results silently worked from one of them. What the fan-out records is the read that
+    means all of them, `{{nodes.<foreach>.output}}`, the list of what each item produced in item
+    order. The fan-out named is the outermost one the step is in and the reader is not.
+    """
+    bodies = [
+        (f"{path}.body", path, node.id)
+        for path, node in tree.items()
+        if node.kind is NodeKind.FOREACH and node.body is not None
+    ]
+
+    def within(path: str, body: str) -> bool:
+        return path == body or path.startswith(f"{body}.")
+
+    for edge in edges:
+        if edge.origin != EDGE_BINDING:
+            continue
+        outside = [
+            (fan_out_path, fan_out_id)
+            for body, fan_out_path, fan_out_id in bodies
+            if within(edge.producer_path, body) and not within(edge.reader_path, body)
+        ]
+        if not outside:
+            continue
+        fan_out_path, fan_out_id = min(outside, key=lambda found: len(found[0]))
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        fan_out = repr(fan_out_id) if fan_out_id else f"the foreach at {fan_out_path}"
+        read = (
+            f"{{{{nodes.{fan_out_id}.output}}}}"
+            if fan_out_id
+            else "its output (give the foreach an id to read it)"
+        )
+        _add(
+            res,
+            "WF_FAN_OUT_STEP_READ_FROM_OUTSIDE",
+            (
+                f"{reader} reads {{{{nodes.{edge.producer_id}…}}}} from outside {fan_out}, but "
+                f"every item of {fan_out} runs {edge.producer_id!r}, so the read names no item: "
+                "it would be whichever item's step finished last. Read "
+                f"{read}, the list of what each item produced, in item order "
+                "(`| map('<field>')` takes one field from each entry)"
+            ),
+            edge.reader_path,
+        )
 
 
 def _produced_keys(node: Node) -> frozenset[str] | None:

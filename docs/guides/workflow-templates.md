@@ -146,8 +146,9 @@ its own item's answer, however the items' steps interleave and across a restart.
 holds for everything the engine reads on a step's behalf inside an item: `{{nodes.<id>.artifact}}`,
 a metric gate's `metric_from`, the inputs an approval gate records, a loop's progress field,
 its judge's ruling and the handoff its cycle passes on, and whether an item still counts
-against `max_concurrency`. A read from after the fan-out names no item, so it reads the item
-whose step finished last.
+against `max_concurrency`. A read of an item's step from outside the fan-out would name no item,
+so it is refused when you save (`WF_FAN_OUT_STEP_READ_FROM_OUTSIDE`): read the fan-out itself,
+`{{nodes.<foreach>.output}}`, the list of what each item produced, in item order.
 
 ## Macros: the patterns, as one-liners
 
