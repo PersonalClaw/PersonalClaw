@@ -186,7 +186,11 @@ instance so a resumed run reads it back, and a step after the loop reads it as
 `{{nodes.<loop>.output}}`. A loop handed to a person (its budget spent without its
 exit met, a judge that would not decide, a cycle that failed, an exit condition it
 could not read) records nothing, and a step that reads it is skipped. A `branch`
-records its routing, `{"case": label}`, when it routes, and once the case it took has
+records its routing, `{"case": label}`, when it routes, and the scheduler reads that record
+for the case it took (`tick._recorded_case`), so a branch on a fan-out's `{{item}}` runs its
+item's case. Its stored DONE says it routed, not that its case finished, so the scheduler reads
+a case, a fan-out item and a loop cycle that is itself a branch by its derived state: read
+stored, each looked finished the moment it routed and the run deadlocked. Once the case it took has
 ended in success the same record carries what that case produced, `produced`, read the
 way a loop's cycle is (`node_bindings.record_branch_outputs`): a step after the branch
 reads which case ran as `{{nodes.<branch>.output.case}}` and its result as

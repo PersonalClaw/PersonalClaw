@@ -928,7 +928,9 @@ def _visit_foreach(
 
     for idx, value in enumerate(items):
         ipath = f"{path}.body#{idx}"
-        if _is_terminal(_state_of(states, ipath)):
+        # Derived on the item's own outputs: a body that is a branch stores DONE once it routes,
+        # and read stored the item was passed over before its case ran.
+        if _is_terminal(_derive(node.body, ipath, states, edges, iterations, ctx.scoped_to(ipath))):
             continue
         if verdict.bounded and not _started(ipath):
             # An item already under way is visited regardless — it holds its slot either way, and
@@ -1003,8 +1005,9 @@ def _visit_loop(
         return
     current = int(iterations.get(path, 0))
     ipath = f"{path}.body@{current}"
-    ist = _state_of(states, ipath)
-    if _is_terminal(ist):
+    # Derived, as the controller reads a cycle's end (`loop_iteration`): a body that is a branch
+    # stores DONE once it routes, and read stored its cycle was never visited again to run its case.
+    if _is_terminal(_derive(node.body, ipath, states, edges, iterations, ctx)):
         return  # the controller advances the counter; the next tick sees the new path
     _visit(
         node.body,
@@ -1094,7 +1097,9 @@ def _visit_branch(
         if dpath != cpath and not _is_terminal(_state_of(states, dpath)):
             fr.to_skip.append(dpath)
 
-    if _is_terminal(_state_of(states, cpath)):
+    # Derived, as `_visit` reads a container: a case that is itself a branch stores DONE the
+    # moment it routes, and read stored it looked finished before its own case ever ran.
+    if _is_terminal(_derive(case_node, cpath, states, edges, iterations, ctx)):
         return
     _visit(
         case_node,
@@ -1191,9 +1196,33 @@ def case_for(node: Node, value: Any) -> tuple[str, Node] | None:
     return None
 
 
+def _recorded_case(node: Node, ctx: BindingContext) -> tuple[str, Node] | None:
+    """The case a routed branch's own step recorded (`{"case": label}`, `engine.dispatch_branch`),
+    read from *ctx* as any step's output is (scoped to its item inside a fan-out); None when it
+    has no id or no record that names one of its cases.
+
+    Read before the selector because the record is the routing: the selector re-resolved here
+    sees only what a binding context holds, and a fan-out's `{{item}}` is handed to each ready
+    step, not held in it. A branch routing on its item routed at dispatch, then read as
+    unresolved here, and its item never ran its case."""
+    if not node.id:
+        return None
+    try:
+        label = read_named_value(f"{{{{nodes.{node.id}.output.case}}}}", ctx)
+    except BindingError:
+        return None
+    if label == DEFAULT_CASE and node.default_case is not None:
+        return DEFAULT_CASE, node.default_case
+    if isinstance(label, str) and label in node.cases:
+        return label, node.cases[label]
+    return None
+
+
 def _select_case(node: Node, ctx: BindingContext) -> tuple[str, Node] | None:
-    """Resolve `config.on` and pick a case. Returns None when the selector cannot be
-    resolved yet."""
+    """The case a routed branch took: the one its step recorded, else `config.on` resolved now.
+    Returns None when neither names one yet."""
+    if (recorded := _recorded_case(node, ctx)) is not None:
+        return recorded
     expr = str((node.config or {}).get("on", "") or "")
     if not expr:
         return None
