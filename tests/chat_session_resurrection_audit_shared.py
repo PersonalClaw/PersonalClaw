@@ -79,8 +79,11 @@ _CREATES_BY_DESIGN: dict[str, str] = {
         "name=`cron-{job.id}` — derived from the cron job that owns the session"
     ),
     "loop/manager.py::start": "name=`session_key(loop_id)` — derived from the loop",
-    "loop/manager.py::spawn_task_worker": (
-        "name=`task_session_key(loop.id, task.id)` — derived from the loop task"
+    "loop/manager.py::_task_worker_session": (
+        "name=`task_session_key(loop.id, task.id)` — derived from the loop task: minted by "
+        "`spawn_task_worker`, and read back from the task loop's own record "
+        "(`task_loop.session_name`, written at that spawn) when a resume stands its worker up "
+        "again"
     ),
     "planning/runner.py::run_planner_pass": "name=`skey` — derived from the planner pass",
     "dashboard/approval_state.py::DashboardApprovalState._channel_chat": (
