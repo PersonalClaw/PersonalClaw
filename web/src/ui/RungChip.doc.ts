@@ -16,7 +16,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not substitute a rung when the ladder read fails — "runs on its own" is a claim about unattended authority, so a failed read means no chip (the Settings panel is the surface that reports the failure).' },
     { guidance: false, description: 'Do not re-tone it to warn/danger: the tone scale here is permission INTENSITY, and a trigger row already spends warn/danger on whether the automation is failing.' },
   ],
-  anatomy: ['tinted pill', 'rung glyph (FileText / ShieldQuestion / Undo2 / Zap)', 'behaviour label', 'optional "· held" suffix while an incident clamps the rung'],
+  anatomy: ['tinted pill', 'rung glyph (FileText / ShieldQuestion / Undo2 / ShieldOff)', 'behaviour label', 'optional "· held" suffix while an incident clamps the rung'],
 }
 
 export default doc

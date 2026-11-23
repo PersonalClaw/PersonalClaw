@@ -1,4 +1,4 @@
-import { FileText, ShieldQuestion, Undo2, Zap } from 'lucide-react'
+import { FileText, Shield, ShieldOff, ShieldQuestion, Undo2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api, type ActionProviderName, type AutonomyLadder, type AutonomyType } from './api'
 import { useQuery } from './data'
@@ -18,7 +18,8 @@ export const RUNG_PRESENTATION: Record<string, { icon: LucideIcon; tone: string 
   draft_only: { icon: FileText, tone: 'var(--color-on-surface-low)' },
   one_tap: { icon: ShieldQuestion, tone: 'var(--color-on-surface-var)' },
   auto_with_undo: { icon: Undo2, tone: 'var(--color-info)' },
-  autonomous: { icon: Zap, tone: 'var(--color-primary)' },
+  // It acts without asking: approvals switched off, as YOLO wears it. The bolt is Automations'.
+  autonomous: { icon: ShieldOff, tone: 'var(--color-primary)' },
 }
 
 export interface RungMeta { key: string; label: string; hint: string; icon: LucideIcon; tone: string }
@@ -35,7 +36,7 @@ function humanizeRung(key: string): string {
 /** Everything needed to render one rung: the server's words + this file's presentation. */
 export function rungMeta(key: string, ladder: AutonomyLadder | null): RungMeta {
   const wire = ladder?.rung_meta?.find((r) => r.key === key)
-  const pres = RUNG_PRESENTATION[key] ?? { icon: Zap, tone: 'var(--color-on-surface-low)' }
+  const pres = RUNG_PRESENTATION[key] ?? { icon: Shield, tone: 'var(--color-on-surface-low)' }
   return { key, label: wire?.label ?? humanizeRung(key), hint: wire?.hint ?? '', ...pres }
 }
 

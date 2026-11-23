@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { ChevronRight, Loader2, Check, Zap, Maximize2, Lightbulb, AlertTriangle, ShieldAlert, Info } from 'lucide-react'
+import { ChevronRight, Loader2, Check, ShieldOff, Maximize2, Lightbulb, AlertTriangle, ShieldAlert, Info } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { spring } from '../../design/motion'
 import type { ToolSegment } from './chatTypes'
@@ -49,7 +49,8 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
           </>
         )}
         <span className={detail ? 'shrink-0' : 'flex-1'} />
-        {seg.auto && <Zap size={11} className="shrink-0 text-on-surface-low" aria-hidden />}
+        {/* Approvals switched off, as YOLO wears it in the permission menu: the bolt is Automations'. */}
+        {seg.auto && <ShieldOff size={11} className="shrink-0 text-on-surface-low" aria-hidden />}
         {seg.done
           ? seg.ok === false
             ? <AlertTriangle size={14} className="shrink-0" aria-hidden style={{ color: 'var(--color-danger)' }} />
