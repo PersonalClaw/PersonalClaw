@@ -32,13 +32,22 @@ class PeriodicSweep:
     """Run ``sweep`` every ``interval`` seconds on one daemon thread named ``name``.
 
     The first sweep runs one interval AFTER :meth:`start`, as the watchdogs always have: boot has
-    just launched what they supervise. A sweep that raises is logged at debug and the thread
-    carries on — one bad pass must not end supervision.
+    just launched what they supervise. ``first_after`` sets it sooner (``0``: as it starts) for a
+    sweep with nothing to wait for. A sweep that raises is logged at debug and the thread carries
+    on — one bad pass must not end supervision.
     """
 
-    def __init__(self, name: str, interval: float, sweep: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        name: str,
+        interval: float,
+        sweep: Callable[[], None],
+        *,
+        first_after: float | None = None,
+    ) -> None:
         self.name = name
         self.interval = interval
+        self.first_after = interval if first_after is None else first_after
         self._sweep = sweep
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -76,7 +85,9 @@ class PeriodicSweep:
             return self._thread is not None and self._thread.is_alive()
 
     def _run(self, stop: threading.Event) -> None:
-        while not stop.wait(self.interval):
+        wait = self.first_after
+        while not stop.wait(wait):
+            wait = self.interval
             try:
                 self._sweep()
             except Exception:  # noqa: BLE001 — one bad sweep must not end the watchdog
