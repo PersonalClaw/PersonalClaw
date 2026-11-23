@@ -112,7 +112,7 @@
   - paragraph: Your personal lexicon — the terms that bias every transcription (mic input and knowledge audio/video ingestion) toward how you actually spell things, and the learned fixes that auto-correct mis-heard words. Built from the names in your knowledge graph, people first, and kept in step with it as your library grows; add your own, or turn off a wrong one.
   - textbox "Add a vocabulary term":
     - /placeholder: Add a term (e.g. Kubernetes, K#s)…
-  - button "Add" [disabled]
+  - button "Add term" [disabled]
   - button "Rebuild"
   - paragraph: # in your lexicon.
   - text: No terms yet. The people, projects and other names found in your knowledge library appear here by themselves; add one above to start now.
@@ -122,7 +122,7 @@
     - /placeholder: Heard (e.g. cube control)…
   - textbox "Correct word":
     - /placeholder: Meant (e.g. kubectl)…
-  - button "Add" [disabled]
+  - button "Add correction" [disabled]
   - text: No learned corrections yet. Teach one above — it applies to mic dictation and knowledge audio alike.
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

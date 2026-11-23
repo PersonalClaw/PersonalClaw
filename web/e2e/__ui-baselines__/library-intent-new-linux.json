@@ -9,7 +9,6 @@
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Memory\"",
         "button[role=radio] \"Only these kinds\"",
-        "button[role=switch] \"Write a report from what it finds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""
       ],
@@ -18,7 +17,6 @@
         "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
-        "button[role=switch] \"Write a report from what it finds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""
       ],
@@ -27,7 +25,6 @@
         "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
-        "button[role=switch] \"Write a report from what it finds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""
       ],
@@ -36,7 +33,6 @@
         "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
-        "button[role=switch] \"Write a report from what it finds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""
       ]
@@ -57,7 +53,6 @@
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Memory\"",
         "button[role=radio] \"Only these kinds\"",
-        "button[role=switch] \"Write a report from what it finds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""
       ],
@@ -66,7 +61,6 @@
         "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
-        "button[role=switch] \"Write a report from what it finds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""
       ],
@@ -75,7 +69,6 @@
         "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
-        "button[role=switch] \"Write a report from what it finds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""
       ],
@@ -84,7 +77,6 @@
         "button \"Start looking\"",
         "button[role=radio] \"Everything you add\"",
         "button[role=radio] \"Only these kinds\"",
-        "button[role=switch] \"Write a report from what it finds\"",
         "input",
         "input \"Offer to build a skill from what it finds\""
       ]

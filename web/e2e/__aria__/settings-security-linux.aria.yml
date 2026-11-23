@@ -212,7 +212,7 @@
     - text: Your patterns # user additions on top of the baseline
     - textbox "Add a shell denylist pattern (regex)":
       - /placeholder: e.g. my-secret-tool .*
-    - button "Add" [disabled]
+    - button "Add pattern" [disabled]
     - heading "Git push" [level=#]
     - paragraph: "Off by default: no agent may push. When on, an agent may push a branch with an ordinary push written as one command (git -C <dir> push … from another folder; cd <dir> && … is refused). Each push still asks you first in a chat, and is refused in a run nobody watches unless your own rules allow it. A force push without an explicit lease (--force-with-lease=<ref>:<expected-sha>), --mirror, deletes, :<ref> and +<ref> refspecs, --all, --tags, --prune and --no-verify stay refused. Only you can change this, here or from your own terminal."
     - text: Let agents push a branch
@@ -248,11 +248,11 @@
     - text: Allowed hosts Fetches reach these even if they resolve to a private/LAN address (e.g. a homelab service), and a shell command or an app's program reaches them without asking. Bare domain covers subdomains.
     - textbox "Add a host to allowed hosts":
       - /placeholder: e.g. nas.local
-    - button "Add" [disabled]
+    - button "Add host to Allowed hosts" [disabled]: Add host
     - text: Denied hosts Never reachable, even if public. Overrides an allow.
     - textbox "Add a host to denied hosts":
       - /placeholder: e.g. nas.local
-    - button "Add" [disabled]
+    - button "Add host to Denied hosts" [disabled]: Add host
     - checkbox "Allow all private networks Let fetches reach any private/LAN address, not just the allow-list. Only on a fully trusted network — this removes SSRF protection for the whole LAN. A shell command still reaches only the allowed hosts without asking."
     - text: Allow all private networks Let fetches reach any private/LAN address, not just the allow-list. Only on a fully trusted network — this removes SSRF protection for the whole LAN. A shell command still reaches only the allowed hosts without asking.
     - heading "Outside PersonalClaw's home" [level=#]
