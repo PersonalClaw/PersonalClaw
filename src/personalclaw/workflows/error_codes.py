@@ -285,6 +285,11 @@ WF_ERROR_CODES: dict[str, str] = {
         "field beside its `case` and `produced`, or one under `produced` that a case it can take "
         "does not produce, so the read fails whenever that case is taken."
     ),
+    "WF_FAN_OUT_STEP_READ_FROM_OUTSIDE": (
+        "A node outside a foreach reads `{{nodes.<step>...}}` of a step inside it. Every item "
+        "runs that step, so the read names no item; `{{nodes.<foreach>.output}}` is the list of "
+        "what each item produced, in item order."
+    ),
     "WF_UNCONTRACTED_OUTPUT_REF": (
         "A node whose output is read declares no `output_contract`, so nothing checks the "
         "paths read from it."

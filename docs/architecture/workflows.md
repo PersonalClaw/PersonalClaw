@@ -205,8 +205,11 @@ reads it back: a step after it reads `{{nodes.<foreach>.output}}`. An item that 
 or was skipped is left out, and the fan-out's own row says how many and why
 (`degraded_reason`). The list is skipped where a subtree is layered, since each item's
 steps already count there. Validation refuses a field read of it
-(`{{nodes.<foreach>.output.title}}`), which names `| map('title')`. The body's own step
-id still names one item, the last to finish.
+(`{{nodes.<foreach>.output.title}}`), which names `| map('title')`. A body step's id
+read from outside the fan-out names no item, so validation refuses it too
+(`WF_FAN_OUT_STEP_READ_FROM_OUTSIDE`, `validator._validate_reads_from_outside_a_fan_out`),
+naming the fan-out's own read; until it did, that read resolved to whichever item's step
+finished last, and a step combining the fan-out's results worked from one of them.
 A `sequence` or `parallel`
 records nothing of its own, so validation refuses a read of one when the spec is saved
 (`WF_UNSATISFIABLE_OUTPUT_REF`): read the step inside it whose output you need. A loop
