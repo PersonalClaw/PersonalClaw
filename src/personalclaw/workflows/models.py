@@ -556,6 +556,12 @@ RETRYABLE_CLASSES = frozenset({FailureClass.TRANSIENT, FailureClass.NETWORK})
 #: failure policy does not walk past a control's refusal.
 REFUSED_TO_START = "refused_to_start"
 
+#: The `terminal_reason` of a judge gate that read the work and did not accept it: a REJECT, or a
+#: PASS its contract set aside for what the work did (a forbidden success mode, a rubric
+#: shortfall). A verdict on the work, not a step that gave up, so its run's ending says to fix
+#: what the judge found (`ending_sentence.JUDGE_REFUSED`), never to change the gate.
+JUDGE_REFUSED = "judge_refused"
+
 
 @dataclass
 class Failure:

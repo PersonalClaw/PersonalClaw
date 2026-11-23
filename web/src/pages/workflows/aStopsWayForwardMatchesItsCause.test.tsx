@@ -51,6 +51,11 @@ const WAIT_REMEDY =
   "Fork the run and start it again, then answer its asks while it waits: a step's time limit counts from when the "
   + 'step starts, and Subagent timeout in Settings › Agent defaults sets it.'
 
+const REFUSED_DETAIL = '“accept” failed: judge returned REJECT: the change breaks two callers.'
+const REFUSED_REMEDY =
+  'The judge did not accept the work, and said why: fix what it found in the work, then fork the run and start '
+  + 'it again.'
+
 const STEP_DETAIL = '“work” failed: the model provider returned an error.'
 const STEP_REMEDY =
   'A new run of this workflow fails the same way until the step changes: change the step that gave up, then run the '
@@ -109,6 +114,16 @@ describe('a stop is headed by its cause, and offers what its cause needs', () =>
     expect(within(panel).queryByRole('link', { name: /Change the workflow/ })).toBeNull()
     expect(panel.textContent).not.toMatch(/fails the same way|spent its iterations failing/)
     expect(document.body.textContent).toContain('waiting 12 minutes for your answer')
+    expect(document.body.textContent).not.toMatch(INTERNAL)
+  })
+
+  it('🔴 a judge gate that refused the work: its verdict, fix the work, no workflow change', async () => {
+    const panel = await panelFor(run('not_retried', 'judge_refused', REFUSED_DETAIL, REFUSED_REMEDY))
+    expect(panel.textContent).toMatch(/the judge did not accept the work/i)
+    expect(panel.textContent).toContain(REFUSED_REMEDY)
+    expect(within(panel).queryByRole('link', { name: /Change the workflow/ })).toBeNull()
+    expect(panel.textContent).not.toMatch(/fails the same way|spent its iterations failing|change the step/)
+    expect(document.body.textContent).toContain('the change breaks two callers')
     expect(document.body.textContent).not.toMatch(INTERNAL)
   })
 
