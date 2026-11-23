@@ -1,5 +1,8 @@
-import { useState } from 'react'
-import { Copy, Check, RotateCcw, GitBranch, Volume2, Square, Pencil, ChevronLeft, ChevronRight, Rewind } from 'lucide-react'
+import { useId, useState } from 'react'
+import { Copy, Check, RotateCcw, GitBranch, Volume2, Square, Pencil, ChevronLeft, ChevronRight, Rewind, SmilePlus } from 'lucide-react'
+import { Popover } from '../../ui/Popover'
+import { Button } from '../../ui/Button'
+import { REACTIONS, reactionOf, type ReactionPick } from './reactions'
 import { unavailableWhen } from '../../ui/unavailable'
 import { clockTime, fullStamp, isoStamp } from '../../lib/epoch'
 import { copyText } from '../../app/clipboard'
@@ -38,11 +41,13 @@ function Stamp({ ts }: { ts?: string }) {
  *  duplicates the conversation up to that point into a new session; branching
  *  from an ANSWER is the common case, "take this analysis two directions"). When
  *  a reply has been regenerated, a ‹ n/N › variant switcher lets the user page
- *  back to a prior answer. Real, wired actions — no decorative thumbs/more.
+ *  back to a prior answer. React (on a finished answer, `onReact`) tells the
+ *  agent the owner's 👍/👎/❤️/🎉/🤔 as a message it reads (`reactions.ts`); it is
+ *  input to the agent, never feedback. Real, wired actions — no decorative more.
  *  Reveals on hover of the message (group/msg) and stays while focused.
  *  `speaking` is controlled by the host (real playback state): the Speak button
  *  becomes a Stop toggle while this turn's audio is playing. */
-export function AssistantActions({ text, isLast, speaking, canFork = true, variantCount = 0, variantIdx = 0, ts, onCopy, onRegenerate, onFork, onSpeak, onSwitchVariant }: {
+export function AssistantActions({ text, isLast, speaking, canFork = true, variantCount = 0, variantIdx = 0, ts, reaction, onCopy, onRegenerate, onFork, onSpeak, onSwitchVariant, onReact }: {
   text: string
   isLast: boolean
   /** this turn's source stamp, ALREADY gated on the reader's "Show timestamps" setting by the host —
@@ -57,21 +62,55 @@ export function AssistantActions({ text, isLast, speaking, canFork = true, varia
   onFork: () => void
   onSpeak: () => void
   onSwitchVariant?: (index: number) => void
+  /** The reaction the owner gave this answer (`reactions.ts`), shown beside its time. */
+  reaction?: ReactionPick
+  /** React to this answer: a pick, or null to take it back. Absent on an answer still being
+   *  written, which takes no reaction. */
+  onReact?: (pick: ReactionPick | null) => void
 }) {
   const [copied, setCopied] = useState(false)
+  const reactedId = useId()
+  const reacted = reactionOf(reaction)
   const copy = async () => { if (await copyText(text, 'this message')) { setCopied(true); setTimeout(() => setCopied(false), 1500) }; onCopy() }
   const hasVariants = variantCount > 1 && !!onSwitchVariant
   return (
     <div className="mt-m flex items-center gap-1.5">
       <Stamp ts={ts} />
+      {/* The reaction stays in sight with the time, not only on hover: it is what she said back. */}
+      {reacted && <span id={reactedId} role="img" aria-label={`You reacted ${reacted.name}`} className="select-none leading-none">{reacted.emoji}</span>}
       <div className={REVEAL}>
         {hasVariants && <VariantSwitcher count={variantCount} idx={variantIdx} onSwitch={onSwitchVariant!} />}
         <ActBtn icon={copied ? Check : Copy} label={copied ? 'Copied' : 'Copy'} onClick={copy} done={copied} />
+        {onReact && <ReactControl reaction={reaction} describedBy={reacted ? reactedId : undefined} onReact={onReact} />}
         {isLast && <ActBtn icon={RotateCcw} label="Regenerate" onClick={onRegenerate} />}
         {canFork && <ActBtn icon={GitBranch} label="Branch from here" onClick={onFork} />}
         <ActBtn icon={speaking ? Square : Volume2} label={speaking ? 'Stop' : 'Speak'} onClick={onSpeak} active={speaking} />
       </div>
     </div>
+  )
+}
+
+/** React: the five reactions in a small flyout above the button. The chosen one is pressed, and
+ *  picking it again takes it back. A reaction goes to the agent as her input (`reactions.ts`),
+ *  never as feedback. */
+function ReactControl({ reaction, describedBy, onReact }: { reaction?: ReactionPick; describedBy?: string; onReact: (pick: ReactionPick | null) => void }) {
+  return (
+    // Portaled: the transcript scrolls, and a flyout inside it would be clipped at its edge.
+    <Popover placement="top" portal trigger={(open, toggle) => (
+      <ActBtn icon={SmilePlus} label="React" onClick={toggle} expanded={open} pressed={!!reaction} describedBy={describedBy} />
+    )}>
+      {(close) => (
+        <div role="group" aria-label="React to this answer" className="flex items-center gap-0.5 p-1">
+          {REACTIONS.map((r) => (
+            <Button key={r.pick} variant="ghost" size="md" shape="squircle" title={r.name} ariaLabel={r.name} ariaPressed={r.pick === reaction}
+              onClick={() => { onReact(r.pick === reaction ? null : r.pick); close() }}
+              className="leading-none aria-pressed:bg-surface-highest">
+              <span aria-hidden>{r.emoji}</span>
+            </Button>
+          ))}
+        </div>
+      )}
+    </Popover>
   )
 }
 
@@ -131,9 +170,15 @@ export function UserActions({ text, canFork = true, canRewind = false, ts, onEdi
   )
 }
 
-function ActBtn({ icon: Icon, label, onClick, done, active }: { icon: typeof Copy; label: string; onClick: () => void; done?: boolean; active?: boolean }) {
+function ActBtn({ icon: Icon, label, onClick, done, active, expanded, pressed, describedBy }: {
+  icon: typeof Copy; label: string; onClick: () => void; done?: boolean; active?: boolean
+  /** For a button that opens a flyout (React): whether it is open, whether a choice is made,
+   *  and the element that says which. */
+  expanded?: boolean; pressed?: boolean; describedBy?: string
+}) {
   return (
     <button type="button" onClick={onClick} title={label} aria-label={label}
+      aria-expanded={expanded} aria-pressed={pressed} aria-describedby={describedBy}
       data-type="caption"
       className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface"
       style={done ? { color: 'var(--color-ok)' } : active ? { color: 'var(--color-primary)' } : undefined}>

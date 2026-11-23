@@ -60,6 +60,26 @@ DATA_GLYPHS: dict[tuple[str, str], str] = {
         "dashboard/chat_folders.py",
         "\ufe0f\u200d",
     ): "the variation selector and joiner a folder-icon check accepts, to RECOGNISE an emoji",
+    (
+        "dashboard/chat_reactions.py",
+        "👍",
+    ): "the reaction the owner picked: the glyph is the reaction, named in words beside it",
+    (
+        "dashboard/chat_reactions.py",
+        "👎",
+    ): "the reaction the owner picked: the glyph is the reaction, named in words beside it",
+    (
+        "dashboard/chat_reactions.py",
+        "❤️",
+    ): "the reaction the owner picked: the glyph is the reaction, named in words beside it",
+    (
+        "dashboard/chat_reactions.py",
+        "🎉",
+    ): "the reaction the owner picked: the glyph is the reaction, named in words beside it",
+    (
+        "dashboard/chat_reactions.py",
+        "🤔",
+    ): "the reaction the owner picked: the glyph is the reaction, named in words beside it",
 }
 
 

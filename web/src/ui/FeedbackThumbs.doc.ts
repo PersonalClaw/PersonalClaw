@@ -15,7 +15,7 @@ const doc: UiDoc = {
     { name: 'className', type: 'string', required: false, description: 'Extra classes on the wrapping span.' },
   ],
   bestPractices: [
-    { guidance: true, description: 'Mount ONLY on discrete AI judgment outputs. Chat messages are explicitly not a target surface (MessageActions.tsx\'s "no decorative thumbs" stance stands — the after-turn review owns that signal).' },
+    { guidance: true, description: 'Mount ONLY on discrete AI judgment outputs. Chat messages are explicitly not a target surface (the after-turn review owns that signal). The chat\'s React control on an answer is not this: it tells the agent, as a message, and writes no feedback record.' },
     { guidance: true, description: "Pass the producer meta from the card's payload (feedback_producers on inbox items, feedback_producer on loop views and synthesized skills) — a verdict without provenance can't feed per-producer accuracy, and for skill_synthesis it is what makes the one real suppression gate reachable." },
     { guidance: true, description: "Keep the affordance quiet: it sits inline at the judgment block's edge, never as a call-to-action. Thumbs fatigue kills the signal." },
     { guidance: false, description: "Do not add copy implying 👍 teaches anything — it is silent-positive by design; only 👎 (with an optional why) feeds learning." },

@@ -19,7 +19,8 @@ import { asSent } from '../pasteBlocks'
 import { applyQuestionResolved } from '../questionFrames'
 import { turnOutcomeOf } from '../turnOutcome'
 import type { QuestionReply } from '../QuestionCard'
-import { type ChatTurn, userTurn, turnText, WIDGET_SAID } from '../chatTypes'
+import { type ChatTurn, userTurn, turnText, withSent, WIDGET_SAID } from '../chatTypes'
+import { quoteOf, reactionLine, REACTION_WAIT_MS, type ReactionPick } from '../reactions'
 import type { ChatStream } from '../useChatStream'
 import type { ApproveAction } from './AssistantSegments'
 import { newMessageId } from '../../../lib/messageIds'
@@ -37,7 +38,7 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
   query: Record<string, string>
   setQuery: RouteProps['setQuery']
   navigate: (p: string, opts?: { replace?: boolean }) => void
-  stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'setTurns' | 'streaming' | 'streamingRef' | 'markStreaming' | 'dropTextRun' | 'readSnapshot' | 'adoptSnapshot' | 'bookmarks' | 'setBookmarks'>
+  stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'setTurns' | 'streaming' | 'streamingRef' | 'markStreaming' | 'dropTextRun' | 'readSnapshot' | 'adoptSnapshot' | 'bookmarks' | 'setBookmarks' | 'takesSteersRef'>
   /** The chat has turns on screen. */
   started: boolean
   /** The composer's notice line, where a failed turn action is said. */
@@ -48,7 +49,7 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
   agent: string
   send: (text: string) => Promise<void>
 }) {
-  const { sessionRef, turns, setTurns, streaming, streamingRef, markStreaming, dropTextRun, readSnapshot, adoptSnapshot } = stream
+  const { sessionRef, turns, setTurns, streaming, streamingRef, markStreaming, dropTextRun, readSnapshot, adoptSnapshot, takesSteersRef } = stream
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   // true when the transcript is scrolled away from the bottom — drives the
@@ -575,6 +576,48 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     await send(text)
   }
 
+  // ── A reaction to an answer ──
+  //
+  // Shown on the answer at once, and sent after REACTION_WAIT_MS, so a quick change sends one
+  // message; one changed back to what the answer had before is not sent at all. It goes as a chat
+  // message with no words, `meta.reaction`, the way a typed message would: a steer into a running
+  // turn that takes one, queued behind one that does not, else a turn of its own. The gateway
+  // writes what the agent reads (`dashboard/chat_reactions.py`).
+  const heldReactions = useRef(new Map<string, { timer: ReturnType<typeof setTimeout>; base: ReactionPick | undefined }>())
+  useEffect(() => () => { for (const held of heldReactions.current.values()) clearTimeout(held.timer) }, [])
+  const showReaction = (to: string, pick: ReactionPick | undefined) =>
+    setTurns((prev) => prev.map((t) => (t.role === 'assistant' && t.answerTs === to ? { ...t, reaction: pick } : t)))
+  function react(to: string, current: ReactionPick | undefined, pick: ReactionPick | null) {
+    const held = heldReactions.current.get(to)
+    const base = held ? held.base : current
+    if (held) clearTimeout(held.timer)
+    heldReactions.current.delete(to)
+    showReaction(to, pick ?? undefined)
+    if ((pick ?? undefined) === base) return
+    heldReactions.current.set(to, { base, timer: setTimeout(() => { heldReactions.current.delete(to); void sendReaction(to, base, pick) }, REACTION_WAIT_MS) })
+  }
+  async function sendReaction(to: string, base: ReactionPick | undefined, pick: ReactionPick | null) {
+    const s = sessionRef.current
+    if (!s) return
+    const mode = streamingRef.current ? (takesSteersRef.current ? 'steer' : 'followup') : undefined
+    try {
+      const r = await api.sendChat('', s, { reaction: { to, pick } }, mode, undefined, { messageId: newMessageId() })
+      // A steer, or one that waits behind the turn, is drawn by its frames as it is taken.
+      if (r.disposition !== 'started' || r.duplicate) return
+      followNewTurn()
+      setTurns((prev) => {
+        const answer = prev.find((t) => t.role === 'assistant' && t.answerTs === to)
+        const reacted = { to, pick, previous: base ?? null, quote: quoteOf(answer ? turnText(answer) : '') }
+        return withSent(prev, { ...userTurn(reactionLine(reacted, reacted.quote), r.accepted_at), messageId: r.message_id, reacted })
+      })
+      markStreaming(true)
+      dropTextRun()
+    } catch (e) {
+      showReaction(to, base)
+      reportActionFailure('send this reaction')(e)
+    }
+  }
+
   return {
     // Where the view is.
     scrollRef, endRef, scrolledUp, followTurnRef, followNewTurn, followEnd, holdTheView, turnNodes,
@@ -585,6 +628,6 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     // What a turn offers.
     liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure,
     editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun,
-    attributionForNode, widgetWordsIn,
+    attributionForNode, widgetWordsIn, react,
   }
 }

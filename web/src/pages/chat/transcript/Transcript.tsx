@@ -22,6 +22,7 @@ import type { useTranscript } from './useTranscript'
 import { AssistantSegments } from './AssistantSegments'
 import { UserEditor } from './UserEditor'
 import { RewindDivider } from './RewindDivider'
+import { reactionLine } from '../reactions'
 import { SelectionQuote } from './SelectionQuote'
 import { QuestionInView } from './QuestionInView'
 import { widgetFramesMayHaveMoved } from '../../../ui/widget/useWidgetActionBridge'
@@ -61,7 +62,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
    *  message, while a turn runs. */
   liveLine?: React.ReactNode
 }) {
-  const { scrollRef, endRef, followTurnRef, holdTheView, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode, widgetWordsIn } = transcript
+  const { scrollRef, endRef, followTurnRef, holdTheView, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode, widgetWordsIn, react } = transcript
   // The turn Find in conversation has landed on (its coordinate): its long message opens, so the
   // match is on screen. Only that one; a long message without a match stays folded.
   const [findLanding, setFindLanding] = useState<number | null>(null)
@@ -161,7 +162,11 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
                     if (el) turnNodes.current.set(c, el); else turnNodes.current.delete(c)
                     if (i === lastQuestion) setQuestionNode(el)
                   }}>
-                  {turn.role === 'user' ? (
+                  {turn.role === 'user' && turn.reacted ? (
+                    // A reaction's row: a line where it was sent, not her bubble. Its words are the
+                    // gateway's for the agent; what she did is the reaction.
+                    <p data-type="caption" className="text-right text-on-surface-low">{reactionLine(turn.reacted, turn.reacted.quote)}</p>
+                  ) : turn.role === 'user' ? (
                     editingTurn === i ? (
                       <UserEditor initial={turnTextOf(turn)} onCancel={() => { setEditingTurn(null); setEditFailure(null) }}
                         replacesLater={editReplacesLaterTurns(turns, i)} canFork={memoryMode === 'persistent'}
@@ -183,6 +188,8 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
                     <MessageAssistant actions={!(isLast && streaming) && (
                       <AssistantActions text={turnText(turn)} isLast={isLast} canFork={memoryMode === 'persistent'}
                         variantCount={turn.variantCount} variantIdx={turn.variantIdx} ts={stampOf(turn)}
+                        reaction={turn.reaction}
+                        onReact={turn.answerTs ? (pick) => react(turn.answerTs!, turn.reaction, pick) : undefined}
                         onCopy={() => {}} onRegenerate={regenerate} onFork={() => forkAt(i)}
                         onSwitchVariant={isLast ? switchVariant : undefined}
                         speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />

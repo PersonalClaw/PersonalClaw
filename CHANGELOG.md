@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **Switching off a model app's capability stops the image, video, embedding and speech adapters it served: a media scanner an app registers acts only while a capability that declares its kind is running. No shipped app needs a change.**
+- **Each finished answer in a chat has a React control: 👍, 👎, ❤️, 🎉 or 🤔. The agent is told in PersonalClaw's own words, "The user reacted 👍 (thumbs up) to your message from 2:31 PM: …", the way a typed message reaches it: a running turn takes it at its next step, else it starts one. A quick change sends one message, a change or a removal says so, the answer keeps its reaction after a reload, and the Markdown and JSON exports carry it. A reaction answers no approval card or question, and memory learns nothing from it by itself.**
 
 ### Changed
 

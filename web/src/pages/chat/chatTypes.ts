@@ -15,6 +15,7 @@ import type { TurnPaste } from './PasteChip'
 // `turnRuns` imports ChatTurn from here as `import type` too.
 import { rowRuns, storedMs, type TurnRun } from './turnRuns'
 import { chatSources, type TurnSource } from './turnSources'
+import { quoteOf, reactionRecordOf, reactionsOf, type ReactionPick, type ReactionRecord } from './reactions'
 
 export interface TextSegment { kind: 'text'; text: string; /** Words the gateway took in from outside (the row's `meta.from_outside`, such as a scheduled run's result): never the agent's reply. */ outside?: boolean }
 
@@ -462,6 +463,13 @@ export interface ChatTurn {
   // on reload, the `chat_user_message` frame's `steer` live. The bubble says so, since the answer
   // above it is the same one that goes on below it.
   steered?: boolean
+  // An ASSISTANT turn's final answer row's time (`ts`), which a reaction names it by. Absent while
+  // the answer is still being written: a reaction goes on a finished answer only.
+  answerTs?: string
+  // The reaction the owner gave that answer: the last reaction row for it (`reactions.ts`).
+  reaction?: ReactionPick
+  // A USER turn that is a reaction's row: drawn as a line where it was sent, not as her bubble.
+  reacted?: ReactionRecord & { quote: string }
   // Regenerated answer variants for an ASSISTANT turn. When a reply is regenerated
   // the backend keeps the prior answer(s) and appends the new one, storing every
   // version on the message. The UI only needs how MANY there are (`variantCount`)
@@ -543,6 +551,26 @@ export const userTurn = (text: string, ts?: string, pastes?: ChatTurn['pastes'],
 
 /** *turns* with the user's sent *turn* after them, unless a turn of the same message is there
  *  already: a message sent twice is drawn once. */
+/** *prev* with *turn*, a user row a frame told of, added; a reaction's row (*raw*, the frame's
+ *  `reaction`) is drawn as its line, and the answer it is to shows the reaction. */
+export function withReactionRow(prev: ChatTurn[], turn: ChatTurn, raw: unknown): ChatTurn[] {
+  const rec = reactionRecordOf(raw)
+  if (!rec) return [...prev, turn]
+  const answer = prev.find((t) => t.role === 'assistant' && t.answerTs === rec.to)
+  const reacted = { ...rec, quote: quoteOf(answer ? turnText(answer) : '') }
+  return [...prev.map((t) => (t === answer ? { ...t, reaction: rec.pick ?? undefined } : t)), { ...turn, reacted }]
+}
+
+/** *turns* with the answer at their end given its row's time from a *read* of the chat: what a
+ *  reaction names it by, which the live stream never carries. */
+export function withAnswerStamp(turns: ChatTurn[], read: ChatTurn[]): ChatTurn[] {
+  const last = turns.length - 1
+  const theirs = read[read.length - 1]
+  if (last < 0 || turns[last].role !== 'assistant' || theirs?.role !== 'assistant' || !theirs.answerTs) return turns
+  if (turns[last].answerTs === theirs.answerTs) return turns
+  return turns.map((t, i) => (i === last ? { ...t, answerTs: theirs.answerTs, ...(theirs.reaction ? { reaction: theirs.reaction } : {}) } : t))
+}
+
 export function withSent(turns: ChatTurn[], turn: ChatTurn): ChatTurn[] {
   return turn.messageId && turns.some((t) => t.messageId === turn.messageId) ? turns : [...turns, turn]
 }
@@ -659,7 +687,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
  *  lands in is marked as holding a widget's words. */
 export const WIDGET_SAID = 'A widget'
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string; meta?: { widget_action?: boolean; ui_label?: string } }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; input_obj?: unknown; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; secret_file?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; message_id?: string; original?: string; ui_label?: string; widget_action?: boolean; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown; from_outside?: unknown } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string; meta?: { widget_action?: boolean; ui_label?: string } }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; input_obj?: unknown; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; secret_file?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; message_id?: string; original?: string; ui_label?: string; widget_action?: boolean; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown; from_outside?: unknown; reaction?: unknown } }
 
 /** The blocks a sent message of hers carries (`meta.pastes` on its row, `pastes` on a frame that
  *  tells a page of it), or undefined when it carries none. */
@@ -811,6 +839,8 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
   }
   // How long each answer worked, from what its rows stored (`turnRuns`).
   const runs = rowRuns()
+  // Each answer row's words by its time, for a reaction's line to quote the answer it is to.
+  const answerWords = new Map<string, string>()
 
   for (const m of messages) {
     // The time the gateway measured for the turn, on the turn's last answer row.
@@ -849,6 +879,8 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       const ran = ranPromptOf(m.meta?.ran_prompt)
       if (ran) ut.ranPrompt = ran
       if (m.meta?.steered === true) ut.steered = true
+      const reacted = reactionRecordOf(m.meta?.reaction)
+      if (reacted) ut.reacted = { ...reacted, quote: quoteOf(answerWords.get(reacted.to) ?? '') }
       if (typeof m.meta?.message_id === 'string') ut.messageId = m.meta.message_id
       // A widget's message, as the gateway's own rule reads it (`own_words.came_from_a_widget`).
       if (m.meta?.widget_action === true || !!m.meta?.ui_label) ut.fromWidget = true
@@ -865,6 +897,8 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // complete answer rather than truncating it mid-turn.
       at.visibleIndex = visible
       at.segments.push(rowText(m.content, m.meta))
+      // The answer's words, not a tool's: what a reaction names the answer by (its last such row).
+      if (m.ts && !m.meta?.tool_call_id && m.content.trim()) { at.answerTs = m.ts; answerWords.set(m.ts, m.content) }
       // Episodic memory citations ride the assistant message's meta; carry them
       // onto the turn so the Markdown renderer can resolve `[Memory N]` tokens. Tolerant:
       // absent on turns with no episodic recall (almost all of them).
@@ -1027,6 +1061,12 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
   } else {
     const tools = [...toolIndex.values()]
     tools.slice(0, -1).forEach((seg) => { seg.done = true })
+  }
+  // Each answer's reaction now, from the rows that reacted to it (`reactions.ts`).
+  const picks = reactionsOf(messages)
+  for (const t of turns) {
+    const pick = t.role === 'assistant' && t.answerTs ? picks.get(t.answerTs) : undefined
+    if (pick) t.reaction = pick
   }
   return turns
 }

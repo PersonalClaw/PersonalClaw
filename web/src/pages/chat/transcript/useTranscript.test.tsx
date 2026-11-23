@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   chatSessionDetail: vi.fn(),
   editSessionBookmarks: vi.fn(),
   notify: vi.fn(),
+  sendChat: vi.fn(),
 }))
 
 vi.mock('../../../lib/api', async (importOriginal) => {
@@ -27,6 +28,7 @@ vi.mock('../../../lib/api', async (importOriginal) => {
   const api = new Proxy({
     approve: h.approve, setTaskMode: h.setTaskMode, editResend: h.editResend,
     regenerate: h.regenerate, chatSessionDetail: h.chatSessionDetail, editSessionBookmarks: h.editSessionBookmarks,
+    sendChat: h.sendChat,
   } as Record<string, unknown>, {
     get(t, p: string) { return p in t ? t[p] : (t[p] = () => Promise.resolve({})) },
   })
@@ -53,6 +55,7 @@ function mount({ sessionId = SESSION as string | null, query = {} as Record<stri
       stream: {
         sessionRef: { current: sessionId }, turns, setTurns, streaming: false, streamingRef: { current: false },
         markStreaming, dropTextRun: vi.fn(), readSnapshot, adoptSnapshot: vi.fn(), bookmarks, setBookmarks,
+        takesSteersRef: { current: false },
       },
       started: turns.length > 0, notice, memoryMode: 'persistent', setSelection, agent: selection.agent, send,
     })
@@ -294,3 +297,55 @@ describe('useTranscript does what a turn offers', () => {
     expect(result.current.turns.map((t) => t.role), 'the last answer goes; the reply streams in beneath its question').toEqual(['user'])
   })
 })
+
+// ── A reaction to an answer: shown at once, sent after a short wait ─────────────────────────────
+
+describe('a reaction to an answer', () => {
+  const ANSWER_TS = '2026-10-01T09:00:05Z'
+  const ANSWERED: ChatTurn[] = [userTurn('Why does the feed refetch?', '2026-10-01T09:00:00Z'), { ...assistantTurn('It ignores the validators. Shall I fix it?'), answerTs: ANSWER_TS }]
+  const answerOf = (turns: ChatTurn[]) => turns.find((t) => t.role === 'assistant')!
+  beforeEach(() => { vi.useFakeTimers(); h.sendChat.mockResolvedValue({ session: SESSION, message_id: 'msg_x', accepted_at: '2026-10-01T09:01:00Z', disposition: 'started' }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('🔴 shows on the answer at once and is sent once after 2 s, the last pick only', async () => {
+    const m = mount({ initial: ANSWERED })
+    act(() => m.result.current.t.react(ANSWER_TS, undefined, 'thumbs_up'))
+    expect(answerOf(m.result.current.turns).reaction).toBe('thumbs_up')
+    act(() => { vi.advanceTimersByTime(1000) })
+    act(() => m.result.current.t.react(ANSWER_TS, 'thumbs_up', 'heart'))
+    act(() => { vi.advanceTimersByTime(1999) })
+    expect(h.sendChat).not.toHaveBeenCalled()
+    await act(async () => { vi.advanceTimersByTime(1) })
+    expect(h.sendChat).toHaveBeenCalledTimes(1)
+    expect(h.sendChat.mock.calls[0].slice(0, 3)).toEqual(['', SESSION, { reaction: { to: ANSWER_TS, pick: 'heart' } }])
+  })
+
+  it('🔴 changed back to what the answer had inside the wait, sends nothing', async () => {
+    const m = mount({ initial: [ANSWERED[0], { ...ANSWERED[1], reaction: 'thumbs_up' }] })
+    act(() => m.result.current.t.react(ANSWER_TS, 'thumbs_up', 'thumbs_down'))
+    act(() => m.result.current.t.react(ANSWER_TS, 'thumbs_down', 'thumbs_up'))
+    await act(async () => { vi.advanceTimersByTime(5000) })
+    expect(h.sendChat).not.toHaveBeenCalled()
+    expect(answerOf(m.result.current.turns).reaction).toBe('thumbs_up')
+  })
+
+  it('🔴 one that starts a turn draws its line and the turn that answers it', async () => {
+    const m = mount({ initial: ANSWERED })
+    act(() => m.result.current.t.react(ANSWER_TS, undefined, 'thumbs_up'))
+    await act(async () => { vi.advanceTimersByTime(2000) })
+    const line = m.result.current.turns[m.result.current.turns.length - 1]
+    expect(line.reacted).toEqual({ to: ANSWER_TS, pick: 'thumbs_up', previous: null, quote: 'It ignores the validators. Shall I fix it?' })
+    expect(line.messageId).toBe('msg_x')
+    expect(m.markStreaming).toHaveBeenCalledWith(true)
+  })
+
+  it('🔴 one the gateway refuses goes back to what the answer had, and says why', async () => {
+    h.sendChat.mockRejectedValue(new Error('That answer is still being written.'))
+    const m = mount({ initial: ANSWERED })
+    act(() => m.result.current.t.react(ANSWER_TS, undefined, 'thumbs_up'))
+    await act(async () => { vi.advanceTimersByTime(2000) })
+    expect(answerOf(m.result.current.turns).reaction).toBeUndefined()
+    expect(h.notify).toHaveBeenCalled()
+  })
+})
+

@@ -31,6 +31,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
+from personalclaw.dashboard.chat_reactions import reactions_of, record_of, shown
 from personalclaw.history import speaker_of
 from personalclaw.http_download import safe_download_stem
 from personalclaw.security import redact_field
@@ -83,6 +84,8 @@ def _content_messages(messages: list[dict]) -> list[dict]:
     lines, and every line of a one-assistant chat, have none.
     """
     out: list[dict] = []
+    # Each answer's reaction now: the last row that reacted to it (`chat_reactions`).
+    picks = reactions_of(messages)
     for msg in messages:
         if not isinstance(msg, dict):
             continue
@@ -98,6 +101,11 @@ def _content_messages(messages: list[dict]) -> list[dict]:
         unasked = (msg.get("meta") or {}).get("ungated") if role == "tool" else None
         if isinstance(unasked, str) and unasked.strip():
             entry["ungated"] = redact_field(unasked)
+        # An answer she reacted to says so, and the row her reaction sent names what it sent.
+        if role == "assistant" and (pick := picks.get(str(msg.get("ts") or ""))):
+            entry["reaction"] = shown(pick)
+        if (record := record_of(msg)) is not None:
+            entry["reacted"] = {"pick": record.get("pick"), "previous": record.get("previous")}
         speaker = speaker_of(msg)
         if speaker:
             entry["speaker"] = redact_field(speaker)
@@ -171,6 +179,8 @@ def render_markdown(
             lines.append(f"> {para}" if para.strip() else ">")
         if msg.get("ungated"):
             lines.extend([">", f"> {msg['ungated']}"])
+        if msg.get("reaction"):
+            lines.extend([">", f"> *You reacted {msg['reaction']}*"])
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"

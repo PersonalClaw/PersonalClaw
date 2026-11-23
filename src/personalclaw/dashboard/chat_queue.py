@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from personalclaw import ids
-from personalclaw.dashboard import chat_intake
+from personalclaw.dashboard import chat_intake, chat_reactions
 from personalclaw.dashboard.chat_intake import MESSAGE_ID, RECEIPT, Receipt
 from personalclaw.own_words import OWN_WORDS, PASTES, WIDGET_ACTION
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -70,6 +70,7 @@ class ChatQueue:
         notice: str = "",
         knowledge: Sequence[str] = (),
         artifacts: Sequence[str] = (),
+        reaction: Mapping[str, Any] | None = None,
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -91,6 +92,8 @@ class ChatQueue:
         ``notice`` names the automation whose notice it is (:data:`NOTICE`).
         ``knowledge`` and ``artifacts`` are the knowledge items and artifacts it mentions, which
         its turn reads as a message sent between turns does (``referenced_content``).
+        ``reaction`` is the record of a reaction it sends (``chat_reactions``), which the row it
+        runs as keeps.
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
@@ -119,6 +122,8 @@ class ChatQueue:
             item[WIDGET_ACTION] = True
         if notice:
             item[NOTICE] = notice
+        if reaction:
+            item[chat_reactions.REACTION] = dict(reaction)
         self._queue.append(item)
         return qid
 
