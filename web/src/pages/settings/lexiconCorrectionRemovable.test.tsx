@@ -62,6 +62,17 @@ async function mountVoice(over: { deleteFails?: boolean; confirmed?: boolean; te
 
 beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 
+describe("the vocabulary's two Adds", () => {
+  it('🔴 are named for what each adds, so no two share a name', async () => {
+    // Both read "Add": a screen reader heard two alike, and the UI quality matrix's baseline (keyed
+    // by name) held them as one entry.
+    await mountVoice()
+    expect(await screen.findByRole('button', { name: 'Add term' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add correction' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Add' })).toBeNull()
+  })
+})
+
 describe('a learned correction can be deleted', () => {
   it('🔴 each correction has a delete named after its pair, which asks first and removes it', async () => {
     await mountVoice()

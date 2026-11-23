@@ -618,7 +618,7 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
               <Button onClick={addTerm} shape="squircle" loading={busy}
                 disabled={!adding.trim()}
                 disabledReason={!adding.trim() ? 'Enter a term first' : undefined}>
-                <Plus size={15} /> Add
+                <Plus size={15} /> Add term
               </Button>
               <Button variant="ghost" onClick={rebuild} shape="squircle" loading={busy} title="Resync from the knowledge graph">
                 <RefreshCw size={15} /> Rebuild
@@ -674,13 +674,12 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
                   `loading` alone, so folding the in-flight state into `disabled` would add one more
                   busy-gated button that announces nothing — the exact population `busyIsNotAnnounced`
                   ratchets DOWN. Bare `loading` (no `loadingLabel`) is right here: the note on that
-                  rail reserves the labelled form for multi-second verbs, and every verb it accepts
-                  is no longer than the label it overlays — "Add" is 3 characters, so "Adding…" would
-                  truncate inside an overlay sized by the original label rather than widen the pill. */}
+                  rail reserves the labelled form for multi-second verbs, and adding a correction is
+                  not one. */}
               <Button onClick={addFix} shape="squircle" loading={busy}
                 disabled={!heard.trim() || !meant.trim()}
                 disabledReason={!heard.trim() || !meant.trim() ? 'Enter both words first' : undefined}>
-                <Plus size={15} /> Add
+                <Plus size={15} /> Add correction
               </Button>
             </div>
             {fixesQ.error ? (

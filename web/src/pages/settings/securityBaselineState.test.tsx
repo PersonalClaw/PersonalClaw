@@ -251,13 +251,23 @@ describe('each Add button explains ITS OWN empty draft', () => {
     // pattern first". Both are `title`-named, so the wrong noun is what a hover and a screen reader
     // both got. Pinned by role name so a future re-swap cannot pass.
     const r = await mount()
-    // 🪤 The reason is each Add's description (its tooltip's hidden copy), and these buttons have
-    // CONTENT ("Add"), so content wins the accessible name — all three announce "Add". The
-    // description is what a hover, a focus and a screen reader get, so that is what gets measured;
-    // the three Adds are told apart by which section they sit in.
+    // 🪤 The reason is each Add's description (its tooltip's hidden copy), not its name: each is
+    // named for what it adds (the next row). The description is what a hover, a focus and a screen
+    // reader get, so that is what gets measured here.
     const titles = [...r.container.querySelectorAll('button[aria-describedby]')].map((b) => describedBy(b))
     expect(titles.filter((t) => t === 'Enter a pattern first').length, 'one denylist Add').toBe(1)
     expect(titles.filter((t) => t === 'Enter a host first').length, 'two host Adds (allow + deny)').toBe(2)
+  })
+
+  it('🔴 each Add is named for what it adds and where, so no two share a name', async () => {
+    // Named by their content alone, all three read "Add": a screen reader heard three alike, told
+    // apart only by their descriptions, and the UI quality matrix's baseline (keyed by name) held
+    // them as one entry, so a finding on one would read as another's known one.
+    const r = await mount()
+    for (const name of ['Add host to Allowed hosts', 'Add host to Denied hosts', 'Add pattern']) {
+      expect(r.getByRole('button', { name }), name).toBeTruthy()
+    }
+    expect(r.queryByRole('button', { name: 'Add' })).toBeNull()
   })
 })
 
