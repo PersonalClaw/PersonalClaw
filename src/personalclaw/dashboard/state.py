@@ -2296,6 +2296,16 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         (:func:`~personalclaw.dashboard.channel_links.link`)."""
         channel_links.link(self, session_name, thread_ts, channel_id, provider)
 
+    async def move_chat_to(self, session: _ChatSession, folder: str) -> bool:
+        """Have the chat *session* work in *folder*, persisted with it
+        (``running_turn.to_folder``): what work below the dashboard asks when a kept chat comes
+        back recording another folder than the one it is opened for (a loop's task worker resumed
+        in a home restored at another path, whose record names the old home's worktree). True
+        when it moved a running turn."""
+        from personalclaw.dashboard import running_turn
+
+        return await running_turn.rebind(self, session, running_turn.to_folder(folder))
+
     def get_or_create_session(
         self,
         name: str | None = None,
