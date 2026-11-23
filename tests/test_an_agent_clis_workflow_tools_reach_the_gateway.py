@@ -30,6 +30,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
+import tree_under_test
 
 from personalclaw import mcp_core, session_restrictions, started_work
 from personalclaw.action_providers import services as action_services
@@ -213,6 +214,10 @@ async def _tool_server(
         "PERSONALCLAW_PORT": str(gw.port),
         "PERSONALCLAW_SESSION_KEY": key,
     }
+    # Built from nothing, so it does not inherit the run's path: the tool server imports the tree
+    # under test, not whichever clone the venv's editable install points at, whose `mcp_core`
+    # may still read an answer's `error` as a call that got no answer.
+    tree_under_test.put_first(env)
     requests = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}] + [
         {
             "jsonrpc": "2.0",
