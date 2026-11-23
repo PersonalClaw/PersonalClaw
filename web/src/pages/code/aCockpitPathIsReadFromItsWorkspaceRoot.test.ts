@@ -1,3 +1,4 @@
+// @module-tag tree-scan
 /** A cockpit path is read from its workspace's root, not from the last folder of the same name.
  *
  *  Six places in the code pages turned an absolute path into a workspace path by searching for
