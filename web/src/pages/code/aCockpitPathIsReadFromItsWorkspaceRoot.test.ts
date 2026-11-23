@@ -9,8 +9,8 @@
  *  macOS's `/private`), and a path under no form of it is outside the workspace.
  */
 import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { filesUnder, readSource } from '../../test/sourceTree'
 import { changeDiff, changePath } from './cockpit/files/changes'
 import { toReviewPath } from './cockpit/reviewState'
 import { resolveTouchedPath } from './cockpit/cockpitShared'
@@ -48,17 +48,9 @@ describe('a workspace whose name repeats below it', () => {
 describe('no code page finds the workspace by the last folder of its name', () => {
   it('🔴 every site goes through the one helper', () => {
     const root = join(__dirname)
-    const files: string[] = []
-    const walk = (dir: string) => {
-      for (const name of readdirSync(dir)) {
-        const p = join(dir, name)
-        if (statSync(p).isDirectory()) walk(p)
-        else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) files.push(p)
-      }
-    }
-    walk(root)
+    const files = filesUnder(root, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
     expect(files.length, 'the walk found the code pages').toBeGreaterThan(20)
-    const searching = files.filter((f) => /\.lastIndexOf\((marker|`\/\$\{)/.test(readFileSync(f, 'utf8')))
+    const searching = files.filter((f) => /\.lastIndexOf\((marker|`\/\$\{)/.test(readSource(f)))
     expect(searching.map((f) => f.slice(root.length + 1))).toEqual([])
   })
 })
