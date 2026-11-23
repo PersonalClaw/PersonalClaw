@@ -47,6 +47,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A Code loop with no stage plan, as a chat's agent makes one, completes as done on the cycle its check first passes, or on its first finding when it has no check. It used to work on finished code until its cycle budget ran out and then read "Ended early". A check that could not run or ran out of time holds completion, and each check's result shows on the loop.**
 - **A project's chats are listed, and counted before a delete, with the chats kept only on disk: after a restart with `restore_sessions` off, a project listed none of its chats until each was opened again, and a plain delete went through as if it had none.**
 - **A proposed template that holds something shaped like a credential no longer offers Save template: its card and its review say it won't be saved and why, before you press anything, where pressing Save was refused. A template whose steps are clean still saves.**
+- **A file's comments follow it into a home restored at another path: after a snapshot is restored, or an export imported, on another machine or under another account's name, a comment on a file in the old home's workspace or elsewhere in that home shows on the same file there, highlighted, and Submit to AI names the file where it is now. Comments on artifacts, and on files outside the home, are left as they were.**
 
 ### Security
 
