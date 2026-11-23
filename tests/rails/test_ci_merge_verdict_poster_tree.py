@@ -31,7 +31,9 @@ contract.yml's wake is held the same way. A poster may also hold the in-place re
 (#5809 piece 3), both or neither: ``rerun``, after ``post`` and only for a run post names, holds
 ``actions: write`` with ``contents: read``, deploys nowhere, reads no secret, and runs exactly three
 steps: the runner identity, main's checkout and the controller's ``rerun`` on its own token, within
-a bound inside the merge queue's check limit; ``rerun-fallback``, for that run whenever ``rerun``
+a bound inside the merge queue's check limit, with the App's id as post hands it (post's ``app``
+output, read in ci-controller's environment, where the variable lives) or as the variable itself
+until it is handed; ``rerun-fallback``, for that run whenever ``rerun``
 did not succeed, holds post's reads and post's one token step and decides the queue commit with its
 rerun ended.
 Each rule fails on a planted edit.
@@ -193,6 +195,12 @@ _RERUN_ENV_ = {
     "RERUN": "${{ needs.post.outputs.rerun }}",
     "APP_ID": "${{ vars.CONTROLLER_APP_ID }}",
 }
+#: The App's id is a variable of the ``ci-controller`` environment alone, and a job that deploys
+#: nowhere reads it as empty. So post, which deploys there, may hand it to the rerun job as its
+#: ``app`` output, read from that variable, and the rerun step's ``APP_ID`` is then that output.
+_APP_OUTPUT = "${{ vars.CONTROLLER_APP_ID }}"
+_HANDED_APP = "${{ needs.post.outputs.app }}"
+_RERUN_ENV_HANDED = {**_RERUN_ENV_, "APP_ID": _HANDED_APP}
 _RERUN_ENDED = '--rerun-ended "$RERUN"'
 #: The closed lists of lines each step that holds a write runs (CORE F3), as test_ci_contract holds
 #: ``results``' (``_TIER_LINES``): each line stripped, blank and comment lines aside, in order.
@@ -336,6 +344,7 @@ _DISPATCH_ = {
     "run": _DISPATCH_SCRIPT,
 }
 _RERUNS_ = {"env": _RERUN_ENV_, "run": _RERUN_SCRIPT}
+_RERUNS_HANDED_ = {"env": _RERUN_ENV_HANDED, "run": _RERUN_SCRIPT}
 _FALLBACK_DECIDE_ = {
     "id": "decide",
     "env": {"GH_TOKEN": _OWN_TOKEN, "RERUN": _NAMED_RERUN, "APP_ID": _APP_ID},
@@ -369,6 +378,9 @@ _JOBS = {
         (*_OPENING, ("decision", _FALLBACK_DECIDE_), *_POSTING_STEPS),
     ),
 }
+#: The rerun job as its step reads the App's id handed by post: the same job, its step's fixture
+#: the handed one.
+_HANDED_RERUN_JOB = (_JOBS["rerun"][0], (*_OPENING, ("rerun step", _RERUNS_HANDED_)))
 _WORKFLOW_KEYS = {"name", "on", "concurrency", "permissions", "jobs"}
 #: The runner every job of the poster and contract.yml's wake runs on: GitHub-hosted, as the file
 #: names it (CORE N1 on #6312). A self-hosted runner's own hooks run beside each step, the token
@@ -499,7 +511,7 @@ def _posting_problems(where: str, steps: list[dict]) -> list[str]:
     return found
 
 
-def _rerun_problems(job: dict) -> list[str]:
+def _rerun_problems(job: dict, post: dict) -> list[str]:
     found: list[str] = []
     if job.get("needs") != "post" or job.get("if") != _RERUN_IF:
         found.append(
@@ -526,11 +538,19 @@ def _rerun_problems(job: dict) -> list[str]:
         or _RERUN_RUN not in str(runs[0].get("run"))
         or _script_lines(runs[0]) != _RERUN_SCRIPT
         or set(runs[0]) != {"name", "env", "run"}
-        or runs[0].get("env") != _RERUN_ENV_
+        or runs[0].get("env") not in (_RERUN_ENV_, _RERUN_ENV_HANDED)
     ):
         found.append(
             "the rerun job runs other than the controller's rerun alone, of the run post names,"
             " on the job's own token"
+        )
+    elif (
+        runs[0].get("env") == _RERUN_ENV_HANDED
+        and (post.get("outputs") or {}).get("app") != _APP_OUTPUT
+    ):
+        found.append(
+            "the rerun job reads an App id post does not hand it (post's `app` output must be"
+            f" {_APP_OUTPUT})"
         )
     # Exactly the three steps (CORE F1): what else it ran would run on the job's actions: write.
     if (
@@ -646,7 +666,10 @@ def _problems(text: str) -> list[str]:
         return [*found, f"has jobs {sorted(jobs)}"]
     for name, each in jobs.items():
         found += _step_problems(name, each)
-        found += _closed_job_problems(f"the {name} job", each, *_JOBS[name])
+        spec = _JOBS[name]
+        if name == "rerun" and _HANDED_APP in json.dumps(each):
+            spec = _HANDED_RERUN_JOB
+        found += _closed_job_problems(f"the {name} job", each, *spec)
     # The beside shape's triggers carry the queue shape's condition (0.4.0 A1): main's merge queue
     # is judged through this poster, so a condition that takes no queue commit's run is not this
     # file's, and neither is the after shape's.
@@ -667,7 +690,7 @@ def _problems(text: str) -> list[str]:
     found += _checkout_problems("the post job", steps)
     found += _posting_problems("the post job", steps)
     if _RERUN_JOBS <= set(jobs):
-        found += _rerun_problems(jobs["rerun"]) + _fallback_problems(jobs["rerun-fallback"])
+        found += _rerun_problems(jobs["rerun"], job) + _fallback_problems(jobs["rerun-fallback"])
         if (job.get("outputs") or {}).get("rerun") != _RERUN_OUTPUT:
             found.append(
                 "the post job names no run to rerun to the rerun jobs (its `rerun` output)"
@@ -2075,6 +2098,59 @@ def test_a_planted_edit_of_the_in_place_rerun_fails(old: str, new: str, says: st
     assert old in text, f"the plant's anchor is gone: {old!r}"
     before, _, after = text.rpartition(old)
     found = _problems(before + new + after)
+    assert any(says in p for p in found), found
+
+
+#: The rerun step's App id, read where the job deploys nowhere, and as post hands it.
+_RERUN_READS_APP = (
+    "          RERUN: ${{ needs.post.outputs.rerun }}\n"
+    f"          APP_ID: {_APP_OUTPUT}\n"
+    "        run: |\n          set -euo pipefail\n"
+    "          python3 -m tools.ci merge-controller rerun "
+)
+_POST_HANDS_APP = f"      app: {_APP_OUTPUT}\n"
+
+
+def _handed_poster() -> str:
+    """The poster with its rerun job handed the App's id by post: post's ``app`` output, read in
+    ci-controller's environment, and the rerun step's ``APP_ID`` that output."""
+    text = _rerun_poster()
+    if _HANDED_APP in text:
+        return text
+    named = f"      rerun: {_RERUN_OUTPUT}\n"
+    assert text.count(named) == 1 and text.count(_RERUN_READS_APP) == 1, "the rerun moved"
+    text = text.replace(named, named + _POST_HANDS_APP, 1)
+    return text.replace(_RERUN_READS_APP, _RERUN_READS_APP.replace(_APP_OUTPUT, _HANDED_APP), 1)
+
+
+def test_the_rerun_handed_its_app_id_by_post_keeps_its_trust_shape() -> None:
+    assert _problems(_handed_poster()) == []
+
+
+@pytest.mark.parametrize(
+    "old, new, says",
+    [
+        pytest.param(
+            _POST_HANDS_APP, "", "reads an App id post does not hand it", id="post hands none"
+        ),
+        pytest.param(
+            _POST_HANDS_APP,
+            "      app: ${{ vars.OTHER_APP_ID }}\n",
+            "reads an App id post does not hand it",
+            id="post hands another variable",
+        ),
+        pytest.param(
+            f"          APP_ID: {_HANDED_APP}\n",
+            "          APP_ID: ${{ needs.post.outputs.dispatch }}\n",
+            "the rerun job runs other than the controller's rerun alone",
+            id="the rerun reads another output",
+        ),
+    ],
+)
+def test_a_planted_edit_of_the_handed_app_id_fails(old: str, new: str, says: str) -> None:
+    text = _handed_poster()
+    assert text.count(old) == 1, f"the plant's anchor is not one: {old!r}"
+    found = _problems(text.replace(old, new, 1))
     assert any(says in p for p in found), found
 
 
