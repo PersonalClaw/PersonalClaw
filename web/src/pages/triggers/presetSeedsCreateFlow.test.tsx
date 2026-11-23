@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TRIGGER_PRESETS } from './triggerPresets'
+import { describedBy } from '../../test/describedBy'
 
 // ── The clause the change turns on, asserted at the CALL SITE ─────────────────────────
 //
@@ -180,7 +181,7 @@ describe('#/triggers/new — the expert blank path, unchanged', () => {
       return b
     })
     // …and it says WHY, in the order the form presents its requirements.
-    expect(create.getAttribute('title')).toContain('Name the trigger first')
+    expect(describedBy(create)).toContain('Name the trigger first')
     await userEvent.click(create)
     expect(createSchedule).not.toHaveBeenCalled()
   })

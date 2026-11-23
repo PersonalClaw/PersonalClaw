@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ActionProvider } from '../../lib/api'
+import { TIP_COPY } from '../../test/describedBy'
 
 // ── "When that research run finishes, …" is a trigger the Triggers page can make ────────────────
 //
@@ -69,7 +70,7 @@ describe('A trigger that runs when a run finishes', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /^Name/ }), { target: { value: 'Post the summary' } })
     fireEvent.click(await screen.findByRole('button', { name: /Pick an action/ }))
     fireEvent.click(await screen.findByRole('option', { name: /Notify/ }))
-    expect(await screen.findByText('Pick the run it runs after')).toBeInTheDocument()
+    expect(await screen.findByText('Pick the run it runs after', { ignore: TIP_COPY })).toBeInTheDocument()
 
     fireEvent.click(await screen.findByRole('button', { name: /Pick a run/ }))
     expect(screen.queryByRole('option', { name: /0d0e0f01/ }), 'a run that ended is nothing to wait on').toBeNull()

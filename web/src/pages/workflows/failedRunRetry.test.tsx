@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { WorkflowRunDetailData } from '../../lib/api'
 import { WorkflowRunDetail } from './WorkflowRunDetail'
+import { TIP_COPY, describedBy } from '../../test/describedBy'
 
 const workflowRun = vi.fn<(id: string) => Promise<WorkflowRunDetailData>>()
 const forkWorkflowRun = vi.fn()
@@ -176,7 +177,7 @@ describe('a Retry inside a provider breaker window says when it can run', () => 
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
     const button = await screen.findByRole('button', { name: /retry/i })
     expect(button.getAttribute('aria-disabled')).toBe('true')
-    expect(button.getAttribute('title')).toMatch(/Retry becomes available in 2[456]s/)
+    expect(describedBy(button)).toMatch(/Retry becomes available in 2[456]s/)
     expect(screen.getByText(/Calls to this provider are paused after repeated failures/)).toBeTruthy()
     fireEvent.click(button)
     expect(forkWorkflowRun).not.toHaveBeenCalled()
@@ -188,7 +189,7 @@ describe('a Retry inside a provider breaker window says when it can run', () => 
     workflowRun.mockResolvedValueOnce(failedRun(true)).mockResolvedValue(failedRun(true, now() + 20))
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: /retry/i }))
-    await screen.findByText(/Retry becomes available in \d+s/)
+    await screen.findByText(/Retry becomes available in \d+s/, { ignore: TIP_COPY })
     expect(workflowRun).toHaveBeenCalledTimes(2)
     expect(forkWorkflowRun).not.toHaveBeenCalled()
   })

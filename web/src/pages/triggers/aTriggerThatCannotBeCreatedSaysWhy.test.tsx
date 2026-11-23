@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ActionProvider } from '../../lib/api'
+import { TIP_COPY, describedBy } from '../../test/describedBy'
 
 // ── A trigger that cannot be created yet says what it is waiting for, where it can be read ─────
 //
@@ -61,24 +62,24 @@ describe('Create trigger, while it cannot create yet', () => {
   it('says the first thing it waits for beside the button, and names a required setting', async () => {
     render(<TriggerCreatePage onBack={() => {}} onCreated={() => {}} query={{}} setQuery={() => {}} />)
     // Said on screen before anything is typed — not only in the button's title.
-    expect(screen.getByText('Name the trigger first')).toBeInTheDocument()
+    expect(screen.getByText('Name the trigger first', { ignore: TIP_COPY })).toBeInTheDocument()
 
     fireEvent.change(screen.getByRole('textbox', { name: /^Name/ }), { target: { value: 'Weekly research' } })
-    expect(await screen.findByText('Pick the action it runs')).toBeInTheDocument()
+    expect(await screen.findByText('Pick the action it runs', { ignore: TIP_COPY })).toBeInTheDocument()
 
     fireEvent.click(await screen.findByRole('button', { name: /Pick an action/ }))
     fireEvent.click(await screen.findByRole('option', { name: /Run Workflow/ }))
-    const said = await screen.findByText('“Workflow” is required')
+    const said = await screen.findByText('“Workflow” is required', { ignore: TIP_COPY })
     expect(said.tagName, 'the reason is read on the page').toBe('P')
     expect(create()).toHaveAttribute('aria-disabled', 'true')
-    expect(create().getAttribute('title')).toContain('“Workflow” is required')
+    expect(describedBy(create())).toContain('“Workflow” is required')
     fireEvent.click(create())
     expect(createSchedule).not.toHaveBeenCalled()
 
     // Once the workflow is picked, it has nothing left to wait for and says nothing.
     fireEvent.click(await screen.findByRole('button', { name: /Pick a workflow/ }))
     fireEvent.click(await screen.findByRole('option', { name: /deep-research/ }))
-    await waitFor(() => expect(screen.queryByText('“Workflow” is required')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('“Workflow” is required', { ignore: TIP_COPY })).toBeNull())
     expect(create()).not.toHaveAttribute('aria-disabled')
   })
 })

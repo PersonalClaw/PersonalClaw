@@ -18,6 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { AppConfigFields, type SchemaProp } from './appConfigForm'
 import { SchemaField } from '../settings/ProviderConfigForm'
 import type { ProviderSchemaProp } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 afterEach(() => cleanup())
@@ -199,7 +200,7 @@ describe('Settings › Models & Providers › Providers refuses the same save', 
     const save = screen.getByRole('button', { name: 'Save' })
     // Off with a reason, so it keeps its tab stop and says why (`ui/Button`'s `disabledReason`).
     expect(save.getAttribute('aria-disabled')).toBe('true')
-    expect(save.getAttribute('title') ?? '', 'the reason names the field').toContain('Reactions')
+    expect(describedBy(save) ?? '', 'the reason names the field').toContain('Reactions')
     await userEvent.click(save)
     expect(saveProviderConfig).not.toHaveBeenCalled()
   })

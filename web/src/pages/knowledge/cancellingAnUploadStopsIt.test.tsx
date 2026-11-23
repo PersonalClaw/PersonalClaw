@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { describedBy } from '../../test/describedBy'
 
 // ── Cancelling a knowledge upload stops it, and nothing is added ─────────────────────────────
 //
@@ -164,7 +165,7 @@ describe('once every byte is there, it is added whatever happens', () => {
     expect(screen.queryByRole('button', { name: 'Cancel upload' })).toBeNull()
     const cancel = screen.getByRole('button', { name: 'Cancel' })
     expect(cancel).toHaveAttribute('aria-disabled', 'true')
-    expect(cancel.getAttribute('title')).toMatch(/being added to your library/)
+    expect(describedBy(cancel)).toMatch(/being added to your library/)
     fireEvent.click(cancel)
     expect(onBack).not.toHaveBeenCalled()
 

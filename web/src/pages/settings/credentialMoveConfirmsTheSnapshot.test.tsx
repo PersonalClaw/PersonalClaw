@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 import { act, render, screen, cleanup } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { describedBy } from '../../test/describedBy'
 
 // ── The "move to keychain" action must SHOW the snapshot before it moves anything ──────────
 //
@@ -207,20 +208,20 @@ describe('the panel cannot offer a move that would refuse', () => {
     // `disabledReason` keeps the control REACHABLE (aria-disabled) so a keyboard user learns
     // the precondition instead of tabbing past a dead button.
     expect(btn.getAttribute('aria-disabled')).toBe('true')
-    expect(btn.getAttribute('title')).toBe('There is no OS keychain on this machine to move them into')
+    expect(describedBy(btn)).toBe('There is no OS keychain on this machine to move them into')
     expect(screen.getByText(/No OS keychain answers on this machine: a container has none/)).toBeTruthy()
   })
 
   it('a keychain not asked for yet names the switch as the precondition', async () => {
     await mount({ confirmed: true, state: { blocked: true, backend: 'dotenv', requested: 'dotenv' } })
     const btn = screen.getByRole('button', { name: /move 2 to keychain/i })
-    expect(btn.getAttribute('title')).toBe('Turn on "Store credentials in the OS keychain" first')
+    expect(describedBy(btn)).toBe('Turn on "Store credentials in the OS keychain" first')
   })
 
   it('nothing pending disables it with a different reason — the vacuity floor', async () => {
     await mount({ confirmed: true, state: { pending: 0, pending_keys: [] } })
     const btn = screen.getByRole('button', { name: /move to keychain/i })
-    expect(btn.getAttribute('title')).toMatch(/no credentials left in \.env/i)
+    expect(describedBy(btn)).toMatch(/no credentials left in \.env/i)
   })
 
   it('the roll-back action appears only when a snapshot exists', async () => {

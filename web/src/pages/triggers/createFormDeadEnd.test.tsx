@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { describedBy } from '../../test/describedBy'
 
 // ── A create form that told you to pick from a list its own read had emptied ──────────────────────
 //
@@ -78,10 +79,10 @@ describe('#/triggers/new says its action list failed instead of blaming the user
     fireEvent.change(screen.getByPlaceholderText('Morning briefing'), { target: { value: 'nightly digest' } })
     const save = await waitFor(() => screen.getByRole('button', { name: /Create trigger/i }))
     await waitFor(() => {
-      expect(save.getAttribute('title'), 'the reason must name the failed read, not a choice')
+      expect(describedBy(save), 'the reason must name the failed read, not a choice')
         .toMatch(/could ?n.t load the action providers/i)
     })
-    expect(save.getAttribute('title'), 'never the old blame').not.toMatch(/^Pick the action/)
+    expect(describedBy(save), 'never the old blame').not.toMatch(/^Pick the action/)
   })
 
   it('still offers the picker — and no error — when the registry really is empty', async () => {

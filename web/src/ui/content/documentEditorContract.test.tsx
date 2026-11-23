@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { DocumentBlock, DocumentLossReport, DocumentModelJson, DocumentRun } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 // ── The lossy-edit contract — as a mechanism, not a notice ─────────────────────
 //
@@ -114,7 +115,7 @@ describe('a lossy document warns BEFORE the first edit', () => {
     // read why. Asserting `toBeDisabled()` here would fail on the very wiring that explains it.
     const bold = screen.getByRole('button', { name: 'Bold' })
     expect(bold).toHaveAttribute('aria-disabled', 'true')
-    expect(bold).toHaveAttribute('title', expect.stringContaining('formatting notice'))
+    expect(describedBy(bold)).toEqual(expect.stringContaining('formatting notice'))
   })
 
   it('acknowledging it — and only that — hands over the controls', async () => {
@@ -162,7 +163,7 @@ describe('bolding a word posts a split run', () => {
     await paragraph()
     const save = screen.getByRole('button', { name: /^Save/ })
     expect(save).toHaveAttribute('aria-disabled', 'true')
-    expect(save).toHaveAttribute('title', expect.stringContaining('No changes to save'))
+    expect(describedBy(save)).toEqual(expect.stringContaining('No changes to save'))
   })
 })
 

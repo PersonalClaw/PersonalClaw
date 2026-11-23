@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { api, type ProjectItem } from '../../lib/api'
 import { resetDataStore } from '../../lib/data'
 import { NewProjectModal } from './NewProjectDialog'
+import { TIP_COPY } from '../../test/describedBy'
 
 // ── New project asks for a name and a folder ─────────────────────────────────────────────────────
 //
@@ -40,7 +41,7 @@ describe('the New project dialog', () => {
     open()
     const create = screen.getByRole('button', { name: /Create project/ })
     expect(create.getAttribute('aria-disabled'), 'off, and still reachable').toBe('true')
-    expect(screen.getByText('Give it a name first.')).toBeInTheDocument()
+    expect(screen.getByText('Give it a name first.', { ignore: TIP_COPY })).toBeInTheDocument()
   })
 
   it("names the project after its folder when the name is empty", async () => {
@@ -55,7 +56,7 @@ describe('the New project dialog', () => {
     const create = vi.spyOn(api, 'createProject')
     open(['Garden'])
     await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'garden')
-    expect(screen.getByText('You already have a project called “Garden”.')).toBeInTheDocument()
+    expect(screen.getByText('You already have a project called “Garden”.', { ignore: TIP_COPY })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /Create project/ }))
     expect(create).not.toHaveBeenCalled()
   })

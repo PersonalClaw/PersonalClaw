@@ -6,6 +6,7 @@ import { EditorView } from '@codemirror/view'
 import { runState, runningState } from '../../../test/runState'
 import type { ChatTurn } from '../chatTypes'
 import type { ChatStream } from '../useChatStream'
+import { describedBy } from '../../../test/describedBy'
 
 // ── Chat preferences hold the rare overrides ───────────────────────────────────────────────────
 //
@@ -293,7 +294,7 @@ describe('the Chat preferences window', () => {
     const win = await openPreferences()
     const optimize = within(win).getByRole('button', { name: 'Optimize this draft ⌘↵' })
     expect(optimize.getAttribute('aria-disabled')).toBe('true')
-    expect(optimize.getAttribute('title')).toContain('Type something first')
+    expect(describedBy(optimize)).toContain('Type something first')
     fireEvent.click(optimize)
     expect(called('optimizePrompt')).toEqual([])
   })

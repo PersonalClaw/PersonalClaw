@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { act, render, within } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { describedBy } from '../../test/describedBy'
 
 // ── The Security panel says WHICH denylist is in force, and whether it drifted ──────
 //
@@ -250,10 +251,11 @@ describe('each Add button explains ITS OWN empty draft', () => {
     // pattern first". Both are `title`-named, so the wrong noun is what a hover and a screen reader
     // both got. Pinned by role name so a future re-swap cannot pass.
     const r = await mount()
-    // 🪤 The reason lands in `title`, and these buttons have CONTENT ("Add"), so content wins the
-    // accessible name — all three announce "Add". The title is what a hover and a description read,
-    // so that is what gets measured; the three Adds are told apart by which section they sit in.
-    const titles = [...r.container.querySelectorAll('button[title]')].map((b) => b.getAttribute('title'))
+    // 🪤 The reason is each Add's description (its tooltip's hidden copy), and these buttons have
+    // CONTENT ("Add"), so content wins the accessible name — all three announce "Add". The
+    // description is what a hover, a focus and a screen reader get, so that is what gets measured;
+    // the three Adds are told apart by which section they sit in.
+    const titles = [...r.container.querySelectorAll('button[aria-describedby]')].map((b) => describedBy(b))
     expect(titles.filter((t) => t === 'Enter a pattern first').length, 'one denylist Add').toBe(1)
     expect(titles.filter((t) => t === 'Enter a host first').length, 'two host Adds (allow + deny)').toBe(2)
   })

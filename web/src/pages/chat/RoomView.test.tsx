@@ -19,6 +19,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ApiError, type RoomDetail, type RoomMemberRecord, type RoomRecord } from '../../lib/api'
 import { RoomView } from './RoomView'
+import { describedBy } from '../../test/describedBy'
 
 /** The mock's mutable handles. `vi.hoisted` because `vi.mock`'s factory runs during this file's own
  *  top-level imports, before a plain `const` would be initialised. */
@@ -250,7 +251,7 @@ describe('speaking in the room', () => {
     mount()
     const send = await screen.findByRole('button', { name: /^Send/ })
     expect(send.getAttribute('aria-disabled')).toBe('true')
-    expect(send.getAttribute('title')).toContain('Write something first')
+    expect(describedBy(send)).toContain('Write something first')
     await userEvent.click(send)
     expect(H.postRoomMessage).not.toHaveBeenCalled()
   })

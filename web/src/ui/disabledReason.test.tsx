@@ -6,6 +6,7 @@ import { Pause } from 'lucide-react'
 import { Button } from './Button'
 import { HeaderControl } from './HeaderActions'
 import { filesUnder, readSource } from '../test/sourceTree'
+import { describedBy } from '../test/describedBy'
 
 // ── A disabled submit that cannot say why ─────────────────────────────────────────────
 //
@@ -53,13 +54,13 @@ describe('an unavailable button says why', () => {
 
   it('carries the reason where AT and sighted users both get it', () => {
     render(<Button disabled disabledReason="Enter a project name first">Create project</Button>)
-    expect(screen.getByRole('button').getAttribute('title')).toBe('Enter a project name first')
+    expect(describedBy(screen.getByRole('button'))).toBe('Enter a project name first')
   })
 
   it('appends to an existing title rather than replacing it', () => {
     // A button with a real tooltip (a shortcut hint) must not lose it.
     render(<Button disabled disabledReason="Enter a name" title="Save (⌘S)">Save</Button>)
-    expect(screen.getByRole('button').getAttribute('title')).toBe('Save (⌘S) — Enter a name')
+    expect(describedBy(screen.getByRole('button'))).toBe('Save (⌘S) — Enter a name')
   })
 
   it('refuses the click', () => {
