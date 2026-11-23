@@ -65,6 +65,7 @@
     "config": {
       "mode": "until_dry",
       "streak": 2,
+      "progress_field": "new",
       "max_iterations": 3
     },
     "body": {
@@ -80,7 +81,7 @@
               "id": "find_correctness",
               "config": {
                 "model_tier": "reasoning",
-                "prompt": "Find CORRECTNESS problems: logic that is wrong, cases not handled, states that cannot be represented, assumptions never checked.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
+                "prompt": "Find CORRECTNESS problems: logic that is wrong, cases not handled, states that cannot be represented, assumptions never checked.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nEarlier rounds of this sweep already found these, so do not report them again; look for what they missed:\n{{last.output.found | filter}}\n\nLeads the last round's completeness critic raised, to check first:\n{{last.output.leads | filter}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
                 "schema": {
                   "findings": "array"
                 }
@@ -91,7 +92,7 @@
               "id": "find_safety",
               "config": {
                 "model_tier": "reasoning",
-                "prompt": "Find SAFETY problems: anything that could destroy data, leak a credential, escape its scope, or fire an irreversible action without a check.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
+                "prompt": "Find SAFETY problems: anything that could destroy data, leak a credential, escape its scope, or fire an irreversible action without a check.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nEarlier rounds of this sweep already found these, so do not report them again; look for what they missed:\n{{last.output.found | filter}}\n\nLeads the last round's completeness critic raised, to check first:\n{{last.output.leads | filter}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
                 "schema": {
                   "findings": "array"
                 }
@@ -102,7 +103,7 @@
               "id": "find_clarity",
               "config": {
                 "model_tier": "standard",
-                "prompt": "Find CLARITY problems: things a competent reader would misread, names that lie about what they do, and behaviour no comment explains where the reason is not obvious.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
+                "prompt": "Find CLARITY problems: things a competent reader would misread, names that lie about what they do, and behaviour no comment explains where the reason is not obvious.\n\nFocus: {{inputs.focus}}\n\nTarget:\n{{inputs.target}}\n\nEarlier rounds of this sweep already found these, so do not report them again; look for what they missed:\n{{last.output.found | filter}}\n\nLeads the last round's completeness critic raised, to check first:\n{{last.output.leads | filter}}\n\nReturn JSON: {\"findings\": [Finding]}.\n\n{{block:finding-record}}",
                 "schema": {
                   "findings": "array"
                 }
@@ -163,10 +164,45 @@
           "id": "completeness_critic",
           "config": {
             "model_tier": "reasoning",
-            "prompt": "What did this round MISS? An angle not swept, a claim not verified, a part of the target never read. Return an empty list when the round genuinely covered everything — that is what stops the loop.\n\nReturn JSON: {\"new_findings\": [\"…\"], \"uncovered\": [\"…\"]}.\n\nTarget:\n{{inputs.target}}\n\nThis round's findings, none of them refuted:\n{{nodes.verify_confirmed.output.kept}}",
+            "prompt": "What did this round MISS? An angle not swept, a claim not verified, a part of the target never read. And which of this round's findings are new: copy into `new_this_round` each finding below that no earlier round's finding already states, in other words or not. When this round found nothing new and missed nothing, return three empty lists — that is what stops the loop, two such rounds in a row.\n\nReturn JSON: {\"new_this_round\": [Finding], \"new_findings\": [\"…\"], \"uncovered\": [\"…\"]}.\n\nTarget:\n{{inputs.target}}\n\nThis round's findings, none of them refuted:\n{{nodes.verify_confirmed.output.kept}}\n\nWhat earlier rounds found:\n{{last.output.found | filter}}",
             "schema": {
+              "new_this_round": "array",
               "new_findings": "array",
               "uncovered": "array"
+            }
+          }
+        },
+        {
+          "kind": "transform",
+          "id": "round_parts",
+          "label": "What this round adds",
+          "config": {
+            "expr": {
+              "found": [
+                "{{last.output.found | filter}}",
+                "{{nodes.completeness_critic.output.new_this_round}}"
+              ],
+              "leads": [
+                "{{nodes.completeness_critic.output.new_findings}}",
+                "{{nodes.completeness_critic.output.uncovered}}"
+              ],
+              "new": [
+                "{{nodes.completeness_critic.output.new_this_round}}",
+                "{{nodes.completeness_critic.output.new_findings}}",
+                "{{nodes.completeness_critic.output.uncovered}}"
+              ]
+            }
+          }
+        },
+        {
+          "kind": "transform",
+          "id": "round_end",
+          "label": "Carry the round forward",
+          "config": {
+            "expr": {
+              "found": "{{nodes.round_parts.output.found | flatten}}",
+              "leads": "{{nodes.round_parts.output.leads | flatten}}",
+              "new": "{{nodes.round_parts.output.new | flatten}}"
             }
           }
         }
