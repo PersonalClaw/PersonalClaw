@@ -127,7 +127,7 @@ async def test_a_projects_secret_of_such_a_name_is_not_asked_about(sel_events):
     environment: by any name, it changes nobody's sign-in."""
     old = sign_in(age=OLD)
     async with client_for(guarded_app(_routes)) as client:
-        resp = await _store(client, old, BYPASS, value="1", project_id="proj-1")
+        resp = await _store(client, old, BYPASS, project_id="proj-1")
 
     assert resp.status == 200
     assert project_secret_key("proj-1", BYPASS) in credential_names()
@@ -156,4 +156,78 @@ def test_a_connector_pack_may_not_name_one():
         with pytest.raises(connectors.ConnectorResolutionError, match=name):
             connectors._save_credentials([name], {name: "planted-value-1"})
         assert name not in credential_names(), f"a pack stored {kind}"
-    assert connectors._save_credentials(["GITHUB_TOKEN"], {"GITHUB_TOKEN": "x"}) == ["GITHUB_TOKEN"]
+    assert connectors._save_credentials(["GITHUB_TOKEN"], {"GITHUB_TOKEN": "planted-value-1"}) == [
+        "GITHUB_TOKEN"
+    ]
+
+
+# ── each sign-in name takes its own floor (#4095) ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_setting_takes_no_length_floor_and_is_never_marked_short():
+    """A sign-in setting is read by the gateway in its own form: the bypass is on only at exactly
+    ``"1"``, and a channel owner's id can be six digits. The floor is for a value work is handed,
+    which is masked out of what it prints."""
+    from personalclaw.secrets_vault import list_presence
+
+    owner = SIGN_IN_NAMES["a channel owner's id"]
+    fresh = sign_in()
+    async with client_for(guarded_app(_routes)) as client:
+        assert (await _store(client, fresh, BYPASS, value="1")).status == 200
+        assert (await _store(client, fresh, owner, value="123456")).status == 200
+        project = await _store(client, fresh, BYPASS, value="1", project_id="proj-1")
+        refused = (project.status, (await project.json())["error"]["code"])
+
+    assert os.environ.get(BYPASS) == "1"
+    marked = {r.name: r.too_short for r in list_presence() if not r.project_id}
+    assert (marked[BYPASS], marked[owner]) == (False, False)
+    # A project's secret of that name is handed to that project's work, so it takes the floor.
+    assert refused == (400, "secret_value_too_short")
+    assert project_secret_key("proj-1", BYPASS) not in credential_names()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind", ["the authenticator's seed", "an inbound surface's token"], ids=["seed", "token"]
+)
+async def test_a_short_sign_in_credential_is_refused_like_any_secret(kind):
+    """A 7-character bearer token or authenticator seed is a weak credential, and the masker
+    treats it like any other secret, so it takes the floor at the global scope too."""
+    name = SIGN_IN_NAMES[kind]
+    fresh = sign_in()
+    async with client_for(guarded_app(_routes)) as client:
+        resp = await _store(client, fresh, name, value="ABCDEFG")
+        refused = (resp.status, (await resp.json())["error"]["code"])
+
+    assert refused == (400, "secret_value_too_short")
+    assert name not in credential_names()
+    assert os.environ.get(name) is None
+
+
+@pytest.mark.asyncio
+async def test_the_sign_in_password_takes_the_password_routes_floor():
+    from personalclaw.auth.credentials import MIN_PASSWORD_LEN
+
+    name = SIGN_IN_NAMES["the first password a container enrolls"]
+    fresh = sign_in()
+    async with client_for(guarded_app(_routes)) as client:
+        short = await _store(client, fresh, name, value="x" * (MIN_PASSWORD_LEN - 1))
+        refused = (short.status, (await short.json())["error"]["code"])
+        assert name not in credential_names()
+        kept = await _store(client, fresh, name, value="x" * MIN_PASSWORD_LEN)
+
+    assert refused == (400, "secret_password_too_short")
+    assert kept.status == 200
+    assert name in credential_names()
+
+
+def test_a_short_sign_in_credential_saved_before_the_floor_is_marked():
+    from personalclaw.config.credentials import save_credential
+    from personalclaw.secrets_vault import list_presence
+
+    seed = SIGN_IN_NAMES["the authenticator's seed"]
+    save_credential(seed, "ABCDEFG")
+    save_credential(BYPASS, "1")
+    marked = {r.name: r.too_short for r in list_presence() if not r.project_id}
+    assert (marked[seed], marked[BYPASS]) == (True, False)

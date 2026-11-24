@@ -256,7 +256,13 @@ def _save_credentials(names: list[str], values: dict[str, str]) -> list[str]:
     (``secrets_vault.is_sign_in_key``): no server needs it, and storing it would change it.
     """
     from personalclaw.config.credentials import save_credentials
-    from personalclaw.secrets_vault import is_namespaced_key, is_sign_in_key, valid_key_name
+    from personalclaw.secrets_vault import (
+        VALUE_PROBLEMS,
+        is_namespaced_key,
+        is_sign_in_key,
+        valid_key_name,
+        value_problem,
+    )
 
     unusable = [
         n for n in names if not valid_key_name(n) or is_namespaced_key(n) or is_sign_in_key(n)
@@ -270,6 +276,14 @@ def _save_credentials(names: list[str], values: dict[str, str]) -> list[str]:
     if missing:
         raise ConnectorResolutionError(
             f"configure requires credential value(s) for: {', '.join(sorted(missing))}"
+        )
+    # The same floor and cap Settings › Secrets holds a value to (#4095), before the credential or
+    # the server is written. The refusal names the credential, never its value.
+    refused = {n: value_problem(values[n]) for n in names}
+    refused = {n: why for n, why in refused.items() if why}
+    if refused:
+        raise ConnectorResolutionError(
+            "; ".join(f"{n}: {VALUE_PROBLEMS[why]}" for n, why in sorted(refused.items()))
         )
     if not names:
         return []

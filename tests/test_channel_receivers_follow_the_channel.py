@@ -445,15 +445,15 @@ async def test_a_vault_credential_starts_moves_and_stops_the_receiver(home, wire
         await gw.boot()
         assert wire.on("probe") == []
 
-        await gw.call("POST", "/api/secrets", {"name": TOKEN_ENV, "value": "tok-v1"})
+        await gw.call("POST", "/api/secrets", {"name": TOKEN_ENV, "value": "tok-value-v1"})
         assert await _eventually(
-            lambda: [e["token"] for e in wire.on("probe")] == ["tok-v1"]
+            lambda: [e["token"] for e in wire.on("probe")] == ["tok-value-v1"]
         ), "a token stored in the vault after boot started no receiver"
-        await gw.call("POST", "/api/secrets", {"name": TOKEN_ENV, "value": "tok-v2"})
+        await gw.call("POST", "/api/secrets", {"name": TOKEN_ENV, "value": "tok-value-v2"})
         assert await _eventually(
-            lambda: [e["token"] for e in wire.on("probe")] == ["tok-v2"]
+            lambda: [e["token"] for e in wire.on("probe")] == ["tok-value-v2"]
         ), f"after rotating, receivers are on {[e['token'] for e in wire.on('probe')]}"
-        assert await _receives(gw, wire, "probe", "tok-v2")
+        assert await _receives(gw, wire, "probe", "tok-value-v2")
         assert (await gw.health("probe"))["state"] == "ready"
 
         await gw.call("DELETE", f"/api/secrets?name={TOKEN_ENV}")
@@ -470,7 +470,9 @@ async def test_a_credential_change_leaves_a_channel_it_did_not_touch_running(hom
     async with _gateway(wire) as gw:
         await gw.boot("probe")
         running = wire.on("probe")
-        await gw.call("POST", "/api/secrets", {"name": "SOMETHING_ELSE", "value": "x"})
+        await gw.call(
+            "POST", "/api/secrets", {"name": "SOMETHING_ELSE", "value": "something-else-1"}
+        )
         await asyncio.sleep(0.1)
         assert wire.on("probe") == running, "an unrelated secret restarted the channel"
 

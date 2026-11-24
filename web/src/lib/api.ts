@@ -6208,6 +6208,9 @@ export interface SecretPresenceWire {
   present: true
   inherited_from_host: boolean
   consumers: SecretConsumerWire[]
+  /** The value is shorter than the 8 characters a secret now needs, saved before that floor: the
+   *  row is marked with Replace, and nothing deletes it. Told from the length, never the value. */
+  too_short: boolean
 }
 export interface SecretsVaultState {
   secrets: SecretPresenceWire[]

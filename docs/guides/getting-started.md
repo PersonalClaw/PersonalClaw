@@ -235,6 +235,16 @@ the same name, and nothing outside the project does. A project's page links to
 its secrets from About this project, with Settings → Secrets opened on that project.
 `personalclaw doctor` verifies the result end to end.
 
+A secret has to be at least 8 characters and at most 16,384 bytes. Every secret is masked out of
+what work prints, however short, so a three-character one would hide ordinary text wherever it
+appears and still give itself away by what it hides. Settings → Secrets, a pack's connector setup
+and `setup --credential` all refuse a value outside those bounds and store nothing. A secret saved
+before the floor is kept and still read, marked "Too short to keep out of output reliably." with
+Replace beside it. A short PIN belongs in a fill request instead. A sign-in setting stored as a
+secret, such as `PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1` or a chat channel's owner id, is read by
+PersonalClaw in its own form rather than handed to work, so it takes only the 16,384-byte limit.
+`PERSONALCLAW_LOGIN_PASSWORD` needs the 12 characters any sign-in password needs.
+
 ## 4. First chat
 
 Open the dashboard's **Chat** page and send a message — or from the terminal:

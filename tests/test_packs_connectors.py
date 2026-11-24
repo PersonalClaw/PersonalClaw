@@ -161,6 +161,23 @@ def test_configure_refuses_without_credential_value(importer_home):
     assert not (importer_home / "mcp.json").exists()
 
 
+def test_configure_refuses_a_short_credential_value(importer_home):
+    """The floor Settings › Secrets holds a value to (#4095): a 7-character value writes neither
+    the credential nor the server, and the refusal names the credential, not its value."""
+    from personalclaw.config.credentials import credential_names
+
+    seed_catalog(importer_home)
+    decl = {"name": "web-search", "category": "search"}
+    with pytest.raises(ConnectorResolutionError) as refused:
+        resolve_connector(
+            decl, mode="configure", credentials={"SEARCH_API_KEY": "abcdefg"}, home=importer_home
+        )
+    assert "SEARCH_API_KEY" in str(refused.value) and "abcdefg" not in str(refused.value)
+    assert "at least 8 characters" in str(refused.value)
+    assert not (importer_home / "mcp.json").exists()
+    assert "SEARCH_API_KEY" not in credential_names()
+
+
 # ── the credential-handling property: never a plaintext config field / the pack ──
 
 

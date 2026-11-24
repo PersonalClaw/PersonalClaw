@@ -916,6 +916,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "digits and underscores, not starting with a digit.",
     "secret_value_required": "Storing a secret needs a non-empty value; to remove one, "
     "use DELETE instead.",
+    # The floor and cap on a value (`secrets_vault.value_problem`, #4095): the same sentences the
+    # pack import and `setup --credential` say (`secrets_vault.VALUE_PROBLEMS`).
+    "secret_value_too_short": "A secret must be at least 8 characters, so PersonalClaw can keep it "
+    "out of what work prints; nothing was saved.",
+    "secret_value_too_large": "A secret may be at most 16,384 bytes; nothing was saved.",
+    "secret_password_too_short": "The sign-in password must be at least 12 characters; nothing was "
+    "saved.",
     "secret_project_invalid": "The project id cannot be used to scope a secret — it must be a "
     "plain id without '__' in it.",
     "secret_absent": "No secret is stored under that name in the scope you asked for.",

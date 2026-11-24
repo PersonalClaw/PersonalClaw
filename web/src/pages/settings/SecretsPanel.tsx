@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { KeyRound, Server, FolderLock, Trash2, Plus, Workflow, Zap, Globe } from 'lucide-react'
 import { api } from '../../lib/api'
 import type { ProjectItem, SecretPresenceWire, SecretStoreWire, SecretsVaultState } from '../../lib/api'
@@ -16,6 +16,10 @@ import { PanelHeader, Row, RowGroup, Section } from './settingsUI'
  *  collection is the form already on the page, not a separate route, so the on-ramp is "put the
  *  cursor in it" rather than a navigation. */
 const NAME_FIELD_ID = 'secrets-vault-name'
+const VALUE_FIELD_ID = 'secrets-vault-value'
+/** A row's Replace, handed to the add form: its name and scope. `n` counts the presses, so a
+ *  second Replace of the same row moves the form to it again. */
+type Replacing = { name: string; projectId: string; n: number }
 
 /** A project as this page names it: its name, or — while the list is unknown — its id. An id the
  *  loaded list does not hold is said to be no current project, never given a name it does not
@@ -67,6 +71,11 @@ export function SecretsPanel({ project = '' }: {
     if (found) return found.name
     return projects ? `${pid} (not a current project)` : pid
   }
+  // Replace on a row marked too short: the add form takes its name and scope, and its value field
+  // the focus. Saving there is the ordinary save, which holds the new value to the floor.
+  const [replacing, setReplacing] = useState<Replacing | null>(null)
+  const replace = (name: string, projectId: string) =>
+    setReplacing((was) => ({ name, projectId, n: (was?.n ?? 0) + 1 }))
 
   if (!v) {
     return (
@@ -100,7 +109,7 @@ export function SecretsPanel({ project = '' }: {
           + 'read back — not by this page and not by any API.'}
       />
 
-      <AddSecret onSaved={refresh} projectLabel={projectLabel} store={v.store} startProject={project} />
+      <AddSecret onSaved={refresh} projectLabel={projectLabel} store={v.store} startProject={project} prefill={replacing} />
 
       {v.secrets.length === 0 ? (
         <EmptyState
@@ -133,7 +142,7 @@ export function SecretsPanel({ project = '' }: {
               : (
                 <RowGroup>
                   {globals.map((s) => (
-                    <SecretRow key={s.name} s={s} onChanged={refresh}
+                    <SecretRow key={s.name} s={s} onChanged={refresh} onReplace={replace}
                       removeBody={globalRemoveBody(s.name, projectsHolding(s.name))} />
                   ))}
                 </RowGroup>
@@ -157,7 +166,7 @@ export function SecretsPanel({ project = '' }: {
                   <div data-type="caption" className="mb-xs text-on-surface-low">{projectLabel(pid)}</div>
                   <RowGroup>
                     {rows.map((s) => (
-                      <SecretRow key={s.name} s={s} onChanged={refresh}
+                      <SecretRow key={s.name} s={s} onChanged={refresh} onReplace={replace}
                         removeTitle={`Remove ${s.name} from ${projectLabel(pid)}?`}
                         removeBody={projectRemoveBody(s.name, projectLabel(pid), globalNames.has(s.name))} />
                     ))}
@@ -183,7 +192,7 @@ export function SecretsPanel({ project = '' }: {
                 + 'one a workflow, an automation and the agent’s commands can use by name.'}
             >
               <RowGroup>
-                {host.map((s) => <SecretRow key={s.name} s={s} onChanged={refresh} removeBody="" />)}
+                {host.map((s) => <SecretRow key={s.name} s={s} onChanged={refresh} onReplace={replace} removeBody="" />)}
               </RowGroup>
             </Section>
           )}
@@ -215,9 +224,11 @@ function projectRemoveBody(name: string, project: string, hasGlobal: boolean): s
 }
 
 /** One vault row: name, scope treatment, and what references it. */
-function SecretRow({ s, onChanged, removeTitle, removeBody }: {
+function SecretRow({ s, onChanged, onReplace, removeTitle, removeBody }: {
   s: SecretPresenceWire
   onChanged: () => void
+  /** Puts this row's name and scope in the add form, for a value marked too short. */
+  onReplace: (name: string, projectId: string) => void
   /** The confirm's title; `Remove NAME?` unless the scope needs saying. */
   removeTitle?: string
   /** What removing this row does, in the confirm. Unused for a host row, which cannot be removed. */
@@ -280,6 +291,19 @@ function SecretRow({ s, onChanged, removeTitle, removeBody }: {
             // automation runs in no project, so a project row only ever lists workflows.
             <div data-type="caption" className="mt-xs text-on-surface-low">
               {projectRow ? 'Not referenced by any workflow.' : 'Not referenced by any workflow or automation.'}
+            </div>
+          )}
+          {s.too_short && (
+            // Saved before its floor (8 characters, 12 for the sign-in password): still stored and
+            // still read, so it is marked rather than removed, and Replace is how it goes.
+            <div className="mt-xs flex flex-wrap items-center gap-s">
+              <StatusPill label="too short" tone="warn" />
+              <span data-type="caption" className="text-on-surface-low">
+                Too short to keep out of output reliably.
+              </span>
+              <Button size="sm" variant="secondary" onClick={() => onReplace(s.name, s.project_id)}>
+                Replace
+              </Button>
             </div>
           )}
           {err && <div role="alert" data-type="caption" className="mt-xs text-danger">{err}</div>}
@@ -347,13 +371,18 @@ function KeychainNamespaceRow({ store }: { store: SecretStoreWire }) {
 }
 
 /** The write-only add form. The value leaves in a POST body and is cleared on success. */
-function AddSecret({ onSaved, projectLabel, store, startProject = '' }: { onSaved: () => void; projectLabel: ProjectLabel; store: SecretStoreWire; startProject?: string }) {
+function AddSecret({ onSaved, projectLabel, store, startProject = '', prefill = null }: { onSaved: () => void; projectLabel: ProjectLabel; store: SecretStoreWire; startProject?: string; prefill?: Replacing | null }) {
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
   const [projectId, setProjectId] = useState(startProject)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [note, setNote] = useState('')
+  useEffect(() => {
+    if (!prefill) return
+    setName(prefill.name); setProjectId(prefill.projectId); setErr(''); setNote('')
+    document.getElementById(VALUE_FIELD_ID)?.focus()
+  }, [prefill])
 
   const save = async () => {
     setBusy(true); setErr(''); setNote('')
@@ -377,7 +406,7 @@ function AddSecret({ onSaved, projectLabel, store, startProject = '' }: { onSave
           <TextInput value={name} onChange={setName} name={NAME_FIELD_ID} ariaLabel="Secret name" placeholder="GITHUB_TOKEN" mono size="sm" />
         </Row>
         <Row label="Value" hint="Write-only. It is stored in the credential store and never returned.">
-          <TextInput value={value} onChange={setValue} ariaLabel="Secret value" type="password" size="sm" />
+          <TextInput value={value} onChange={setValue} name={VALUE_FIELD_ID} ariaLabel="Secret value" type="password" size="sm" />
         </Row>
         <KeychainNamespaceRow store={store} />
         <Row

@@ -12,6 +12,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A chat's permission and task mode controls show the mode it runs in when it was set elsewhere: a pick in another tab or on another device, or YOLO turned on, off or running out. An open chat's Execution Boundary reads its sandbox again once a switch of its agent has been taken, and a project's start box never shows a permission mode this computer's operator settings would refuse: it keeps Normal and says why.**
 
+### Security
+
+- **Settings › Secrets, a pack's connector setup and `personalclaw setup --credential` refuse a secret under 8 characters or over 16 KB, and say why. Every secret is masked out of what work prints, so a shorter one would hide ordinary text there. A short secret saved before is kept and still works, and Settings › Secrets marks it with Replace. A sign-in setting such as `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` keeps its own form, and `PERSONALCLAW_LOGIN_PASSWORD` needs the 12 characters any sign-in password needs.**
+
 ## [0.4.1] — 2026-11-25
 
 This release holds a workflow to the commands its owner chose: a run another door starts cannot name a command or a folder, and a command an agent writes into a workflow waits for the owner's yes. After upgrading, review once the workflows an agent saved and the automations an agent made or changed.

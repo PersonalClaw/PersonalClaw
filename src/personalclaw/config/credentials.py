@@ -924,6 +924,23 @@ def credential_names() -> list[str]:
     return sorted({*_keychain_index(), *_dotenv_names()})
 
 
+def names_shorter_than(keys: Iterable[str], floor: int, *, environment: bool = False) -> set[str]:
+    """Which of *keys* hold a value shorter than *floor* characters: the NAMES only.
+
+    Each value is read here, its length taken and the value dropped, so a caller whose read path
+    may never hold a value (``secrets_vault``, presence-only) can still mark a secret too short to
+    mask (#4095). With *environment* the values are the process environment's (a host-supplied
+    row) rather than the store's. A key with no value is not short: it is absent.
+    """
+    short: set[str] = set()
+    for key in keys:
+        value = os.environ.get(key, "") if environment else get_credential(key)
+        if value and len(value) < floor:
+            short.add(key)
+        del value
+    return short
+
+
 def delete_credential(key: str) -> bool:
     """Remove one credential from BOTH backends. True when it was there and is now gone.
 

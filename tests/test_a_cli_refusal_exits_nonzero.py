@@ -349,6 +349,27 @@ def test_security_verify_over_a_tampered_log_exits_1(capsys):
 # ── setup ────────────────────────────────────────────────────────────────────────────────────
 
 
+def test_setup_credential_too_short_exits_1(capsys, monkeypatch):
+    """`--credential` holds a value to the floor Settings › Secrets does (#4095): a value under 8
+    characters stores nothing, says why on stderr, and exits 1."""
+    from personalclaw.cli_setup import _setup
+
+    stored: list[str] = []
+    monkeypatch.setattr(
+        "personalclaw.config.credentials.save_credential", lambda name, value: stored.append(name)
+    )
+
+    with pytest.raises(SystemExit) as exited:
+        _setup(credential="DEMO_KEY=abc")
+
+    printed = capsys.readouterr()
+    assert exited.value.code == 1
+    assert "DEMO_KEY" in printed.err and "at least 8 characters" in printed.err
+    assert "abc" not in printed.err.replace("DEMO_KEY", "")
+    assert "✅" not in printed.out
+    assert stored == []
+
+
 def test_setup_credential_that_was_not_stored_exits_1(capsys, monkeypatch):
     """The unattended install's `--credential`: a name the store refuses stores nothing."""
     from personalclaw.cli_setup import _setup
