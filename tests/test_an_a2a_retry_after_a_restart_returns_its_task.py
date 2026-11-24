@@ -12,7 +12,9 @@ Now the key is kept with the run (``store.run_for_caller_key``), so a retry find
 long as the run is kept, and the door starts its run on the gateway's supervisor.
 
 Driven through the real A2A routes and admission, the real ``workflows.service.start_run`` and
-run store in a home of its own. The supervisor is a stand-in that records what it launches.
+run store in a home of its own. The supervisor is a stand-in that records what it launches. That
+the gateway hands the door its own supervisor is read from the source tree, in
+``tests/rails/test_the_gateway_starts_the_scratch_sweep_and_gives_a2a_its_supervisor_tree.py``.
 """
 
 from __future__ import annotations
@@ -265,20 +267,6 @@ async def test_two_sends_at_once_under_one_key_start_one_run():
     assert [status for status, _body in answers] == [200] * 4
     assert len({body["id"] for _status, body in answers}) == 1
     assert len(_runs()) == 1
-
-
-def test_the_gateway_gives_the_door_its_workflow_supervisor():
-    """The door starts its runs on ``request.app["state"].workflows``: the gateway sets it on the
-    state its dashboard serves, and the door is registered on that dashboard's app."""
-    import inspect
-
-    from personalclaw import gateway
-    from personalclaw.dashboard import routes
-
-    assert "self.dashboard_state.workflows = self.workflow_watchdog" in inspect.getsource(
-        gateway.GatewayOrchestrator
-    )
-    assert "_register_a2a(app)" in inspect.getsource(routes)
 
 
 class _FailsOnce(_Supervisor):
