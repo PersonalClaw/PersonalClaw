@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
 import {
   Clock, RotateCcw, Loader2, Trash2, FileSymlink, History, Tag, Download, ChevronUp, FileWarning,
-  GitCompare, Lock,
+  GitCompare, Lock, Unlink,
 } from 'lucide-react'
 import { api, type Artifact, type ArtifactEvent } from '../../lib/api'
 import { rebaseText, type Revisioned } from '../../lib/staleWrite'
@@ -10,6 +10,7 @@ import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { notify } from '../../app/appSdk'
+import { notFollowedLine, sayIfNotWritten } from './linkWords'
 import { confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
 import { QuietButton } from '../../ui/QuietButton'
@@ -149,7 +150,9 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   }, [art, draft, slug])
   // Which save the guarded write is — a plain save or a snapshot. Set before each, so a notice's
   // "Reload and reapply" re-runs the one that was refused.
-  const writeTo = useRef((next: string, rev: string): Promise<unknown> => api.saveArtifactBody(slug, next, rev))
+  // A save whose answer says it did not reach the artifact's file says so (`linkWords`).
+  const missed = (line: string) => notify(line, 'error')
+  const writeTo = useRef((next: string, rev: string): Promise<unknown> => api.saveArtifactBody(slug, next, rev).then((a) => sayIfNotWritten(a, missed)))
   const guard = useStaleWriteGuard<string>({
     read: () => api.artifact(slug).then((a) => ({ value: a.content ?? '', revision: a.content_revision ?? '' })),
     write: (next, rev) => writeTo.current(next, rev),
@@ -226,7 +229,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   // on resolves `false` into the notice, which holds the change.
   const onSave = async (text: string) => {
     if (!art || !base) return
-    writeTo.current = (next, rev) => api.saveArtifactBody(slug, next, rev)
+    writeTo.current = (next, rev) => api.saveArtifactBody(slug, next, rev).then((a) => sayIfNotWritten(a, missed))
     // Re-throw after notifying: ContentSurface's save keeps the draft dirty on a throw,
     // so the user doesn't lose their edit + sees why it failed (was silently swallowed).
     try { await guard.save(base, text, rebaseText(base.value, text)) }
@@ -235,7 +238,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   // "Snapshot" — persist the draft AND cut a new immutable version (event 'iterated').
   const snapshot = async (text: string) => {
     if (!art || !base) return
-    writeTo.current = (next, rev) => api.snapshotArtifactBody(slug, next, rev)
+    writeTo.current = (next, rev) => api.snapshotArtifactBody(slug, next, rev).then((a) => sayIfNotWritten(a, missed))
     try { await guard.save(base, text, rebaseText(base.value, text)) }
     catch (e) { notify(`Could not snapshot artifact: ${(e as Error).message}`, 'error'); throw e }
   }
@@ -246,7 +249,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
       // Revert is server-side: it restores version N's body (text or binary) as a
       // new current version. We send NO content — for a binary artifact the client
       // only holds a raw-URL ref, not the bytes, so the server must source them.
-      await api.updateArtifact(slug, { event_type: 'reverted', from_version: selVersion })
+      sayIfNotWritten(await api.updateArtifact(slug, { event_type: 'reverted', from_version: selVersion }), missed)
       await reload(); onChanged()
     } catch (e) { notify(`Could not revert: ${(e as Error).message}`, 'error') }
     finally { setBusy(false) }
@@ -366,6 +369,15 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
             offering it while a historical snapshot is on screen would publish something
             other than what the user is looking at. */}
         {isCurrent && <ArtifactDeploy slug={slug} kind={art.kind} />}
+
+        {/* A link that could not be followed: the body below is the saved copy, not the file,
+            and a save changes only that copy. Said, naming the file and why. */}
+        {isCurrent && art.source_unfollowed && (
+          <div role="note" className="flex items-center gap-2 border-b border-outline/40 px-m py-1.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-warning) 10%, transparent)' }}>
+            <Unlink size={12} className="shrink-0" style={{ color: 'var(--color-warning)' }} aria-hidden="true" />
+            <span className="min-w-0 break-words text-on-surface-low">{notFollowedLine(art.source_path, art.source_unfollowed)}</span>
+          </div>
+        )}
 
         {/* Why this artifact can't be edited. Without it a read-only artifact just looks
             like one whose editor is broken — the same reason the historical-version bar

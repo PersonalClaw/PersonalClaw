@@ -250,6 +250,16 @@ class ArtifactEvent:
         )
 
 
+#: What each ``Artifact.source_unfollowed`` and ``source_unwritten`` word says, for a reader that
+#: names it in a sentence (the agent's view of an artifact). The dashboard says its own.
+LINK_WORDS = {
+    "outside": "it is outside the folders an artifact can follow",
+    "missing": "there is no file there",
+    "unreadable": "it could not be read",
+    "unwritable": "it could not be written",
+}
+
+
 @dataclass
 class Artifact:
     """A named, versioned artifact.
@@ -273,6 +283,16 @@ class Artifact:
     events: list[ArtifactEvent] = field(default_factory=list)
     source_path: str = ""
     live_dirty: bool = False
+    #: Why this read could not follow the file ``source_path`` names, "" when it did or there is
+    #: none: ``outside`` (not in a folder an artifact may follow, as after a restore elsewhere or in
+    #: the workspace earlier releases made under the user's home), ``missing`` (no file there) or
+    #: ``unreadable``.
+    #: The read then shows the artifact's last saved copy. Computed per read, never persisted.
+    source_unfollowed: str = ""
+    #: Why the save this answers did not write the file ``source_path`` names, "" when it did or
+    #: wrote none: ``outside``, ``missing`` (a save never makes the file) or ``unwritable``. The
+    #: save is kept as the artifact's own copy. Only on a save's answer, never persisted.
+    source_unwritten: str = ""
     # For BINARY_KINDS (image): the body's MIME type, which fixes the on-disk
     # extension + tells the renderer how to display it. "" for text kinds.
     mime: str = ""
@@ -306,8 +326,9 @@ class Artifact:
 
     def to_dict(self, *, persist: bool = False) -> dict[str, Any]:
         """Serialize. ``persist=True`` (meta.json) drops the transient/derived
-        fields: ``content`` (lives in current.html / source_path) and
-        ``live_dirty`` (computed per read)."""
+        fields: ``content`` (lives in current.html / source_path), ``live_dirty``
+        and ``source_unfollowed`` (computed per read) and ``source_unwritten`` (a
+        save's answer)."""
         d: dict[str, Any] = {
             "slug": self.slug,
             "name": self.name,
@@ -332,6 +353,9 @@ class Artifact:
         if not persist:
             d["content"] = self.content
             d["live_dirty"] = self.live_dirty
+            d["source_unfollowed"] = self.source_unfollowed
+            if self.source_unwritten:
+                d["source_unwritten"] = self.source_unwritten
         else:
             for flag in ("pinned", "archived", "project_cleared"):
                 if getattr(self, flag):

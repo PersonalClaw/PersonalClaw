@@ -7913,6 +7913,9 @@ export interface ArtifactEvent {
   ts: string; type: ArtifactEventType; by: string; session_id: string
   version: number; from_version: number; metadata: Record<string, unknown>
 }
+/** Why a file-backed artifact's link missed its file (`artifacts/models.py`'s LINK_WORDS). */
+export type LinkMissed = 'outside' | 'missing' | 'unreadable' | 'unwritable'
+
 export interface Artifact {
   slug: string; name: string; kind: ArtifactKind; source: ArtifactSource
   description: string; tags: string[]; version: number
@@ -7922,6 +7925,12 @@ export interface Artifact {
   // LIST row carries neither (the server omits them — a list-shaped live_dirty
   // was a fabricated False, #630). Present only on content-bearing responses.
   source_path: string; live_dirty?: boolean; project_id?: string
+  /** Why this read could not follow the file `source_path` names, so `content` is the saved
+   *  copy; "" when it followed or there is none. Computed per read, like `live_dirty`. */
+  source_unfollowed?: LinkMissed | ''
+  /** On a save's answer only: why the save did not write that file. The save is kept as the
+   *  artifact's own copy. */
+  source_unwritten?: LinkMissed
   // Optional library collection label. "" = uncollected.
   collection?: string
   /** Frozen record: the server refuses every content mutation on it (today only
