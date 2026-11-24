@@ -196,7 +196,12 @@ The loop surfaces do not care which home a loop has:
   waits on is said once, by the line that says why it waits, and listed there once the wait is
   over. A Deny only counts as one when you gave it: an ask nobody answered, or one with nowhere
   to put to you, is a refusal as before, and a cycle you declined nothing in goes on with the
-  judge's critique.
+  judge's critique. Only the work's Deny ends its cycle: a judge, or a read-only verifier
+  (`tools_posture: verify`), checks the work as it is, and the next cycle's critique sends back no
+  call you declined in it, so that Deny refuses the call and nothing else
+  (`declines.answers_to_the_critique`). The steps after it run, the cycle ends as it would have,
+  nothing waits, and "Declined by you" says it in its cycle ("You declined bash (…) in “judge”, in
+  cycle 1.").
 - **Restart.** A resumed controller rebuilds each loop's iteration counter from the ledger's
   `continue` and `declined` iteration rows (`iteration_context.rehydrate_loop_progress`) and
   re-queues a dispatched stage whose subagent this process does not know

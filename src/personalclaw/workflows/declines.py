@@ -22,6 +22,12 @@ steers it with while it waits reaches the cycle her Resume runs (:func:`carry_on
 cycle left after that one does not wait: a counted loop has run its count, and a loop at its cycle
 budget stops at it, saying the last cycle ended at her Deny.
 
+**Only where the next cycle would ask again.** That holds for a step the next cycle reruns with
+the judge's critique: the work. A judge, or a read-only verifier, checks the work as it is, and
+what she declined in it is no work the critique sends back, so its Deny refuses that call and
+nothing else (:func:`answers_to_the_critique`): the step goes on without it, the steps after it
+in the cycle run, the cycle ends as it would have, and the page still lists what she declined.
+
 **What it is not.** A Deny on a step's START declines the step and ends the run there
 (`gate_answers.decline`). An ask nobody answered, or one with nowhere to put to her, is not hers.
 A step outside a loop goes on as it would: nothing runs it again to ask her the same thing.
@@ -40,6 +46,7 @@ from personalclaw.workflows import (
     loop_convergence,
     store,
 )
+from personalclaw.workflows.judge_checks import is_judge
 from personalclaw.workflows.models import (
     LoopMode,
     Node,
@@ -57,6 +64,9 @@ logger = logging.getLogger(__name__)
 #: What a run that waits for its owner after her Deny keeps on its row (`run.extra`) while it
 #: waits: the loop, the cycle that ended at her Deny, and the sentence that says so.
 WAIT_KEY = "declined_wait"
+#: The tools posture of a stage that reads what it checks and changes nothing (the judge posture,
+#: `engine.stage_capability`): a verifier, whose Deny the next cycle's work does not answer.
+VERIFY_POSTURE = "verify"
 
 
 def keep(ctl: RunController, path: str, inst: Any, info: Any) -> None:
@@ -69,6 +79,8 @@ def keep(ctl: RunController, path: str, inst: Any, info: Any) -> None:
     if not steps or loop_path is None:
         return
     nodes = dict(walk(ctl.root))
+    if not answers_to_the_critique(nodes.get(spec_path(path))):
+        return
     cycle = f"{loop_path}.body@{iteration}."
     reason = f"not run: you declined {said(steps)} in {_named(nodes, path, inst)}"
     for later in ending_sentence.followers(ctl, path, nodes):
@@ -192,8 +204,10 @@ def listed(run_id: str) -> list[str]:
             continue
         name = _named(nodes, path, inst)
         loop_path, iteration = loop_parent(path)
-        if loop_path is not None:
+        if loop_path is not None and answers_to_the_critique(nodes.get(spec_path(path))):
             out.append(ended_at(name, iteration, inst.declined))
+        elif loop_path is not None:
+            out.append(f"You declined {said(inst.declined)} in {name}, in cycle {iteration + 1}.")
         else:
             out.append(f"You declined {said(inst.declined)} in {name}.")
     return out
@@ -201,8 +215,10 @@ def listed(run_id: str) -> list[str]:
 
 def _declined_in(ctl: RunController, loop_path: str, iteration: int) -> list[tuple[str, list]]:
     """The steps of the loop's cycle whose owner declined calls in them, in the order they run,
-    each with what. A step of a loop nested in the cycle is that loop's to answer for."""
+    each with what. A step of a loop nested in the cycle is that loop's to answer for, and a judge's
+    or a verifier's Deny is no reason to end the cycle (:func:`answers_to_the_critique`)."""
     base = f"{loop_path}.body@{iteration}"
+    nodes = dict(walk(ctl.root))
     return sorted(
         (
             (path, list(inst.declined))
@@ -210,9 +226,27 @@ def _declined_in(ctl: RunController, loop_path: str, iteration: int) -> list[tup
             if inst.declined
             and (path == base or path.startswith(f"{base}."))
             and loop_parent(path)[0] == loop_path
+            and answers_to_the_critique(nodes.get(spec_path(path)))
         ),
         key=lambda found: instance_order(found[0]),
     )
+
+
+def answers_to_the_critique(node: Node | None) -> bool:
+    """Whether the step *node* is one a loop's next cycle reruns with its judge's critique, so a
+    call its owner declined in it would be put to her again: any step but a judge
+    (`judge_checks.is_judge`) and a read-only verifier (:data:`VERIFY_POSTURE`, its capability
+    research: `engine.stage_capability`, where a declared ``capability`` wins), which check the
+    work as it is. A verifier that may change things is work too. A step the run no longer names
+    counts, as before."""
+    from personalclaw.workflows.engine import stage_capability
+
+    if node is None:
+        return True
+    cfg = node.config or {}
+    posture = str(cfg.get("tools_posture", "") or "").strip().lower()
+    verifier = posture == VERIFY_POSTURE and stage_capability(cfg) == "research"
+    return not is_judge(node) and not verifier
 
 
 def _no_cycle_left(node: Node, iteration: int) -> str:
