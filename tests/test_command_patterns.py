@@ -283,6 +283,34 @@ def test_every_rule_has_its_case() -> None:
         "vim -c **",
         "nix shell nixpkgs#hello -c **",
         "sed s/a/b/ -e **",
+        # where a program's subcommand would start another program
+        "npm **",
+        "npm *",
+        "npm -g **",
+        "/usr/bin/npm **",
+        "uv **",
+        "pnpm **",
+        "pipx **",
+        "yarn **",
+        "poetry **",
+        "bundle **",
+        "docker **",
+        "podman **",
+        "kubectl **",
+        "go **",
+        "go1.21 **",
+        "nix **",
+        "docker run alpine **",
+        "docker exec web **",
+        "docker container run alpine **",
+        "docker compose run web **",
+        "docker-compose exec web **",
+        "kubectl exec **",
+        "kubectl exec pod -- **",
+        "kubectl run x **",
+        "kubectl debug **",
+        "nix develop **",
+        "nix shell **",
     ],
 )
 def test_no_wildcard_stands_where_the_program_chooses_the_code(pattern) -> None:
@@ -310,16 +338,27 @@ def test_no_wildcard_stands_where_the_program_chooses_the_code(pattern) -> None:
         "make **",
         "git rebase -x 'make test' **",
         "python3.12 -m pytest **",
+        "npm test **",
+        "npm exec eslint **",
+        "uv pip install **",
+        "docker compose up **",
+        "docker ps **",
+        "docker run alpine echo **",
+        "docker compose run web pytest **",
+        "kubectl get **",
+        "go test **",
+        "nix build **",
     ],
 )
 def test_a_wildcard_after_the_program_is_named_is_accepted(pattern) -> None:
     assert isinstance(P.parse(pattern), P.Pattern)
 
 
-#: Every single word that names a wrapper.
+#: Every single word that names a wrapper, or begins one of more words.
 WRAPPER_WORDS = sorted(
-    set().union(*(t for k, t in P.WRAPPERS.items() if k != "package runner"))
+    set().union(*(t for k, t in P.WRAPPERS.items() if k not in ("package runner", "subcommand")))
     | {r[0] for r in P.RUNNERS}
+    | set(P.SUBCOMMAND_PROGRAMS)
 )
 
 
@@ -419,6 +458,14 @@ def test_a_command_no_pattern_could_name_gets_no_suggestion(command) -> None:
         ("sed s/a/b/ **", "sed s/a/b/ -e 1ex f"),
         ("nix shell nixpkgs#hello **", "nix shell nixpkgs#hello -c x"),
         ("sudo find **", "sudo find . -exec x \\;"),
+        # a subcommand that starts another program, after the program's own options
+        ("npm --prefix dir **", "npm --prefix dir exec -- sh -c y"),
+        ("uv --directory dir **", "uv --directory dir run python -c y"),
+        ("go -C dir **", "go -C dir run main.go"),
+        ("docker compose **", "docker compose run web sh"),
+        ("docker compose **", "docker compose exec web sh"),
+        ("docker --context ctx **", "docker --context ctx run alpine sh"),
+        ("kubectl --context ctx **", "kubectl --context ctx exec pod -- sh"),
     ],
 )
 def test_a_wildcard_never_covers_an_option_that_runs_a_command(pattern, command) -> None:
@@ -473,11 +520,23 @@ def _spellings(words: tuple[str, ...]) -> list[tuple[str, ...]]:
     return [words, (f"/usr/bin/{first}", *rest), (first.upper(), *rest), (f"{first}3.12", *rest)]
 
 
-#: One wrapper, in one of its spellings.
+#: One wrapper, in one of its spellings: a single word, or a program and its subcommand.
 WRAPPER = st.one_of(
-    st.sampled_from([(w,) for w in WRAPPER_WORDS if P.wrapper_kind(w) != "package runner"]),
-    st.sampled_from(sorted(P.RUNNERS)),
+    st.sampled_from(
+        [(w,) for w in WRAPPER_WORDS if P.wrapper_kind(w) not in ("package runner", "subcommand")]
+    ),
+    st.sampled_from(sorted(P.RUNNERS | set(P.SUBCOMMAND_WRAPPERS))),
 ).flatmap(lambda words: st.sampled_from(_spellings(words)))
+
+
+def _kind(words: tuple[str, ...]) -> str:
+    """The kind of wrapper *words* spell, whatever the spelling of the first."""
+    key = (P.program_name(words[0]).removesuffix("3.12"), *words[1:])
+    if key in P.SUBCOMMAND_WRAPPERS:
+        return P.SUBCOMMAND_WRAPPERS[key]
+    return "package runner" if key in P.RUNNERS else P.wrapper_kind(words[0])
+
+
 OPTION = st.sampled_from(["-x", "--flag", "-n"])
 #: Pattern components: a wrapper, an option, a plain program word, a wildcard.
 PART = st.one_of(
@@ -491,19 +550,30 @@ PART = st.one_of(
 def _unsafe(parts) -> bool:
     """The rule, said once over components: a wildcard before a fixed word has named what the
     wrappers run is unsafe, and so is one anywhere after a wrapper that runs its words. A plain
-    program names it, and so does the word right after a shell or an interpreter: its script."""
-    for at, (kind, words) in enumerate(parts):
+    program names it, and so does the word right after a shell or an interpreter: its script. A
+    launcher after a value (``chroot``, ``docker run``) takes the next word as its value first."""
+    at, value_next = 0, False
+    while at < len(parts):
+        kind, words = parts[at]
+        at += 1
         if kind == "wild":
             return True
+        if value_next and kind != "option":
+            value_next = False
+            if len(words) > 1:
+                return False  # its first word is the value, its second the program
+            continue  # the value
+        value_next = False
         if kind == "program":
             return False
         if kind == "wrapper":
-            wrapper = P.wrapper_kind(words[0])
+            wrapper = _kind(words)
             if wrapper == "runs its words":
-                return any(k == "wild" for k, _ in parts[at + 1 :])
-            following = parts[at + 1][0] if at + 1 < len(parts) else ""
+                return any(k == "wild" for k, _ in parts[at:])
+            following = parts[at][0] if at < len(parts) else ""
             if wrapper in ("shell", "interpreter") and following in ("wrapper", "program"):
                 return False  # the script
+            value_next = wrapper == "launcher after a value"
     return False
 
 
@@ -516,3 +586,30 @@ def test_no_wildcard_before_what_a_wrapper_runs_is_ever_accepted(first, rest):
         return
     pattern = " ".join(words)
     assert isinstance(P.parse(pattern), P.Refusal), pattern
+
+
+#: The programs with a subcommand that starts another, in each of their spellings.
+SUBCOMMAND_PROGRAM = st.sampled_from(sorted(P.SUBCOMMAND_PROGRAMS)).flatmap(
+    lambda name: st.sampled_from([w for (w,) in _spellings((name,))])
+)
+
+
+@SETTINGS
+@given(SUBCOMMAND_PROGRAM, st.lists(OPTION, min_size=0, max_size=2), st.sampled_from(["*", "**"]))
+def test_no_wildcard_stands_where_a_subcommand_would_start_a_program(program, options, wild):
+    """``npm **`` would cover ``npm exec …``: a program with such a subcommand takes no
+    wildcard before a fixed word names its subcommand."""
+    assert isinstance(P.parse(" ".join([program, *options, wild])), P.Refusal)
+
+
+@SETTINGS
+@given(SUBCOMMAND_PROGRAM, WORD, st.sampled_from(["*", "**"]))
+def test_a_wildcard_never_covers_a_subcommand_that_starts_a_program(program, value, wild):
+    """After the program's own option and its value, a wildcard still covers no such
+    subcommand."""
+    subcommands = P.SUBCOMMAND_PROGRAMS[P.program_name(program).removesuffix("3.12")]
+    pattern = P.parse(f"{program} --dir {value} {wild}")
+    if isinstance(pattern, P.Refusal):
+        return  # the value is itself one of the subcommands
+    for subcommand in sorted(subcommands):
+        assert not P.matches(pattern, f"{program} --dir {value} {subcommand} x")
