@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **`personalclaw chat` opens on the folder, agent, project or named chat you give it: `--cwd DIR` (set before your first message; a folder the gateway refuses ends the command with its reason, and nothing is sent), `--agent NAME`, `--project` by its name or id, and `--session NAME` to go on with a chat.**
+- **A message you are typing survives a reload, and one sent while PersonalClaw is away goes once it is back. Each chat keeps its draft in this browser (its text, what you pasted, attached and mentioned) through a reload, a closed tab or a quit desktop app, and its row in the chat list says Draft. A message sent while the connection is down or PersonalClaw restarts waits above the composer as Waiting to send and goes once, as one bubble, when the chat is connected again; after a day it asks Send now or Remove. A Temporary or Incognito chat keeps no draft. Deleting a chat takes its draft and its waiting messages, so nothing is sent into it afterwards, and signing out takes them all.**
 
 ### Fixed
 

@@ -3,6 +3,7 @@
 // (cookie pc_token_<port> rides along via the dev proxy). See the composer
 // API contract in docs.
 
+import { forgetEverythingKept } from './browserStore'
 import { apiVersionHeaders } from './apiVersion'
 // Type only: the upload client itself is loaded on first use, by the three upload calls below.
 import type { UploadProgress } from './chunkedUpload'
@@ -8876,6 +8877,9 @@ export const api = {
     }),
   // This browser's own sign-out: once it is done, the sign-in's pair is forgotten with it.
   authLogout: async () => {
+    // What this browser kept of its chats (drafts, sends waiting for the gateway) goes first, so a
+    // sign-out that cannot reach the gateway still leaves none of it behind (#4012).
+    await forgetEverythingKept()
     const out = await post<{ ok: boolean; revoked: boolean }>('/api/auth/logout')
     clearPair()
     return out

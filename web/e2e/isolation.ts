@@ -62,6 +62,7 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   'mathStaysInItsBox.spec.ts': { mode: 'shared', why: 'answers its inbox and chat reads with route stubs, and writes nothing' },
   'chatHistoryBoardCard.spec.ts': { mode: 'shared', why: 'answers its chats and tags with route stubs' },
   'chatOpensAtItsLatestMessage.spec.ts': { mode: 'shared', why: 'answers its chat and its image with route stubs' },
+  'aDraftAndAWaitingSendSurviveAReload.spec.ts': { mode: 'shared', why: 'answers its chat, its sends and its socket with route stubs, and keeps its draft in its own browser context' },
   'aWidgetActionWaitsForYourPress.spec.ts': { mode: 'shared', why: 'answers its chat, its tile and its artifact with route stubs, and refuses every send' },
   'composerFooterGeometry.spec.ts': { mode: 'shared', why: 'answers its chat read with a route stub, and sends nothing' },
   'chatSplit.spec.ts': { mode: 'shared', why: 'answers its chat reads with route stubs' },

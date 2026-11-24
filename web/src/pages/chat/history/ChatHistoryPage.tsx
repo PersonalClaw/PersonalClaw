@@ -1,9 +1,10 @@
+import { useDraftSessions } from '../../../lib/useDraftSessions'
 import { useState } from 'react'
 import { ResultAnnouncement } from '../../../ui/ListControls'
 import { BUSY_REASON } from '../../../ui/unavailable'
 import { fvs } from '../../../design/fontWeight'
 import { AnimatePresence } from 'framer-motion'
-import { Edit3, Search, MessageCircle, MessageSquare, Trash2, Pin, Sparkles, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, Filter, Loader2, Target, Code2 as CodeIcon, GripVertical, Eye, Archive, ArchiveRestore, Download, Share2, Plus } from 'lucide-react'
+import { Edit3, Search, MessageCircle, MessageSquare, Trash2, Pin, Sparkles, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, Filter, Loader2, Target, Code2 as CodeIcon, GripVertical, Eye, Archive, PencilLine, ArchiveRestore, Download, Share2, Plus } from 'lucide-react'
 import { IconButton } from '../../../ui/IconButton'
 import { SquareIconButton } from '../../../ui/SquareIconButton'
 import { TopBar } from '../../../ui/TopBar'
@@ -75,7 +76,14 @@ function KindMark({ s }: { s: ChatSessionSummary }) {
 }
 
 /** Dedicated sessions LIST page (#/chat/history) — search, manage, open. */
+/** A chat with a draft kept in this browser (`lib/drafts`, #4012). */
+function DraftMark() {
+  return <span data-draft className="inline-flex items-center gap-0.5"><PencilLine size={12} aria-hidden />Draft</span>
+}
+
 export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) => void; query: Record<string, string>; setQuery: RouteProps['setQuery'] }) {
+  // Each chat with a draft kept here says so on its row.
+  const drafts = useDraftSessions()
   const {
     sessionsError, refreshSessions, foldersError, tagsError, roomsData, roomsError, refreshRooms, folders,
     tags, sessions, q, setQ, view, setView, peekKey, setPeekKey, peekSession, tagFilter, setTagFilter, origin,
@@ -226,6 +234,7 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
         <div className="flex items-center gap-1.5 flex-wrap text-on-surface-low text-[0.8125rem]">
           <span>{sessionRowMeta(s)}</span>
           <FromChannel s={s} />
+          {drafts.has(s.key) && <DraftMark />}
           {originChip(s)}
           <StartedByApp s={s} />
           {tagChips(s)}
@@ -262,6 +271,7 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
           <div data-board-card-tags className="flex min-w-0 flex-1 flex-wrap items-center gap-1 text-on-surface-low text-[0.75rem]">
             {s.run_state?.turn && <span>running</span>}
             <FromChannel s={s} />
+          {drafts.has(s.key) && <DraftMark />}
             {originChip(s)}
             <StartedByApp s={s} />
             {tagChips(s)}

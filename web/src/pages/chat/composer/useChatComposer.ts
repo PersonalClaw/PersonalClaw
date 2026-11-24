@@ -23,6 +23,9 @@ import { useExplainChoice } from './useExplainChoice'
 import { sessionTemplatePatch } from '../sessionTemplate'
 import { buildOptimizerContext } from '../optimizerContext'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, pruneBlocks, asSent, takeIn } from '../pasteBlocks'
+import { draftKey, useKeptDraft, useWaitingSends } from './useKeptComposer'
+import type { DraftContent } from '../../../lib/drafts'
+import { isHeld } from '../../../lib/outbox'
 import type { TurnPaste } from '../PasteChip'
 import type { RoutingSuggestion } from '../RoutingChip'
 import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText, withSent, runningTurnId, WIDGET_SAID } from '../chatTypes'
@@ -151,6 +154,9 @@ export const GOAL_REFUSAL = 'A goal loop takes its task as yours: take the widge
 const GOAL_REFUSAL_MIXED = 'A goal loop takes its task as yours. Delete all of the draft first: its words can\u2019t be told apart from the widget\u2019s.'
 /** What the notice line says when a draft's words can't be told apart from a widget's. */
 export const MIXED_NOTICE = 'The widget\u2019s words and yours are mixed in this draft, so it stays marked: none of its links count as yours. Delete all of it to start your own.'
+
+/** What a draft that keeps nothing holds. */
+const EMPTY_DRAFT: DraftContent = { text: '', pastes: [], attachments: [], mentions: [] }
 
 export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = false, widgetActionNonce = '', startToken = '', initialProjectId, initialAgent, initialTaskMode = 'agent', pendingRouting, setRoutingSuggestion, setLiveRun, started, stream, followNewTurn, oweSpokenReply }: {
   sessionId: string | null
@@ -352,6 +358,52 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   // so a private chat never reads as kept (its tint, its notice, its Execution Boundary control)
   // until its read lands, or for the whole visit when the read fails.
   const [memoryMode, setMemoryMode] = useState<MemoryMode>(() => ((sessionId && readCachedDetail(sessionId)?.memory_mode) || 'persistent') as MemoryMode)
+
+  // Kept through a reload, a closed tab or a killed app (#4012): the draft, in this browser, unless
+  // the chat is Temporary or Incognito, or the draft holds a widget's words (kept, they would come
+  // back as the owner's own).
+  const draftContent = useMemo<DraftContent>(() => (draft.widget ? EMPTY_DRAFT : {
+    text: input,
+    pastes: pruneBlocks(input, pasteBlocks).map(({ seq, lines, content }) => ({ seq, lines, content })),
+    attachments: attachedPaths.map((path) => ({ path, name: path.split('/').pop() || path, size: 0, mime: '' })),
+    mentions: [
+      ...mentionedFiles.map((ref) => ({ target: 'file', ref, label: ref.split('/').pop() || ref })),
+      ...mentionedKnowledge.map((k) => ({ target: 'knowledge', ref: k.id, label: k.name })),
+      ...mentionedArtifacts.map((a) => ({ target: 'artifact', ref: a.slug, label: a.name })),
+    ],
+  }), [draft.widget, input, pasteBlocks, attachedPaths, mentionedFiles, mentionedKnowledge, mentionedArtifacts])
+  const keptDraft = useKeptDraft({
+    keyed: draftKey(sessionId, initialProjectId),
+    mode: memoryMode,
+    content: draftContent,
+    seeded: !!seed.trim() || !!startToken || !!widgetActionNonce,
+    restore: (d) => {
+      const back = takeIn(d.text, d.pastes, [])
+      setDraft({ text: back.text, widget: null })
+      setPasteBlocks(back.blocks)
+      setAttachedPaths(d.attachments.map((a) => a.path))
+      setMentionedFiles(d.mentions.filter((m) => m.target === 'file').map((m) => m.ref))
+      setMentionedKnowledge(d.mentions.filter((m) => m.target === 'knowledge').map((m) => ({ id: m.ref, name: m.label })))
+      setMentionedArtifacts(d.mentions.filter((m) => m.target === 'artifact').map((m) => ({ slug: m.ref, name: m.label })))
+    },
+  })
+  // The sends PersonalClaw could not take, waiting for it to be back (`lib/outbox`). A sent one
+  // gets its bubble as a send's own does; a refused one is said, and goes.
+  const waitingSends = useWaitingSends({
+    sessionId,
+    onFlushed: (r) => {
+      for (const s of r.sent) {
+        const a = s.answer as { accepted_at?: string; disposition?: string; duplicate?: boolean } | undefined
+        if (!a || a.disposition !== 'started' || a.duplicate) continue  // its frames, or its row, draw it
+        followNewTurn()
+        setTurns((prev) => withSent(prev, { ...userTurn(s.message, a.accepted_at || new Date(s.held_at).toISOString()), messageId: s.client_message_id }))
+        markStreaming(true)
+        dropTextRun()
+      }
+      if (r.refused.length) notice.showError(failureSentence('send a waiting message', r.refused[0].error))
+      if (r.dropped.length) notice.showInfo(r.dropped.length === 1 ? 'A waiting message was not sent: its chat was deleted.' : `${r.dropped.length} waiting messages were not sent: their chat was deleted.`)
+    },
+  })
 
   // In-flight session-creation promise. ensureSession checks a ref then awaits an
   // async create; two sends fired back-to-back on a brand-new chat (send #1, then
@@ -937,6 +989,23 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
           })
           .catch((e) => {
             const said = (e as Error)?.message || ''
+            // Not reached, or restarting: it waits, as a message of its own after the turn; one the
+            // chat has no room for is the failure it was.
+            if (isHeld(e) && sessionRef.current) {
+              void waitingSends.holdSend({
+                client_message_id: messageId, session: sessionRef.current, message: llmText, queue_mode: 'followup', ...(meta ? { meta } : {}),
+              }, true).then((waiting) => {
+                if (!waiting) { reportActionFailure('steer this turn')(e); return }
+                forgetId(llmText)
+                setInput((cur) => (cur === t ? '' : cur))
+                setPasteBlocks((cur) => cur.filter((b) => !sentBlocks.includes(b)))
+                setMentionedFiles((cur) => cur.filter((f) => !sentFiles.includes(f)))
+                setAttachedPaths((cur) => cur.filter((f) => !sentFiles.includes(f)))
+                setMentionedKnowledge((cur) => cur.filter((k) => !sentKnowledge.includes(k.id)))
+                setMentionedArtifacts((cur) => cur.filter((a) => !sentArtifacts.includes(a.slug)))
+              })
+              return
+            }
             if (hasApiCode(e, 'no_running_turn')) {
               notice.showError(said, 'steer', { label: 'Send', run: () => deliver(undefined, undefined) })
               return
@@ -987,8 +1056,11 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
     // of the finished one.
     setInput(''); setPreOptimize(null); markStreaming(true); dropTextRun()
     setPasteBlocks([]); setMentionedFiles([]); setAttachedPaths([]); setMentionedKnowledge([]); setMentionedArtifacts([])
+    // Whether the chat was on the gateway before this send: a held send for a chat that existed
+    // is never posted into one deleted meanwhile (`lib/outbox`).
+    const existed = !!sessionRef.current
+    const meta: Record<string, unknown> = {}
     try {
-      const meta: Record<string, unknown> = {}
       if (files.length) meta.files = files
       if (knowledgeIds.length) meta.knowledge = knowledgeIds
       if (artifactSlugs.length) meta.artifacts = artifactSlugs
@@ -1029,6 +1101,24 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
       if (sent?.routing_suggestion?.agent) setRoutingSuggestion(sent.routing_suggestion)
     }
     catch (e) {
+      // PersonalClaw could not be reached, or is restarting: the send waits in this browser and
+      // goes once it is back (#4012). Its bubble is the waiting row's until then, so it is drawn
+      // once, when it is sent.
+      if (isHeld(e)) {
+        markStreaming(false)
+        const sid = sessionRef.current
+        const waiting = sid && await waitingSends.holdSend({
+          client_message_id: messageId, session: sid, message: llmText,
+          ...(Object.keys(meta).length ? { meta } : {}), ...(opts?.inputOrigin ? { input_origin: opts.inputOrigin } : {}),
+        }, existed)
+        setTurns((prev) => prev.filter((x) => x.messageId !== messageId))
+        if (waiting) return
+        // No chat to wait in (a new chat PersonalClaw could not make), or the chat holds as many
+        // as it may: the message goes back into the composer, said.
+        setDraft({ text: llmText, widget: fromWidget ? { text: llmText } : null })
+        notice.showError(sid ? 'This chat already has as many messages waiting to send as it can hold. Your message is back in the composer.' : 'PersonalClaw could not be reached, so this chat was not started. Your message is back in the composer.')
+        return
+      }
       markStreaming(false, 'error')
       // The chat is gone (a dead link whose read lost the race, or deleted in another tab).
       // The server did NOT save this message, so it goes back into the draft — which the
@@ -1664,6 +1754,7 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   }
 
   return {
+    keptDraft, waitingSends,
     widgetDraft: draft.widget, draftIsAWidgets, sendWithPrompt, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft,
     setRoutingSuggestion, acpFor, editorKeep, activatePlanMode, startGoalLoop, adoptDetail, adoptSaid, readApprovalAgain, bindingsAnswered, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, draftUnderWay, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
   }

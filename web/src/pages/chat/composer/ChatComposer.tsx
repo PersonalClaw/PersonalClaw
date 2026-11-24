@@ -32,6 +32,7 @@ import { ArtifactContextPicker, KnowledgeContextPicker } from './ContextPickers'
 import { KnowledgeChips } from './KnowledgeChips'
 import { PasteCards } from './PasteCards'
 import { QueueStack } from './QueueStack'
+import { KeptDraftLine, WaitingSends } from './WaitingSends'
 import { AutoNudgeMenuItem } from './AutoNudgeMenuItem'
 import { ChatPreferencesGear, ChatPreferencesWindow, changedHere } from './ChatPreferences'
 import { returnFocusTo } from '../../../ui/useFocusTrap'
@@ -94,7 +95,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
   /** The reply being read out, which hands-free waits on. */
   speakingTurn: number | null
 }) {
-  const { acpFor, editorKeep, activatePlanMode, startGoalLoop, applySelection, chooseApproval, chooseTaskMode, postureKnown, bindingsAnswered, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, focusComposerSoon, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion, widgetDraft, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft, sendWithPrompt } = composer
+  const { acpFor, editorKeep, activatePlanMode, startGoalLoop, applySelection, chooseApproval, chooseTaskMode, postureKnown, bindingsAnswered, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerRef, data, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, focusComposerSoon, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pinScreenFrame, preOptimize, projectId, promptPaletteOpen, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads, setRoutingSuggestion, widgetDraft, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft, sendWithPrompt, keptDraft, waitingSends, setInput } = composer
   const { sessionRef, turns, streaming, turnPhase, turnAct, turnEnding, takesSteers, sessionSkillsEpoch, queued, setQueued, steered, followups, setFollowups, contextPct, contextWindow, contextParts, sessionCost, autoChain, startedBy, sharedThread, workingDir } = stream
   // What the draft carries besides its words: a send that carries any of it is queued for a turn of
   // its own, never steered into the running one (`useChatComposer`'s mid-turn send), so the button
@@ -156,6 +157,14 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
       {/* The composer's notice: what failed (voice input, screen sharing, a switched answer, a
           branch…), which stays until dismissed or the next send, or what just happened. */}
       <ComposerNoticeLine notice={notice.notice} onDismiss={notice.clear} />
+      {/* What waits for PersonalClaw to be back, and a draft kept from before (#4012). */}
+      <WaitingSends items={waitingSends.waiting} onSendNow={() => { void waitingSends.sendNow() }}
+        onRemove={(id) => { void waitingSends.removeSend(id) }} />
+      {keptDraft.restored && input.trim() && (
+        <KeptDraftLine onDiscard={() => {
+          keptDraft.discard(); setInput(''); setAttachedPaths([]); setMentionedFiles([]); setMentionedKnowledge([]); setMentionedArtifacts([])
+        }} />
+      )}
       {/* A widget's message: the draft one put here, or one waiting while you use the composer. */}
       <WidgetDraftChips draft={widgetDraft} suggestion={widgetSuggestion} onClear={clearWidgetDraft}
         onAdd={addWidgetSuggestion} onDismiss={dismissWidgetSuggestion} />

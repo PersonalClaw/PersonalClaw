@@ -63,6 +63,9 @@ export interface Thread {
   pipNote?: string
   /** The owner pinned it. Only a chat can be pinned; a loop never is. */
   pinned: boolean
+  /** A draft of hers is kept for it in this browser (`lib/drafts`): the row shows "Draft". Only a
+   *  chat has one. */
+  draft?: boolean
   /** The Chat history folder it is filed in, '' for none: a goal loop or code session is in none. */
   folderId: string
   /** The Chat history tags it carries, by id, none for a goal loop or code session. */
