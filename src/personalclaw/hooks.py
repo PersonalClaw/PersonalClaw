@@ -1497,6 +1497,15 @@ def _hook_form(record: dict) -> dict:
     return ScriptHook.from_dict(record).to_dict()
 
 
+#: Why a hook bound to an agent cannot run while ``hooks.json`` cannot be read and the store doesn't
+#: hold it (:meth:`ScriptHookStore.fire_for_ids` with ``every_bound``).
+HOOKS_FILE_UNREAD = "hooks.json could not be read, so a hook bound to its agent cannot run"
+
+
+class HooksFileUnread(Exception):
+    """A hook bound to an agent is not held because ``hooks.json`` cannot be read."""
+
+
 def unreadable_file(config_dir: Path | None = None) -> record_files.Unreadable | None:
     """Why ``hooks.json`` cannot be read now, or None when it can (or is not there): what the
     Triggers page says in place of a list of lifecycle triggers that would read as none. While it
@@ -1591,6 +1600,21 @@ class ScriptHookStore:
     def list_all(self) -> list[ScriptHook]:
         self._take_in()
         return list(self._hooks.values())
+
+    def unreadable(self) -> record_files.Unreadable | None:
+        """Why this store's ``hooks.json`` cannot be read now, or None (:func:`unreadable_file`)."""
+        return unreadable_file(self._dir)
+
+    def asks_before_calls(self) -> bool:
+        """Whether a hook this store holds could be asked about a tool call: an enabled
+        ``PreToolUse`` hook, or any at all while ``hooks.json`` cannot be read, since what it holds
+        then is not known (``pre_tool_hooks``)."""
+        self._take_in()
+        if self.unreadable() is not None:
+            return True
+        return any(
+            hook.enabled and hook.event == HOOK_EVENT_PRE_TOOL_USE for hook in self._hooks.values()
+        )
 
     def get(self, hook_id: str) -> ScriptHook | None:
         self._take_in()
@@ -1718,9 +1742,15 @@ class ScriptHookStore:
         parent_session_key: str = "",
         agent_role: str = "",
         cwd: str = "",
+        every_bound: bool = False,
     ) -> list[ScriptHookResult]:
         """Fire only the hooks in ``hook_ids`` that match ``event`` (agent-scoped), each in ``cwd``,
         the working folder of the chat or helper it fires for (:func:`hook_folder`).
+
+        ``every_bound`` says each id is bound to the agent and is to be asked: one this store
+        doesn't hold while ``hooks.json`` cannot be read raises :class:`HooksFileUnread`, and fires
+        nothing. A bound hook deleted from a readable file fires nothing, as an id not held always
+        has, and one the store read before the file was damaged still fires.
 
         The agent-scoped firing primitive: an agent references a subset of the
         hook library and only those hooks fire for it — global hooks are NOT run.
@@ -1745,6 +1775,10 @@ class ScriptHookStore:
         if not hook_ids:
             return []
         allow = set(hook_ids)
+        if every_bound:
+            self._take_in()
+            if not allow <= set(self._hooks) and self.unreadable() is not None:
+                raise HooksFileUnread(HOOKS_FILE_UNREAD)
         return await self._fire(
             event,
             context=context,
