@@ -56,6 +56,7 @@ from personalclaw.security import (
     mask_markers,
     masked_edit,
 )
+from personalclaw.subagent_persistence import tool_group
 from personalclaw.tool_providers import result_store
 from personalclaw.tool_providers.base import (
     RiskLevel,
@@ -1684,8 +1685,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             )
             # Track the child for the duration of the call, so a stop arriving mid-command
             # reaps it. Unregistered on the way out (including on error), so a stop that
-            # arrives after the command finished finds nothing to kill.
-            with cancellation.track_child(proc):
+            # arrives after the command finished finds nothing to kill. And kept in a subagent's
+            # folder while it runs, so a restart ends it before its step runs again.
+            with cancellation.track_child(proc), tool_group(self._session_key, proc.pid):
                 try:
                     out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
                 except asyncio.TimeoutError:
