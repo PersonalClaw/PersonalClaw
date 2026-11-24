@@ -5119,6 +5119,9 @@ class GatewayOrchestrator:
         )
 
         # Stop services
+        from personalclaw import run_bounds
+
+        run_bounds.stop_scratch_sweep()
         if self.loop_watchdog:
             await self._stopping_step("the loop watchdog", self.loop_watchdog.stop())
         if self.workflow_watchdog:
@@ -5385,6 +5388,15 @@ class GatewayOrchestrator:
         from personalclaw import run_processes
 
         await asyncio.to_thread(run_processes.end_what_no_run_holds)
+        # And the temporary folders runs were handed that no run has used for days, with what their
+        # commands left in them: first now, off the boot path, then every few hours
+        # (`run_bounds.sweep_scratch`).
+        from personalclaw import run_bounds
+
+        try:
+            run_bounds.start_scratch_sweep()
+        except Exception:  # noqa: BLE001 - a sweep that cannot start never stops the gateway
+            logger.warning("the sweep of idle scratch folders did not start", exc_info=True)
 
         # ── Initialise all services ──
         # Set once the apps have started, with the dashboard below: the clock and the event router

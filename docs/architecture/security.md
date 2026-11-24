@@ -1525,7 +1525,12 @@ starts do not, so what they reach is read from the command they run
 - **Writes.** An unattended run's writes are held to its own folders (`session_roots`: the folder
   it works in and the ones it was given) and its own temporary folder (`scratch_dir`, its shell's
   `TMPDIR`). A native file write or a shell command's write facet outside them is refused; a write
-  whose path the command does not name is too.
+  whose path the command does not name is too. The temporary folder goes when its work is over: with
+  a deleted chat, when a run that is never resumed stops (`end_runtime_scratch`), and when no run
+  has been handed it for two days (`sweep_scratch`, which the gateway runs as it starts and every
+  six hours). A folder a live runtime still holds is kept however long it waits, a folder its
+  commands left read-only is made removable first, and a runtime whose folder was swept is handed
+  it again, made anew.
 - **Protected folders.** A shell command that would delete your home folder, the filesystem root
   or the folder the call runs in (a chat's working folder, the folder a channel's conversation, a
   subagent or a run works in), a folder that holds one, or everything inside one, is put to a

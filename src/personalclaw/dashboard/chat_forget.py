@@ -58,7 +58,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from personalclaw import secret_file_grants, started_work
+from personalclaw import run_bounds, secret_file_grants, started_work
 from personalclaw.chat_traces import (
     TEMPORARY,
     attached_files,
@@ -326,8 +326,9 @@ async def delete_chats(
     (:func:`purge_chat`), its transcript first, so a pass of memory still answering for it keeps
     nothing it would write after (``HistoryConsolidator._was_deleted``); then what
     memory filed under it goes from every memory (:func:`forget_what_memory_drew_from`), once for
-    all of them; and its runtime is let go for good. One audit row per chat, naming it and who
-    deleted it (*by*), never what it held.
+    all of them; then the temporary folder its unattended runs were handed; and its runtime is
+    let go for good. One audit row per chat, naming it and who deleted it (*by*), never what it
+    held.
     """
     from personalclaw.cancellation import cancel_and_wait
 
@@ -364,6 +365,9 @@ async def delete_chats(
         runtimes.append((history_key, kept))
         (failed if kept else deleted).append(name)
     forgotten = await forget_what_memory_drew_from(state, keys) if keys else 0
+    # The temporary folder its unattended runs were handed, with what their commands left in it
+    # (`run_bounds.remove_scratch`), off the loop: it can hold a test suite's temporary trees.
+    await asyncio.to_thread(run_bounds.remove_scratch, _spellings(keys))
     for history_key, kept in runtimes:
         # Best-effort: the chat's records are gone already, and a runtime that will not stop
         # cannot bring them back. Destroyed, not removed: nothing may resume a deleted chat. One

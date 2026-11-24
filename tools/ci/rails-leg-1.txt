@@ -134,6 +134,7 @@ tests/rails/test_kill_timed_out_pipe_block_tree.py
 tests/rails/test_personalclaw_git_is_neutral_tree.py
 tests/rails/test_api_version_one_origin_tree.py
 tests/rails/test_gateway_base_owner_tree.py
+tests/rails/test_the_gateway_starts_the_scratch_sweep_and_gives_a2a_its_supervisor_tree.py
 tests/rails/test_the_suite_never_reaches_the_machines_keychain_tree.py
 tests/rails/test_native_capability_contract_tree.py
 tests/rails/test_no_get_route_waits_on_a_model_rail.py

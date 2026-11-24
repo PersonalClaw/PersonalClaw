@@ -843,6 +843,8 @@ class NativeAgentRuntime(
     async def shutdown(self) -> None:
         self._cancel.request(reason=CANCEL_INTERNAL)
         self._approval.cancel_all()
+        # A run that is never resumed is over: its temporary folder goes with it.
+        await run_bounds.end_runtime_scratch(self)
 
     def _prompt_cache_enabled(self) -> bool:
         """Read the user's prompt-cache switch, ``agent.prompt_cache_enabled``.

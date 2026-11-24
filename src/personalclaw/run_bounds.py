@@ -40,8 +40,13 @@ import contextvars
 import hashlib
 import logging
 import os
+import re
+import shutil
 import stat
 import tempfile
+import threading
+import time
+import weakref
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -50,6 +55,7 @@ from typing import Any
 from personalclaw import protected_folders
 from personalclaw.command_effects import DEVICES, CommandEffects, command_effects
 from personalclaw.file_scope import PATH_TOOLS
+from personalclaw.periodic_sweep import PeriodicSweep
 from personalclaw.protected_folders import NOTHING, ProtectedDelete
 from personalclaw.shell_syntax import LEADING_VARIABLES
 
@@ -105,18 +111,44 @@ def unlisted(hosts: Iterable[str], policy: Any, *, declared: Sequence[str] = ())
 _SCRATCH_PARENT = "personalclaw-scratch"
 
 
+#: A scratch folder no run has been handed for this long is removed (:func:`sweep_scratch`).
+SCRATCH_IDLE_SECS = 2 * 24 * 3600
+
+#: How often the gateway sweeps (:func:`start_scratch_sweep`).
+SCRATCH_SWEEP_SECS = 6 * 3600
+
+_DIGEST_RE = re.compile(r"[0-9a-f]{16}")
+
+
+def _scratch_parent() -> Path:
+    return Path(tempfile.gettempdir()) / f"{_SCRATCH_PARENT}-{os.getuid()}"
+
+
+def _scratch_name(session_key: str) -> str:
+    return hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:16]
+
+
+def _own_folder(path: Path) -> bool:
+    """Whether *path* is a folder (not a link) this user owns."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid()
+
+
 def scratch_dir(session_key: str) -> str:
     """The run's own temporary folder (created, ``0700``), or ``""`` when one cannot be made safely.
 
     It sits in this user's temporary folder, named by a digest of the session (a session's key is
     not written into a path), under a folder only this user owns: a parent that is a link or
-    someone else's is not used, so a run is never handed a folder another account controls.
+    someone else's is not used, so a run is never handed a folder another account controls. Each
+    hand-out marks the folder used, which is what keeps it from :func:`sweep_scratch`.
     """
     if not session_key:
         return ""
-    digest = hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:16]
-    parent = Path(tempfile.gettempdir()) / f"{_SCRATCH_PARENT}-{os.getuid()}"
-    folder = parent / digest
+    parent = _scratch_parent()
+    folder = parent / _scratch_name(session_key)
     try:
         parent.mkdir(mode=0o700, exist_ok=True)
         info = os.lstat(parent)
@@ -127,13 +159,112 @@ def scratch_dir(session_key: str) -> str:
             return ""
         os.chmod(parent, 0o700)
         folder.mkdir(mode=0o700, exist_ok=True)
-        info = os.lstat(folder)
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        if not _own_folder(folder):
             return ""
+        os.utime(folder)
     except OSError:
         logger.warning("run bounds: the scratch folder could not be made", exc_info=True)
         return ""
     return os.path.realpath(folder)
+
+
+def _unlock(root: Path) -> None:
+    """Give the owner back write and search permission on *root* and every folder inside it that
+    its run took them from (a test that made a folder read-only, a module cache kept so), so the
+    folder can be removed. Folders only, this user's own, never through a link."""
+    for top, dirs, _files in os.walk(root, topdown=True, followlinks=False):
+        for path in (top, *(os.path.join(top, name) for name in dirs)):
+            try:
+                info = os.lstat(path)
+                if (
+                    stat.S_ISDIR(info.st_mode)
+                    and info.st_uid == os.getuid()
+                    and info.st_mode & stat.S_IRWXU != stat.S_IRWXU
+                ):
+                    os.chmod(path, stat.S_IMODE(info.st_mode) | stat.S_IRWXU)
+            except OSError:
+                continue
+
+
+def _remove_scratch_folder(folder: Path) -> bool:
+    if not _own_folder(folder):
+        return False
+    shutil.rmtree(folder, ignore_errors=True)
+    if os.path.lexists(folder) and _own_folder(folder):
+        _unlock(folder)
+        shutil.rmtree(folder, ignore_errors=True)
+    if os.path.lexists(folder):
+        logger.warning("run bounds: the scratch folder %s could not all be removed", folder)
+        return False
+    return True
+
+
+def remove_scratch(session_keys: Iterable[str]) -> int:
+    """Remove the scratch folder of each session *session_keys* names whose work is over for good,
+    and say how many there were. Blocking (a run's folder can hold a test suite's temporary
+    trees): call it off the event loop."""
+    parent = _scratch_parent()
+    if not _own_folder(parent):
+        return 0
+    names = {_scratch_name(key) for key in session_keys if key}
+    return sum(_remove_scratch_folder(parent / name) for name in sorted(names))
+
+
+def sweep_scratch(*, now: float | None = None, idle: float = SCRATCH_IDLE_SECS) -> int:
+    """Remove every scratch folder no run has been handed or written into for *idle* seconds, and
+    say how many. A folder's time is when :func:`scratch_dir` last handed it out or something was
+    added to or taken from it, so a session still at work keeps its own; one whose session is
+    over, or idle for days, goes, with whatever its commands left in it. A folder a runtime this
+    process runs still holds (:func:`runtime_scratch`) is kept however long since its last call,
+    so a run that is waiting or paused keeps its own. Only folders named as :func:`scratch_dir`
+    names them, under the parent only this user owns. Blocking."""
+    parent = _scratch_parent()
+    if not _own_folder(parent):
+        return 0
+    cutoff = (time.time() if now is None else now) - idle
+    try:
+        entries = [e for e in os.scandir(parent) if _DIGEST_RE.fullmatch(e.name)]
+    except OSError:
+        logger.warning("run bounds: the scratch folders could not be listed", exc_info=True)
+        return 0
+    held = _held_scratch()
+    removed = 0
+    for entry in entries:
+        try:
+            if entry.stat(follow_symlinks=False).st_mtime >= cutoff:
+                continue
+        except OSError:
+            continue
+        if os.path.realpath(entry.path) in held:
+            continue
+        removed += _remove_scratch_folder(Path(entry.path))
+    if removed:
+        logger.info("run bounds: removed %d scratch folder(s) idle for %ds", removed, idle)
+    return removed
+
+
+def _sweep_pass() -> None:
+    """One pass of the gateway's sweep: a pass that fails is said at warning, and the next one
+    runs as planned."""
+    try:
+        sweep_scratch()
+    except Exception:  # noqa: BLE001 - one failed pass must not end the sweep
+        logger.warning("run bounds: a sweep of the idle scratch folders failed", exc_info=True)
+
+
+#: The gateway's sweep of idle scratch folders: once as it starts, then every few hours.
+_SWEEP = PeriodicSweep("scratch-sweep", SCRATCH_SWEEP_SECS, _sweep_pass, first_after=0.0)
+
+
+def start_scratch_sweep() -> None:
+    """Start the gateway's sweep of idle scratch folders (:func:`sweep_scratch`), its first pass
+    now, off the caller's thread. Ended by :func:`stop_scratch_sweep`."""
+    _SWEEP.start()
+
+
+def stop_scratch_sweep() -> None:
+    """Stop the sweep :func:`start_scratch_sweep` started. Idempotent."""
+    _SWEEP.stop()
 
 
 #: The run's own temporary folder for the call being dispatched ("" = none: the shell keeps the
@@ -737,10 +868,63 @@ def runtime_scratch(runtime: Any) -> str:
     if not getattr(runtime, "_unattended", False):
         return ""
     made = getattr(runtime, "_run_scratch", None)
-    if made is None:
+    if made is None or (made and not _mark_used(made)):
         made = scratch_dir(str(getattr(runtime, "_session_key", "") or ""))
         runtime._run_scratch = made
+        if made:
+            _hold(runtime, made)
     return made
+
+
+#: The scratch folder each live runtime holds (:func:`runtime_scratch`), which a sweep never
+#: removes: a runtime that is waiting or paused makes no call for as long as it waits.
+_HELD: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+_HELD_LOCK = threading.Lock()
+
+
+def _hold(runtime: Any, folder: str) -> None:
+    try:
+        with _HELD_LOCK:
+            _HELD[runtime] = folder
+    except TypeError:  # a runtime no weak reference can name (a stand-in) is held by nothing
+        pass
+
+
+def _held_scratch() -> frozenset[str]:
+    with _HELD_LOCK:
+        return frozenset(os.path.realpath(folder) for folder in _HELD.values())
+
+
+def _mark_used(folder: str) -> bool:
+    """Mark the scratch folder a runtime holds used; false when it is gone (swept) or no longer
+    this user's own folder, so the runtime is handed a new one."""
+    if not _own_folder(Path(folder)):
+        return False
+    try:
+        os.utime(folder)
+    except OSError:
+        return False
+    return True
+
+
+async def end_runtime_scratch(runtime: Any) -> None:
+    """Remove the scratch folder of a runtime whose session is never resumed (a scheduled run's, a
+    helper's, an Inbox or side run's: ``session_keys.is_stateless``) as the runtime stops: its
+    work is over. Another runtime's folder stays for its session's next turn, held by no runtime
+    from here on, so a sweep removes it once it has been idle for days."""
+    import asyncio
+
+    from personalclaw import session_keys
+
+    key = str(getattr(runtime, "_session_key", "") or "")
+    try:
+        with _HELD_LOCK:
+            _HELD.pop(runtime, None)
+    except TypeError:
+        pass
+    if getattr(runtime, "_run_scratch", None) and session_keys.is_stateless(key):
+        runtime._run_scratch = None
+        await asyncio.to_thread(remove_scratch, [key])
 
 
 def audit(
