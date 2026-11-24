@@ -1,6 +1,7 @@
 {
   "about": "The owner's record of red breadth runs a release may pass over. Only the owner edits this file, by hand.",
   "exceptions": [
-    {"run_id": 41550519628, "commit": "4103896b74787e4820ff619cc68ba0b1e4a0b774", "why": "Network outage on 2026-11-02: macOS shard 3 passed all its tests, then its test-id upload failed (ENOTFOUND), so shard-union/1 read red. No test failed."}
+    {"run_id": 41550519628, "commit": "4103896b74787e4820ff619cc68ba0b1e4a0b774", "why": "Network outage on 2026-11-02: macOS shard 3 passed all its tests, then its test-id upload failed (ENOTFOUND), so shard-union/1 read red. No test failed."},
+    {"run_id": 45448280719, "commit": "f70cf8cefbd65c23a7c3fd5f30cd8ad184495e58", "why": "GitHub macOS runner capacity on 2026-11-24: the run got at most two macOS runners at a time. macos-26-3.12/2 and /3 were queued from 17:26Z and cancelled by GitHub with no runner and no steps, at 18:01:20Z and 18:16:22Z. macos-26-3.12/1 and rails-macos-26-3.12/1 ran and passed, and macos-26-3.12/6 was running. With the run red, the coordinator cancelled the rest at 18:47:32Z. No test failed: every leg that finished was green, every random-order shard among them."}
   ]
 }
