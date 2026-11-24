@@ -67,6 +67,23 @@ SPEC_ROOT = {
 }
 
 
+#: A run that waits at an approval gate for good (``timeout_secs: 0``), so it is still live when a
+#: test acts on it. SPEC_ROOT's two transforms can finish between a start and the next request, and
+#: a cancel of a run that has ended is a 409 (``WF_RUN_ALREADY_TERMINAL``), as a seeded random
+#: order showed.
+HELD_ROOT = {
+    "kind": "sequence",
+    "id": "main",
+    "children": [
+        {
+            "kind": "gate",
+            "id": "hold",
+            "config": {"kind": "approval", "prompt": "Go on?", "timeout_secs": 0},
+        },
+    ],
+}
+
+
 class _MemProvider(defs_mod.WorkflowDefProvider):
     def __init__(self) -> None:
         self._defs: dict[str, dict] = {}
@@ -574,7 +591,7 @@ class TestRunRoutes:
         assert _body(await H.api_run_output(req))["output"] == {"n": 1}
 
     async def test_cancel_records_a_sticky_intent(self, provider) -> None:
-        await provider.save_def(name="can-wf", root=SPEC_ROOT)
+        await provider.save_def(name="can-wf", root=HELD_ROOT)
         sup = _Sup()
         started = _body(
             await H.api_run_start(
