@@ -184,15 +184,6 @@ def test_the_gateways_sweep_runs_as_it_starts_and_stops(tmp):
     assert not run_bounds._SWEEP.running()
 
 
-def test_the_gateway_starts_the_sweep_and_stops_it():
-    import inspect
-
-    from personalclaw.gateway import GatewayOrchestrator
-
-    assert "run_bounds.start_scratch_sweep()" in inspect.getsource(GatewayOrchestrator.run)
-    assert "run_bounds.stop_scratch_sweep()" in inspect.getsource(GatewayOrchestrator._shutdown)
-
-
 def test_a_sweep_with_no_folders_yet_and_a_parent_that_is_not_ours_remove_nothing(tmp):
     assert run_bounds.sweep_scratch() == 0
     assert run_bounds.remove_scratch(["dashboard:shop"]) == 0
