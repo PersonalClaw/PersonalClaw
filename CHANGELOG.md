@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-24
+
+An automation client, a script or a runner, can be paired into a sign-in that reaches only what its scope allows. The chat's agent orb is redrawn as a halftone sphere that shows what the agent is doing, and a tool step says whether its call reads, edits or runs a command. A turn waiting on your answer is kept through a gateway restart, an automation keeps its claim while the computer sleeps, and a reload no longer waits on the gateway reading its settings, its apps or a long chat.
+
 ### Added
 
 - **An agent's hooks hold while the files that bind them can't be read.**
