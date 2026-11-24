@@ -23,7 +23,7 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -93,12 +93,30 @@ def take_in_restored(snap: Path) -> int:
     from personalclaw.memory_locality import restored_home_moves
 
     moves = restored_home_moves(snap)
-    # Only the artifacts the archive brought: this home's own are linked to its own files already.
-    kept = snap / "artifacts"
-    brought = (
-        {d.name for d in kept.iterdir() if (d / "meta.json").is_file()} if kept.is_dir() else set()
-    )
-    return NativeArtifactProvider().follow_a_moved_home(moves, brought) if moves and brought else 0
+    brought = _links_brought(snap / "artifacts") if moves else {}
+    return NativeArtifactProvider().follow_a_moved_home(moves, brought) if brought else 0
+
+
+def _links_brought(kept: Path) -> dict[str, str]:
+    """Each linked artifact in the archive's artifacts folder *kept*: its slug, and the file its
+    own meta names, read as the store reads a meta.
+
+    Only these follow a moved home: this home's own artifacts are linked to its own files already.
+    A slug alone does not say an artifact was brought, because a merge keeps this home's where
+    the archive has one of the same slug; that one is the archive's only if it names the same
+    file the archive's does."""
+    if not kept.is_dir():
+        return {}
+    archive = NativeArtifactProvider(kept)
+    links: dict[str, str] = {}
+    for d in kept.iterdir():
+        try:
+            art = archive._read_meta(d.name)
+        except (OSError, ValueError):  # a name no slug can be, or a root refused as sensitive
+            continue
+        if art is not None and art.source_path:
+            links[d.name] = art.source_path
+    return links
 
 
 #: The only companion-file names ``store_version_file`` accepts: ``<stem>@<hex>[.ext]``. Anchored to
@@ -706,10 +724,11 @@ class NativeArtifactProvider(ArtifactProvider):
         return None
 
     def follow_a_moved_home(
-        self, moves: Sequence[tuple[str, str]], only: Iterable[str] | None = None
+        self, moves: Sequence[tuple[str, str]], only: Mapping[str, str] | None = None
     ) -> int:
         """Point each file-backed artifact whose file is under one of *moves*' old folders at the
         same file here (``memory_locality.moved_path``), and return how many it pointed again.
+        With *only*, just the artifacts it names by slug, each still linked to the file it names.
 
         The link is the file's absolute path (``source_path``), true only in the home, at the
         place, that wrote it. In a home restored at another path every read and save of it was
@@ -717,10 +736,9 @@ class NativeArtifactProvider(ArtifactProvider):
         from personalclaw.memory_locality import moved_path
 
         moved = 0
-        brought = None if only is None else set(only)
         with self._lock:
             for art in self.list():
-                if brought is not None and art.slug not in brought:
+                if only is not None and only.get(art.slug) != art.source_path:
                     continue
                 there = moved_path(art.source_path, moves) if art.source_path else None
                 if there is None:
