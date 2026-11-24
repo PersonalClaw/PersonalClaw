@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Iterator
@@ -172,8 +174,8 @@ def test_a_runtime_whose_folder_was_swept_is_handed_it_again(tmp):
 def test_a_tests_runs_never_reach_this_machines_scratch_parent():
     """The real ``<tmp>/personalclaw-scratch-<uid>`` is the owner's own gateway's: a test that
     leaves ``tempfile`` alone is handed a folder under a parent of its own
-    (``conftest._a_scratch_parent_of_its_own``), so its sweeps and removals reach none of hers.
-    🔴 Red before: the folder was made in the machine's own parent."""
+    (``conftest._a_scratch_parent_of_its_own``), so its sweeps and removals reach none of the
+    owner's. 🔴 Red before: the folder was made in the machine's own parent."""
     real = os.path.realpath(
         os.path.join(tempfile.gettempdir(), f"personalclaw-scratch-{os.getuid()}")
     )
@@ -182,6 +184,22 @@ def test_a_tests_runs_never_reach_this_machines_scratch_parent():
 
     assert folder and os.path.isdir(folder)
     assert not folder.startswith(real + os.sep), folder
+
+
+def test_a_child_a_test_starts_keeps_its_scratch_folders_under_the_runs_own_temp(
+    tmp_path, tmp_path_factory
+):
+    """A gateway a test starts as a child inherits this environment: its scratch parent, which
+    its sweep empties, is under the run's basetemp (``conftest._children_get_a_temp_of_their_own``),
+    never the machine's own ``$TMPDIR``. The child has a home of its own, as every PersonalClaw
+    child a test starts must; the scratch parent is the machine's, not a home's. 🔴 Red before:
+    the child's parent was the machine's."""
+    shown = "from personalclaw import run_bounds; print(run_bounds._scratch_parent())"
+    env = {**os.environ, "PERSONALCLAW_HOME": str(tmp_path / "home")}
+    child = subprocess.run([sys.executable, "-c", shown], env=env, capture_output=True, text=True)
+    assert child.returncode == 0, child.stderr
+    base = os.path.realpath(tmp_path_factory.getbasetemp())
+    assert os.path.realpath(child.stdout.strip()).startswith(base + os.sep), child.stdout
 
 
 def test_the_gateways_sweep_runs_as_it_starts_and_stops(tmp):
