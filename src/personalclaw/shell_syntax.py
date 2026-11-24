@@ -22,6 +22,7 @@ This module imports nothing from PersonalClaw.
 
 from __future__ import annotations
 
+import re
 import string
 from dataclasses import dataclass, field
 
@@ -35,12 +36,15 @@ class Word:
     ``opaque``: part of it is a parameter expansion, so its text is not what the program gets.
     ``leading``: it begins with one of :data:`LEADING_VARIABLES` (``$TMPDIR/x``) and has no
     other expansion, so it names a path under that folder, spelled as written.
+    ``tilde``: an unquoted ``~`` begins it, or follows the ``=`` or a ``:`` of a word spelled as an
+    assignment (``PATH=~/bin``), so the shell may turn it into a home folder.
     """
 
     text: str
     glob_at: int = -1
     opaque: bool = False
     leading: str = ""
+    tilde: bool = False
 
 
 @dataclass(frozen=True)
@@ -205,6 +209,21 @@ def _skip_heredoc(text: str, i: int, delimiter: str, *, strip: bool, quoted: boo
     return None
 
 
+#: A word spelled as an assignment so far, up to where a tilde would expand: `NAME=` or `NAME=…:`.
+_ASSIGNED_SO_FAR = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=(?:.*:)?")
+
+
+def _plain(c: str, before: str, in_word: bool, glob_at: int, tilde: bool) -> tuple[int, bool]:
+    """An unquoted character *c* after *before* (the word so far): where the word's first glob
+    is, and whether a tilde the shell expands is in it (at the word's start, or after an
+    assignment's ``=`` or a ``:`` in its value)."""
+    if c in _GLOB_CHARS and glob_at < 0:
+        glob_at = len(before)
+    if c == "~" and (not in_word or _ASSIGNED_SO_FAR.fullmatch(before) is not None):
+        tilde = True
+    return glob_at, tilde
+
+
 def lex(  # noqa: C901 - one pass over a small grammar
     text: str, *, unread: list[str] | None = None
 ) -> list[Token] | None:
@@ -217,7 +236,7 @@ def lex(  # noqa: C901 - one pass over a small grammar
     buf: list[str] = []
     glob_at = -1
     in_word = False
-    opaque = False
+    opaque = tilde = False
     leading = ""
     # Whether the word so far is unquoted digits only: before `<`/`>` it is the redirect's fd.
     digits_only = True
@@ -225,10 +244,12 @@ def lex(  # noqa: C901 - one pass over a small grammar
     pending: list[tuple[str, bool, bool]] = []
 
     def finish() -> None:
-        nonlocal buf, glob_at, in_word, digits_only, opaque, leading
+        nonlocal buf, glob_at, in_word, digits_only, opaque, leading, tilde
         if in_word:
-            tokens.append(("word", Word("".join(buf), glob_at, opaque, "" if opaque else leading)))
+            word = Word("".join(buf), glob_at, opaque, "" if opaque else leading, tilde)
+            tokens.append(("word", word))
         buf, glob_at, in_word, digits_only, opaque, leading = [], -1, False, True, False, ""
+        tilde = False
 
     def expansion(spelled: str, *, at_start: bool) -> None:
         """Note a parameter expansion: a leading path variable, or a part whose text is unknown."""
@@ -353,9 +374,8 @@ def lex(  # noqa: C901 - one pass over a small grammar
         elif c in "<>":
             fd = "".join(buf) if in_word and digits_only else ""
             if fd:
-                buf, glob_at, in_word, digits_only, opaque, leading = [], -1, False, True, False, ""
-            else:
-                finish()
+                in_word = False  # its digits are the redirect's descriptor, not a word
+            finish()
             if text.startswith("<<<", i):
                 tokens.append(("redir", Redirect(fd, "<<<")))
                 i += 3
@@ -377,8 +397,7 @@ def lex(  # noqa: C901 - one pass over a small grammar
             tokens.append(("redir", Redirect(fd, op)))
             i += len(op)
         else:
-            if c in _GLOB_CHARS and glob_at < 0:
-                glob_at = sum(len(p) for p in buf)
+            glob_at, tilde = _plain(c, "".join(buf), in_word, glob_at, tilde)
             take(c, quoted=False)
             i += 1
     finish()

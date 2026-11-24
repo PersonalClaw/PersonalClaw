@@ -393,3 +393,20 @@ def test_a_generated_line_is_read_as_bash_runs_it(line):
     verdict = agrees(line)
     event("reader refused" if verdict is None else "reader read; bash agreed" if verdict else "x")
     assert verdict is not False, _explain(line)
+
+
+@pytest.mark.parametrize(
+    "line,marks",
+    [
+        ("ls ~", [False, True]),
+        ("ls ~root ~/x", [False, True, True]),
+        ("ls '~' \\~ x~ HEAD~1 ''~", [False, False, False, False, False, False]),
+        ("echo A=~/x P=a:~/b --opt=~", [False, True, True, False]),
+    ],
+)
+def test_a_tilde_bash_would_expand_is_marked(line, marks):
+    """An unquoted ``~`` that begins a word, or follows an assignment's ``=`` or a ``:`` in its
+    value, is marked; a quoted or escaped one, or one inside a word, is not."""
+    tokens = lex(line)
+    assert tokens is not None
+    assert [t[1].tilde for t in tokens if t[0] == "word"] == marks
