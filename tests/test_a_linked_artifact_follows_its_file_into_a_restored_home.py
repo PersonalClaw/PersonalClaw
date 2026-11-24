@@ -143,7 +143,9 @@ def test_only_the_artifacts_the_archive_brought_follow_and_never_by_the_root(
         provider._write_meta(art)
     snap = tmp_path / "unpacked"
     (snap / "artifacts" / brought.slug).mkdir(parents=True)
-    (snap / "artifacts" / brought.slug / "meta.json").write_text("{}", "utf-8")
+    (snap / "artifacts" / brought.slug / "meta.json").write_text(
+        json.dumps(brought.to_dict(persist=True) | {"source_path": there}), "utf-8"
+    )
 
     (snap / "MANIFEST.json").write_text(json.dumps({"personalclaw_dir": "/"}), "utf-8")
     assert native.take_in_restored(snap) == 0, "the root names no home"
@@ -161,3 +163,34 @@ def test_only_the_artifacts_the_archive_brought_follow_and_never_by_the_root(
     assert (
         NativeArtifactProvider().get(mine.slug).source_path == there
     ), "this home's own: as it was"
+
+
+def test_this_homes_own_artifact_that_shares_a_slug_with_one_the_archive_brought_stays(
+    tmp_path, monkeypatch
+) -> None:
+    """A merge keeps this home's artifact where its slug is one the archive also brought. With two
+    homes on one machine, this home's may be linked to a file under the archive's home: it is
+    this home's own link, not one the archive brought, so it stays as it is."""
+    import json
+
+    from personalclaw.artifacts import native
+
+    _use_home(monkeypatch, tmp_path / "bob" / "pc")
+    old_home = tmp_path / "alice" / "pc-home"
+    mine_there = _a_file(old_home / "workspace", "shared/budget.md")
+    provider = NativeArtifactProvider()
+    mine = provider.create(name="Plan", content="# y\n", kind="markdown")
+    mine.source_path = mine_there
+    provider._write_meta(mine)
+    snap = tmp_path / "unpacked"
+    (snap / "artifacts" / mine.slug).mkdir(parents=True)
+    theirs = mine.to_dict(persist=True) | {
+        "source_path": str(old_home / "workspace" / "beds" / "plan.md")
+    }
+    (snap / "artifacts" / mine.slug / "meta.json").write_text(json.dumps(theirs), "utf-8")
+    (snap / "MANIFEST.json").write_text(json.dumps({"personalclaw_dir": str(old_home)}), "utf-8")
+
+    assert native.take_in_restored(snap) == 0
+    assert (
+        NativeArtifactProvider().get(mine.slug).source_path == mine_there
+    ), "this home's own link, under a slug the archive also brought: as it was"
