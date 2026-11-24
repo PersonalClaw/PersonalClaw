@@ -7,10 +7,9 @@ its words, kept beside ``mcp_artifacts`` rather than in it.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 from personalclaw.safety_flags import yes_or_no
-from personalclaw.tool_providers.base import tool_failure
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +17,18 @@ logger = logging.getLogger(__name__)
 NAMED_ITEMS = 8
 
 
+class Refusal(NamedTuple):
+    """Why a workbook's next version is not written, which its caller answers the call with
+    (``tool_providers.base.tool_failure``). Said here as words and a code, so this module needs
+    nothing of the tool layer's and stays out of the import cycle the tool layer is in."""
+
+    reason: str
+    code: str = ""
+
+
 def carry_workbook(
     prov: Any, named: Any, expected: Any, model: Any, args: dict[str, Any]
-) -> tuple[Any, Any]:
+) -> tuple[Any, Refusal | None]:
     """``(carried, refusal)``: the next version of the workbook *named*, carried from the version
     the call was read from (``documents.sheet_carry``), or why it is not written. A base that
     holds what no version written here can carry (a chart, conditional formatting, a table, a
@@ -31,7 +39,7 @@ def carry_workbook(
     from personalclaw.documents.xlsx_parser import parse_xlsx
 
     version = expected if isinstance(expected, int) else None
-    unread = tool_failure(
+    unread = Refusal(
         f"could not read version {version or named.version} of '{named.slug}' to keep its "
         "formulas and formatting. Nothing was written."
     )
@@ -45,7 +53,7 @@ def carry_workbook(
         return None, unread
     carried = carry_from_base(model, base, losses)
     if carried.unsupported and yes_or_no(args.get("drop_unsupported")) is not True:
-        return None, tool_failure(
+        return None, Refusal(
             f"'{named.slug}' holds what a version written with sheet_create cannot carry: "
             f"{named_items(carried.unsupported)}. Writing this version would drop them. Ask the "
             "user first, naming them; if they agree, call sheet_create again with "

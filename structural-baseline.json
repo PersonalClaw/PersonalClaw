@@ -254,6 +254,7 @@
       "manifest_reference",
       "mcp_automation",
       "mcp_prompts",
+      "mcp_sheet_versions",
       "mcp_status",
       "mcp_subagents",
       "mcp_workflows",
@@ -314,6 +315,11 @@
     "releases": [
       {
         "release": "0.3.9",
+        "startup_units": 73,
+        "units": 276
+      },
+      {
+        "release": "0.4.0",
         "startup_units": 73,
         "units": 276
       }
