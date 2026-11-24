@@ -63,6 +63,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow branch can be the case of another branch, the body of a fan-out or the body of a loop, and a branch inside a fan-out can route on its item.** Each of these ran the branch, then stopped the run with "run deadlocked: no runnable nodes and none in flight", because a branch that had routed read as finished before its case ran. Wrapping the branch in a sequence was the only way round, and it is no longer needed.
 - **A workflow's judge gate that can't rule without you asks you.**
 - **Rewind and Run from on a step inside a loop or foreach run it again, and a loop or foreach rewound starts again from its first cycle or item.**
+- **An artifact linked to a file follows it into a home restored at another path: after a snapshot is restored, or an export imported, on another machine or under another account's name, an artifact saved from a file in the old home's workspace or elsewhere in that home shows that file's text there, shows the edits made to it, and a save writes it. An artifact linked to a file outside the home is left as it was.**
 
 ### Security
 

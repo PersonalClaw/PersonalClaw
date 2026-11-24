@@ -23,7 +23,7 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -84,6 +84,22 @@ def artifacts_root() -> Path:
 
 
 logger = logging.getLogger(__name__)
+
+
+def take_in_restored(snap: Path) -> int:
+    """Once a restore or an import has put the artifacts of the unpacked archive *snap* into this
+    home: each linked to a file of the home *snap* came from follows the same file here
+    (:meth:`NativeArtifactProvider.follow_a_moved_home`). Returns how many."""
+    from personalclaw.memory_locality import restored_home_moves
+
+    moves = restored_home_moves(snap)
+    # Only the artifacts the archive brought: this home's own are linked to its own files already.
+    kept = snap / "artifacts"
+    brought = (
+        {d.name for d in kept.iterdir() if (d / "meta.json").is_file()} if kept.is_dir() else set()
+    )
+    return NativeArtifactProvider().follow_a_moved_home(moves, brought) if moves and brought else 0
+
 
 #: The only companion-file names ``store_version_file`` accepts: ``<stem>@<hex>[.ext]``. Anchored to
 #: the ``@`` so a companion can never collide with a ``vN.<ext>`` snapshot — the two live in one
@@ -688,6 +704,33 @@ class NativeArtifactProvider(ArtifactProvider):
         except Exception:
             return None
         return None
+
+    def follow_a_moved_home(
+        self, moves: Sequence[tuple[str, str]], only: Iterable[str] | None = None
+    ) -> int:
+        """Point each file-backed artifact whose file is under one of *moves*' old folders at the
+        same file here (``memory_locality.moved_path``), and return how many it pointed again.
+
+        The link is the file's absolute path (``source_path``), true only in the home, at the
+        place, that wrote it. In a home restored at another path every read and save of it was
+        refused as outside this home's places, and the artifact fell back to its saved copy."""
+        from personalclaw.memory_locality import moved_path
+
+        moved = 0
+        brought = None if only is None else set(only)
+        with self._lock:
+            for art in self.list():
+                if brought is not None and art.slug not in brought:
+                    continue
+                there = moved_path(art.source_path, moves) if art.source_path else None
+                if there is None:
+                    continue
+                art.source_path = there
+                self._write_meta(art)
+                moved += 1
+        if moved:
+            logger.info("restore: %d linked artifacts now follow this home's files", moved)
+        return moved
 
     def find_by_source_path(self, source_path: str) -> Artifact | None:
         if not source_path:

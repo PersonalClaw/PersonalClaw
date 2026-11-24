@@ -1359,13 +1359,9 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             from personalclaw import embedding_arrivals
 
             embedding_arrivals.arrived()
-            # Its chats that worked in its home's workspace work in this one's, as a replace's do.
-            from personalclaw.memory_locality import take_in_restored_chats
+            # Its chats, comments and linked artifacts follow this home's folders, as in a replace.
+            from personalclaw.memory_locality import take_in_a_restored_home
 
-            take_in_restored_chats(snap, pc)
-            # And its comments on a file of that home anchor to the same file here.
-            from personalclaw import doc_comments
-
-            doc_comments.take_in_restored(snap)
+            take_in_a_restored_home(snap, pc)
 
     return summary
