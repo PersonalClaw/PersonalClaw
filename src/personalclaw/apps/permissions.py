@@ -1358,6 +1358,10 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/workflows/runs/{run_id}/steer": OwnerOnly(_STARTS_AGENT_WORK),
     "POST /api/workflows/runs/{run_id}/rewind": OwnerOnly(_STARTS_AGENT_WORK),
     "POST /api/workflows/runs/{run_id}/run-from": OwnerOnly(_STARTS_AGENT_WORK),
+    # The audit's repair: a final status written onto each run no live controller drives.
+    "POST /api/workflows/audit/heal": OwnerOnly(
+        "ending your workflow runs that nothing drives — it writes each one's final status"
+    ),
     "POST /api/workflows/runs/{run_id}/review/triage": OwnerOnly(_STARTS_AGENT_WORK),
     "POST /api/workflows/runs/{run_id}/resume": OwnerOnly("resuming a run you paused"),
     "POST /api/workflows/runs/{run_id}/edit": OwnerOnly("rewriting a run's steps"),

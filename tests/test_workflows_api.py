@@ -729,9 +729,9 @@ class TestAuditAndManifest:
         assert resp.status == 200 and _body(resp)["dry_run"] is True
 
     async def test_heal_requires_a_non_restricted_session(self) -> None:
-        req = _req("GET", "/api/workflows/audit?dry_run=false", state=_State(restricted=True))
+        req = _req("POST", "/api/workflows/audit/heal", state=_State(restricted=True))
         # A non-restricted state still heals; the guard reads the state's own check.
-        resp = await H.api_audit(req)
+        resp = await H.api_audit_heal(req)
         assert resp.status == 200 and _body(resp)["dry_run"] is False
 
     async def test_the_manifest_route_serves_the_generated_catalog(self) -> None:

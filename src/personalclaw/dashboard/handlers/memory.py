@@ -1,6 +1,7 @@
 """Memory API handlers — preferences, projects, history, settings, semantic, episodic, embeddings, graph."""  # noqa: E501
 
 import asyncio
+import functools
 import json
 import logging
 import threading
@@ -959,14 +960,71 @@ async def api_memory_events(request: web.Request) -> web.Response:
 
 
 async def api_memory_lint(request: web.Request) -> web.Response:
-    """GET /api/memory/lint — run the memory-health sweep, return its report.
+    """GET /api/memory/lint — the memory-health sweep's report, which only reads.
+    POST /api/memory/lint — the same sweep, and its purge of long-superseded rows.
 
-    Auto-fixes the safe issues (purge long-superseded rows) and flags the rest
-    (stale / sparse / near-dup / contradictions) as recommendations.
+    It flags the issues (stale / sparse / near-dup / contradictions) as recommendations. A GET
+    only reads, and counts what the purge of long-superseded rows would remove under
+    ``fixable``. Only a POST runs that purge, a permanent delete, so the cross-site check and
+    the request log cover it, as they don't a GET. The purge changes your memory as any write
+    does: refused for work that keeps nothing, and held for your own word when someone other
+    than you asked for the turn (``memory_writes.asker``).
     """
     svc = _get_service(request)
-    report = await asyncio.get_event_loop().run_in_executor(None, svc.lint)
+    purge = request.method == "POST"
+    if purge:
+        refused = await _purge_refusal(request, svc)
+        if refused is not None:
+            return refused
+    report = await asyncio.get_event_loop().run_in_executor(
+        None, functools.partial(svc.lint, purge=purge)
+    )
     return web.json_response(report)
+
+
+async def _purge_refusal(request: web.Request, svc) -> web.Response | None:
+    """The answer to a purge that doesn't run now: 403 for work that keeps nothing, or the hold
+    for your word when someone other than you asked for the turn. ``None`` when it runs."""
+    sk = work_of_request(request)
+    if _is_restricted_session(request.app["state"], request):
+        await sel_log_async(
+            _sel().log_api_access,
+            caller=sk,
+            operation="memory.lint_purge",
+            outcome="denied",
+            source="dashboard",
+            resources="restricted_session_block",
+        )
+        return web.json_response(
+            {"error": "Memory writes are not allowed in this session mode."}, status=403
+        )
+    if not memory_writes.asker():
+        return None
+    from personalclaw.dashboard import memory_holds
+    from personalclaw.memory_lint import _SUPERSEDED_RETENTION_DAYS as days
+
+    async def _on_her_allow() -> None:
+        report = await asyncio.to_thread(functools.partial(svc.lint, purge=True))
+        await sel_log_async(
+            _sel().log_api_access,
+            caller=sk,
+            operation="memory.lint_purge",
+            outcome="success",
+            source="dashboard",
+            resources=f"purged={(report or {}).get('auto_fixed', {}).get('superseded_purged', 0)}",
+        )
+
+    purge = memory_holds.Change(
+        operation="memory.lint_purge",
+        tool="memory_lint",
+        # Counted when you allow it: a memory that passes the mark meanwhile goes too.
+        said=f"Delete the memories replaced more than {days} days ago, as of when you allow it",
+        to_do="clean up memories that were replaced long ago",
+        ask="whether to delete them, and they are deleted",
+        not_yet="Nothing deleted yet",
+        answers="Allow deletes them, Deny keeps them.",
+    )
+    return memory_holds.held(request, purge, _on_her_allow)
 
 
 async def api_memory_event_undo(request: web.Request) -> web.Response:

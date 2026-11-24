@@ -3194,6 +3194,15 @@ export interface WorkflowDropStatus {
   files: WorkflowDroppedFile[]
   accepted?: WorkflowDroppedFile[]
 }
+/** What `GET /api/workflows/audit` found, and on `POST /api/workflows/audit/heal` what it healed. */
+export interface WorkflowAuditReport {
+  healthy: boolean
+  dry_run: boolean
+  runs_scanned: number
+  counts: Record<string, number>
+  findings: Array<{ kind: string; run_id: string; detail: string; heal: string; healed: boolean }>
+}
+
 export interface WorkflowManifest {
   spec_semver: string
   node_kinds: Array<{ kind: string; container: boolean; lane: string }>
@@ -11812,8 +11821,9 @@ export const api = {
     post<{ child_run_id: string; fork_axis: string; shared_axes: string[]; isolation_notes: string[] }>(
       `/api/workflows/runs/${encodeURIComponent(id)}/fork`, body ?? {}),
   workflowAudit: (dryRun = true) =>
-    get<{ healthy: boolean; dry_run: boolean; runs_scanned: number; counts: Record<string, number>; findings: Array<{ kind: string; run_id: string; detail: string; heal: string; healed: boolean }> }>(
-      `/api/workflows/audit?dry_run=${dryRun ? 'true' : 'false'}`),
+    dryRun
+      ? get<WorkflowAuditReport>('/api/workflows/audit')
+      : post<WorkflowAuditReport>('/api/workflows/audit/heal', {}),
   workflowManifest: () => get<WorkflowManifest>('/api/workflows/manifest'),
   /** Per-template attention summaries. Derived per request from run ledgers —
    *  stored nowhere — so an empty list means "no workflow runs yet", never a failure. */

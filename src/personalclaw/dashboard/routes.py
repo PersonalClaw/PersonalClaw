@@ -516,6 +516,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_get("/api/memory/events", handlers.api_memory_events)
     app.router.add_post("/api/memory/events/{event_id}/undo", handlers.api_memory_event_undo)
     app.router.add_get("/api/memory/lint", handlers.api_memory_lint)
+    app.router.add_post("/api/memory/lint", handlers.api_memory_lint)
     app.router.add_get("/api/memory/episodic/search", handlers.api_memory_episodic_search)
     app.router.add_get("/api/memory/recall", handlers.api_memory_recall)
     app.router.add_get("/api/memory/episodic", handlers.api_memory_episodic_list)

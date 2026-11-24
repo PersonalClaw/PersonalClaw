@@ -587,7 +587,7 @@ _ROUTES = [
         "/api/workflows/runs/a1b2c3d4/outputs/t",
     ),
     ("workflow_audit", {}, "GET", "/api/workflows/audit"),
-    ("workflow_repair", {}, "GET", "/api/workflows/audit?dry_run=false"),
+    ("workflow_repair", {}, "POST", "/api/workflows/audit/heal"),
     ("workflow_manifest", {}, "GET", "/api/workflows/manifest"),
     ("workflow_delete_def", {"name": "w"}, "DELETE", "/api/workflows/w"),
 ]

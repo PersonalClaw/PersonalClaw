@@ -566,8 +566,9 @@ class MemoryService:
         vs = self._vs
         return vs.delete_episodic(mem_id, source=source) if vs else False
 
-    def lint(self) -> dict:
-        """Run the memory-health sweep over the backing store; report dict.
+    def lint(self, *, purge: bool = True) -> dict:
+        """Run the memory-health sweep over the backing store; report dict. ``purge`` runs its
+        one auto-fix (``memory_lint.lint_memory``); off, the sweep only reads.
 
         Also runs the readable-vault checks when a vault is configured — the
         vault is where a two-way edit can get stuck, so its conflicts belong in the
@@ -584,7 +585,7 @@ class MemoryService:
         except Exception:
             logger.debug("lint: vault unavailable", exc_info=True)
             vault = None
-        return lint_memory(vs, vault=vault).to_dict()
+        return lint_memory(vs, vault=vault, purge=purge).to_dict()
 
     def apply_vault_edit(self, key: str, value: str) -> tuple[bool, str]:
         """Write a hand-edited vault page back into memory. ``(ok, detail)``.
