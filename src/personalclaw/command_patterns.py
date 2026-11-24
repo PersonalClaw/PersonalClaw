@@ -4,15 +4,27 @@ Allowing a command shape is safe only if the shape matches exactly what it says.
 one shell command, read by the one reader of shell text (:mod:`personalclaw.shell_syntax`): the
 program's word, then fixed words, ``*`` (exactly one word) and, only last, ``**`` (zero or more
 further words). It never matches by prefix, across ``;``, ``&&``, ``||``, a pipe or a new line, or
-through a word the shell would expand differently (a parameter, a glob), and a wildcard never
-stands where the word chooses what code runs (:data:`WRAPPERS`).
+through a word the shell would expand differently (a parameter, a glob, a home folder's ``~``).
+
+A wildcard never stands where a word chooses what code runs:
+
+* after a shell, an interpreter, a launcher or a package runner (:data:`WRAPPERS`) before a fixed
+  word has named the program it runs, with each program known by its name wherever it lives and
+  whatever its version (``/bin/bash``, ``python3.12``);
+* after a word that runs everything after it (``eval``, ``ssh``, ``watch``);
+* right after an option that runs a command (:data:`EXEC_OPTIONS`: ``find -exec``,
+  ``git rebase -x``).
+
+And a wildcard never covers such an option in a command: ``find **`` does not match
+``find . -exec curl …``.
 
 * :func:`parse` reads a pattern, or refuses it with one message from a closed table
   (:data:`REFUSALS`).
 * :func:`matches` says whether a command is one the pattern names: one linear pass over both word
-  lists, with no regular expression.
-* :func:`suggest` offers the pattern a card shows for a command: its program, up to two words that
-  look like subcommands, then ``**`` when more follow; ``""`` when no safe shape names it.
+  lists; no regular expression reads more than one word.
+* :func:`suggest` offers the pattern a card shows for a command. For a program in
+  :data:`TAIL_PROGRAMS` that is its name, up to two words that look like subcommands, then ``**``
+  when more follow; any other command is offered as itself. ``""`` when no pattern names it.
 
 This is the one matcher a grant of a command shape uses (#4067, #4063). Pure: it reads nothing but
 its arguments.
@@ -56,30 +68,313 @@ REFUSALS: dict[str, str] = {
     WRAPPER_WILDCARD: "A wildcard can't stand where the program chooses what code runs.",
 }
 
-#: The words after which the next word chooses the code that runs: a shell, an interpreter (and
-#: its ``-c``, ``-e``, ``-m`` or ``-``, after which the code itself is named), a launcher that runs
-#: another program, and a package runner. A wildcard may stand after one of them only once a fixed
-#: word has named the program it runs; an option or a value before that leaves the program
-#: unknown, so every later wildcard is refused (narrow by design: ``sudo -u bob **`` and
-#: ``timeout 10 **`` are refused, ``sudo apt install **`` and ``python -m pytest **`` are not).
-SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh", "fish"})
-INTERPRETERS = frozenset({"python", "python3", "node", "ruby", "perl", "php", "deno", "bun"})
-CODE_FLAGS = frozenset({"-c", "-e", "-m", "-"})
-LAUNCHERS = frozenset(
-    {"env", "sudo", "doas", "nohup", "timeout", "xargs", "exec", "command", "nice"}
+#: Shells, and the builtins that run their next word as a script or as code. After one, as after
+#: an interpreter, the next word names the code: a script (whose arguments are its own), or one of
+#: :data:`CODE_FLAGS` and then the code itself, fixed. An option of unknown arity first leaves the
+#: code unknown, so every later wildcard is refused.
+SHELLS = frozenset(
+    {
+        "bash",
+        "sh",
+        "zsh",
+        "dash",
+        "ksh",
+        "mksh",
+        "ash",
+        "fish",
+        "csh",
+        "tcsh",
+        "source",
+        ".",
+        "trap",
+    }
 )
-RUNNERS = frozenset({"npx", "bunx", "uvx"})
-TWO_WORD_RUNNERS = frozenset({("pnpm", "dlx"), ("pipx", "run"), ("npm", "exec")})
+#: Interpreters, by family: ``python3.12``, ``pypy3`` and ``php8.3`` are read as theirs.
+INTERPRETERS = frozenset(
+    {
+        "python",
+        "pypy",
+        "node",
+        "nodejs",
+        "deno",
+        "bun",
+        "ruby",
+        "perl",
+        "php",
+        "php-cgi",
+        "lua",
+        "luajit",
+        "awk",
+        "gawk",
+        "mawk",
+        "nawk",
+        "sed",
+        "gsed",
+        "rscript",
+        "r",
+        "julia",
+        "tclsh",
+        "wish",
+        "expect",
+        "pwsh",
+        "powershell",
+        "osascript",
+        "groovy",
+    }
+)
+CODE_FLAGS = frozenset({"-c", "-e", "-m", "-"})
+#: Launchers: the next word is the program they run. An option or a value before it leaves the
+#: program unknown, so every later wildcard is refused (narrow by design: ``sudo -u bob **`` and
+#: ``nice -n 5 **`` are refused, ``sudo apt install **`` is not).
+LAUNCHERS = frozenset(
+    {
+        "env",
+        "sudo",
+        "doas",
+        "pkexec",
+        "runuser",
+        "nohup",
+        "exec",
+        "command",
+        "builtin",
+        "time",
+        "coproc",
+        "!",
+        "nice",
+        "ionice",
+        "xargs",
+        "setsid",
+        "stdbuf",
+        "unshare",
+        "nsenter",
+        "caffeinate",
+        "arch",
+        "strace",
+        "ltrace",
+        "valgrind",
+        "systemd-run",
+        "sandbox-exec",
+        "firejail",
+        "bwrap",
+        "busybox",
+        "toybox",
+        "torsocks",
+        "proxychains",
+        "proxychains4",
+        "xvfb-run",
+        "dbus-run-session",
+    }
+)
+#: Launchers that take one value before the program: a duration, a folder, a lock, a CPU mask.
+LAUNCHERS_AFTER_A_VALUE = frozenset({"timeout", "chroot", "taskset", "flock", "chrt"})
+#: Programs that may run any word after them as code, or join them into a shell line: no wildcard
+#: stands anywhere after one.
+RUNS_ITS_WORDS = frozenset(
+    {
+        "eval",
+        "watch",
+        "su",
+        "sg",
+        "script",
+        "parallel",
+        "ssh",
+        "gdb",
+        "lldb",
+        "tmux",
+        "screen",
+        "nix-shell",
+    }
+)
+#: Package runners, as the words that name them (the first by its family, ``go1.21`` is ``go``):
+#: the next word names what runs.
+RUNNERS = frozenset(
+    {
+        ("npx",),
+        ("bunx",),
+        ("uvx",),
+        ("pnpx",),
+        ("pnpm", "dlx"),
+        ("pnpm", "exec"),
+        ("npm", "exec"),
+        ("npm", "x"),
+        ("yarn", "dlx"),
+        ("yarn", "exec"),
+        ("pipx", "run"),
+        ("uv", "run"),
+        ("uv", "tool", "run"),
+        ("poetry", "run"),
+        ("pipenv", "run"),
+        ("pdm", "run"),
+        ("hatch", "run"),
+        ("rye", "run"),
+        ("conda", "run"),
+        ("mamba", "run"),
+        ("micromamba", "run"),
+        ("bundle", "exec"),
+        ("mise", "exec"),
+        ("mise", "x"),
+        ("asdf", "exec"),
+        ("nix", "run"),
+        ("go", "run"),
+        ("deno", "run"),
+        ("deno", "x"),
+        ("deno", "eval"),
+        ("bun", "run"),
+        ("bun", "x"),
+        # A starter's package runs: `npm init vite` is `npm exec create-vite`.
+        ("npm", "init"),
+        ("npm", "create"),
+        ("pnpm", "create"),
+        ("yarn", "create"),
+        ("bun", "create"),
+    }
+)
+#: The longest runner first, so ``uv tool run`` is read before anything shorter.
+_RUNNERS_LONGEST_FIRST = sorted(RUNNERS, key=len, reverse=True)
 #: The table, as one name for the owner's and a reviewer's reading.
 WRAPPERS = {
     "shell": SHELLS,
     "interpreter": INTERPRETERS,
     "launcher": LAUNCHERS,
-    "package runner": RUNNERS | {" ".join(pair) for pair in TWO_WORD_RUNNERS},
+    "launcher after a value": LAUNCHERS_AFTER_A_VALUE,
+    "runs its words": RUNS_ITS_WORDS,
+    "package runner": frozenset(" ".join(r) for r in RUNNERS),
 }
+
+_SED = frozenset({"-e", "--expression", "-f", "--file"})
+_AWK = frozenset({"-f", "--file", "-e", "--source", "-i", "--include", "-l", "--load"})
+_VIM = frozenset({"-c", "--cmd", "-S", "-u", "+"})
+_SSH_LIKE = frozenset({"-S", "-o", "-F"})
+#: For each program (by name), the options that make it run a command or code the pattern does
+#: not name: under ``""`` wherever they stand, or under the subcommand they belong to. A long
+#: option counts abbreviated or with ``=value``; a two-character one alone, glued to its value or
+#: in a cluster; ``=`` stands for a variable assignment (``make CC=…``) and ``+`` for a
+#: ``+command``; any other word counts as itself (``git bisect run``).
+EXEC_OPTIONS: dict[str, dict[str, frozenset[str]]] = {
+    "find": {"": frozenset({"-exec", "-execdir", "-ok", "-okdir"})},
+    "git": {
+        "": frozenset(
+            {"-c", "--config-env", "--exec-path", "--exec", "--upload-pack", "--receive-pack"}
+        ),
+        "rebase": frozenset({"-x"}),
+        "bisect": frozenset({"run"}),
+        "submodule": frozenset({"foreach"}),
+        "difftool": frozenset({"-x", "--extcmd"}),
+        "grep": frozenset({"-O", "--open-files-in-pager"}),
+        "clone": frozenset({"-u", "--template"}),
+        "init": frozenset({"--template"}),
+        "filter-branch": frozenset(
+            {
+                "--tree-filter",
+                "--index-filter",
+                "--msg-filter",
+                "--commit-filter",
+                "--env-filter",
+                "--parent-filter",
+                "--tag-name-filter",
+            }
+        ),
+    },
+    "make": {
+        "": frozenset({"--eval", "-E", "-f", "--file", "--makefile", "-C", "--directory", "="})
+    },
+    "tar": {
+        "": frozenset(
+            {
+                "--to-command",
+                "-I",
+                "--use-compress-program",
+                "--checkpoint-action",
+                "--info-script",
+                "--new-volume-script",
+                "-F",
+                "--rsh-command",
+                "--rmt-command",
+            }
+        )
+    },
+    "rsync": {"": frozenset({"-e", "--rsh", "--rsync-path"})},
+    "scp": {"": _SSH_LIKE},
+    "sftp": {"": _SSH_LIKE | {"-D"}},
+    "zip": {"": frozenset({"-TT", "--unzip-command"})},
+    "rg": {"": frozenset({"--pre"})},
+    "go": {"": frozenset({"-exec", "-toolexec", "--exec", "--toolexec"})},
+    "cargo": {"": frozenset({"--config"})},
+    "npm": {"": frozenset({"--script-shell", "--node-options"})},
+    "nix": {"": frozenset({"-c", "--command"})},
+    "emacs": {"": frozenset({"--eval", "-l", "--load", "-f", "--funcall", "--script", "-x"})},
+    **{name: {"": _SED} for name in ("sed", "gsed")},
+    **{name: {"": _AWK} for name in ("awk", "gawk", "mawk", "nawk")},
+    **{name: {"": _VIM} for name in ("vim", "vi", "nvim", "view", "ex", "gvim", "mvim", "rvim")},
+}
+#: Programs whose first argument is a cluster of options even without a dash (``tar xIf …``).
+_OLD_STYLE_CLUSTERS = frozenset({"tar"})
+
+#: The programs a card offers ``**`` after: their arguments name no other program to run, or the
+#: ways they can are in :data:`EXEC_OPTIONS`, which a match refuses under a wildcard. Any other
+#: command is offered as itself, so one Allow on a card never grants more than the owner read.
+TAIL_PROGRAMS = frozenset(
+    {
+        "pytest",
+        "git",
+        "npm",
+        "pnpm",
+        "yarn",
+        "cargo",
+        "go",
+        "make",
+        "docker",
+        "ls",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "grep",
+        "rg",
+        "find",
+        "diff",
+        "du",
+        "df",
+        "tree",
+        "stat",
+        "file",
+        "mypy",
+        "ruff",
+        "black",
+        "isort",
+        "flake8",
+        "tsc",
+    }
+)
+#: Their subcommands that install or run code the shape would not name: offered as themselves.
+NO_TAIL = frozenset(
+    {
+        ("git", "config"),
+        ("npm", "install"),
+        ("npm", "i"),
+        ("npm", "add"),
+        ("pnpm", "add"),
+        ("pnpm", "install"),
+        ("pnpm", "i"),
+        ("yarn", "add"),
+        ("cargo", "install"),
+        ("docker", "run"),
+        ("docker", "exec"),
+    }
+)
+
+#: The shell's reserved words that open syntax rather than name a program (``time``, ``coproc``
+#: and ``!`` run the command after them, so they are launchers).
+RESERVED = frozenset(
+    "if then else elif fi case esac for while until do done in function select [[ ]] { }".split()
+)
 
 #: A word that looks like a subcommand, which :func:`suggest` keeps fixed.
 _SUBCOMMAND = re.compile(r"^[a-z][a-z0-9-]*$")
+#: A program's name with a version after it: ``python3.12``, ``pypy3``, ``zsh-5.9``.
+_VERSIONED = re.compile(r"([a-z][a-z-]*?)-?\d[\w.-]*")
+#: A variable assignment, as ``make`` reads one among its arguments.
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*[:+?!]?=")
 
 
 @dataclass(frozen=True)
@@ -105,6 +400,40 @@ def _refuse(rule: str) -> Refusal:
     return Refusal(rule, REFUSALS[rule])
 
 
+def program_name(word: str) -> str:
+    """How *word* names a program wherever it lives: its last path part, lower-cased, without
+    ``.exe``; for a package spec, the package (``eslint@9``, ``@scope/tool@1``, ``nixpkgs#bash``).
+    """
+    name = re.split(r"[/\\#:]", word)[-1].lower().lstrip("@").split("@", 1)[0]
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _named(name: str, table: frozenset[str]) -> bool:
+    """Whether *name* is in *table*, itself or as its family (``python3.12`` is ``python``)."""
+    return name in table or _family(name) in table
+
+
+def _family(name: str) -> str:
+    """*name* without a version after it (``go1.21`` is ``go``)."""
+    versioned = _VERSIONED.fullmatch(name)
+    return versioned.group(1) if versioned else name
+
+
+def _exec_table(name: str) -> dict[str, frozenset[str]]:
+    """*name*'s options that run a command (:data:`EXEC_OPTIONS`), ``{}`` for none."""
+    return EXEC_OPTIONS.get(name) or EXEC_OPTIONS.get(_family(name), {})
+
+
+def wrapper_kind(word: str) -> str:
+    """The kind of wrapper *word* names as a program (a key of :data:`WRAPPERS`), ``""`` for none.
+    A package runner of more than one word is named by its first (``uv`` for ``uv run``)."""
+    name = program_name(word)
+    for kind, table in WRAPPERS.items():
+        if kind != "package runner" and _named(name, table):
+            return kind
+    return "package runner" if any(r[0] in (name, _family(name)) for r in RUNNERS) else ""
+
+
 def _one_simple(text: str) -> tuple[Simple | None, bool]:
     """The one simple command *text* is, and whether it could be read at all."""
     tokens = lex(text)
@@ -114,6 +443,12 @@ def _one_simple(text: str) -> tuple[Simple | None, bool]:
     if commands is None or len(commands) != 1 or commands[0].then:
         return None, True
     return commands[0], True
+
+
+def _unreadable(words: list[Word]) -> bool:
+    """Whether a word's text is not what the program receives (an expansion, a home folder's
+    ``~``), or the command opens syntax rather than naming a program."""
+    return words[0].text in RESERVED or any(w.opaque or w.leading or w.tilde for w in words)
 
 
 def parse(pattern: str) -> Pattern | Refusal:
@@ -135,7 +470,7 @@ def parse(pattern: str) -> Pattern | Refusal:
         return _refuse(EMPTY)
     if len(words) > MAX_WORDS:
         return _refuse(TOO_LONG)
-    if any(w.opaque or w.leading for w in words):
+    if _unreadable(words):
         return _refuse(UNREADABLE)
     kinds: list[str] = []
     for word in words:
@@ -161,59 +496,172 @@ def parse(pattern: str) -> Pattern | Refusal:
     )
 
 
+def _wrapper_at(words: list[str | None], i: int) -> tuple[str, int]:
+    """The kind of wrapper the fixed word at *i* is (``""`` for none), and the index of the word
+    after it: past every word of a package runner (``uv tool run``)."""
+    first = program_name(words[i] or "")
+    for runner in _RUNNERS_LONGEST_FIRST:
+        spelled = words[i : i + len(runner)]
+        if (
+            len(spelled) == len(runner)
+            and runner[0] in (first, _family(first))
+            and all(w == r for w, r in zip(spelled[1:], runner[1:], strict=True))
+        ):
+            return "package runner", i + len(runner)
+    for kind, table in WRAPPERS.items():
+        if kind != "package runner" and _named(first, table):
+            return kind, i + 1
+    return "", i + 1
+
+
 def _wildcard_where_the_program_is_chosen(words: list[str | None]) -> bool:
     """Whether a wildcard (``None``) stands where a word chooses the code that runs."""
     i = 0
-    program = words[0]
-    while program is not None:
-        nxt = i + 1
-        if program in SHELLS or program in INTERPRETERS:
-            if nxt >= len(words):
-                return False
-            following = words[nxt]
-            if following is None:
-                return True
-            if following in CODE_FLAGS:
-                # The code itself comes next: fixed, or refused.
-                return nxt + 1 < len(words) and words[nxt + 1] is None
-            if following.startswith("-"):
-                return any(w is None for w in words[nxt:])  # an option of unknown arity
-            return False  # a script names the code; its arguments are its own
-        if program in LAUNCHERS or program in RUNNERS:
-            step = nxt
-        elif nxt < len(words) and (program, words[nxt]) in TWO_WORD_RUNNERS:
-            step = nxt + 1
-        else:
-            return False  # the program is chosen, and no later word chooses another
+    while i < len(words):
+        if words[i] is None:
+            return True  # the program itself, or the one a wrapper runs
+        kind, step = _wrapper_at(words, i)
+        if not kind:
+            return _wildcard_after_an_exec_option(words, i)
+        if kind == "runs its words":
+            return any(w is None for w in words[step:])
         if step >= len(words):
             return False
-        launched = words[step]
-        if launched is None:
+        following = words[step]
+        if following is None:
             return True
-        if launched.startswith("-") or "=" in launched or launched.isdigit():
+        if kind in ("shell", "interpreter"):
+            if following in CODE_FLAGS:
+                # The code itself comes next: fixed, or refused.
+                return step + 1 < len(words) and words[step + 1] is None
+            if following.startswith("-"):
+                return any(w is None for w in words[step:])  # an option of unknown arity
+            return _wildcard_after_an_exec_option(words, i)  # a script names the code
+        if kind == "launcher after a value":
+            if following.startswith("-"):
+                return any(w is None for w in words[step:])
+            step += 1  # the value: a duration, a folder, a lock, a mask
+            if step >= len(words):
+                return False
+            following = words[step]
+            if following is None:
+                return True
+        if following.startswith("-") or "=" in following or following.isdigit():
             return any(w is None for w in words[step:])  # its program is not known
-        i, program = step, launched
-    return True
+        i = step
+    return False
+
+
+def _takes_the_next_word(word: str, options: frozenset[str]) -> bool:
+    """Whether *word* is one of *options* (:data:`EXEC_OPTIONS`) whose value is the next word."""
+    for option in options:
+        if option in ("=", "+"):
+            continue
+        if word == option:
+            return True
+        if option.startswith("--") and len(word) > 3 and option.startswith(word):
+            return True  # an abbreviation
+        if len(option) == 2 and option[0] == "-" and word[:1] == "-" and word[1:2] != "-":
+            if word.endswith(option[1]):
+                return True  # the last of a cluster
+    return False
+
+
+def _is_exec_option(word: str, options: frozenset[str]) -> bool:
+    """Whether *word* is one of *options* (:data:`EXEC_OPTIONS`), in any spelling it runs as."""
+    for option in options:
+        if option == "=":
+            hit = _ASSIGNMENT.match(word) is not None
+        elif option == "+":
+            hit = word.startswith("+")
+        elif option.startswith("--"):
+            name = word.split("=", 1)[0]
+            hit = name.startswith("--") and len(name) > 3 and option.startswith(name)
+        elif len(option) == 2 and option[0] == "-":
+            hit = word[:1] == "-" and word[1:2] != "-" and option[1] in word[1:]
+        elif option.startswith("-"):
+            hit = word == option or word.startswith(option + "=")
+        else:
+            hit = word == option
+        if hit:
+            return True
+    return False
+
+
+class _ExecOptions:
+    """The options that run a command, in force as a command's words are read: a program's own
+    from where it is named, a subcommand's from where that is."""
+
+    def __init__(self) -> None:
+        self.tables: list[dict[str, frozenset[str]]] = []
+        self.options: frozenset[str] = frozenset()
+        self.cluster_next = False
+
+    def read(self, word: str) -> None:
+        name = program_name(word)
+        table = _exec_table(name)
+        self.cluster_next = name in _OLD_STYLE_CLUSTERS
+        if table:
+            self.tables.append(table)
+            self.options = self.options | table.get("", frozenset())
+        for named in self.tables:
+            if word and word in named:
+                self.options = self.options | named[word]
+
+    def runs(self, word: str) -> bool:
+        if not self.options:
+            return False
+        if self.cluster_next and word[:1] != "-" and _is_exec_option("-" + word, self.options):
+            return True
+        return _is_exec_option(word, self.options)
+
+
+def _wildcard_after_an_exec_option(words: list[str | None], start: int) -> bool:
+    """Whether a wildcard stands where an option that runs a command (named at or after *start*)
+    takes its value, or in the command that value names."""
+    in_force = _ExecOptions()
+    for j in range(start, len(words)):
+        word = words[j]
+        if word is None:
+            continue
+        if j > start and _takes_the_next_word(word, in_force.options) and j + 1 < len(words):
+            value = words[j + 1 :]
+            if value[0] is None or _wildcard_where_the_program_is_chosen(value):
+                return True
+        in_force.read(word)
+    return False
+
+
+def _covers_an_exec_option(texts: list[str], covered: set[int]) -> bool:
+    """Whether a word a wildcard covers is an option that runs a command, of a program or a
+    subcommand named before it."""
+    in_force = _ExecOptions()
+    for k, text in enumerate(texts):
+        if k in covered and in_force.runs(text):
+            return True
+        in_force.read(text)
+    return False
 
 
 def _readable_words(command: str) -> list[Word] | None:
     """*command*'s words, when it is one simple command a pattern could name: read by the shell's
     reader, no redirect but a descriptor copied onto another (``2>&1``), and no word the shell
-    expands (a parameter, a glob)."""
+    expands (a parameter, a glob, a home folder's ``~``)."""
     simple, _ = _one_simple(command.strip())
-    if simple is None:
+    if simple is None or not simple.words:
         return None
     if not all(duplicates_a_descriptor(r, t) for r, t in simple.redirects):
         return None
-    if any(w.opaque or w.leading or w.glob_at >= 0 for w in simple.words):
+    if _unreadable(simple.words) or any(w.glob_at >= 0 for w in simple.words):
         return None
-    return simple.words or None
+    return simple.words
 
 
 def matches(pattern: Pattern | str, command: str) -> bool:
     """Whether *command* is one *pattern* names: each fixed word equal as the program receives it,
-    each ``*`` one word, ``**`` the rest, and nothing left over. A pattern given as text is parsed
-    first; one :func:`parse` refuses matches nothing."""
+    each ``*`` one word, ``**`` the rest, nothing left over, and no word a wildcard covers an
+    option that runs a command (:data:`EXEC_OPTIONS`). A pattern given as text is parsed first;
+    one :func:`parse` refuses matches nothing."""
     parsed = parse(pattern) if isinstance(pattern, str) else pattern
     if isinstance(parsed, Refusal):
         return False
@@ -226,27 +674,39 @@ def matches(pattern: Pattern | str, command: str) -> bool:
     for want, is_wild, got in zip(parsed.words, wild, words, strict=False):
         if not is_wild and want != got.text:
             return False
-    return True
+    covered = {k for k, w in enumerate(wild) if w} | set(range(len(parsed.words), len(words)))
+    return not _covers_an_exec_option([w.text for w in words], covered)
 
 
-def suggest(command: str) -> str:
-    """The pattern a card offers for *command*: its program, up to two following words that look
-    like subcommands, then ``**`` when more words follow; ``""`` when the command is not one a
-    pattern could name, or the only shape would put a wildcard where the program chooses what code
-    runs (``bash -c "make"``)."""
-    words = _readable_words(command)
-    if words is None:
-        return ""
-    texts = [w.text for w in words]
-    fixed = [texts[0]]
+def _shape(texts: list[str]) -> str:
+    """The shape :func:`suggest` would offer for these words, before it is checked."""
+    exact = " ".join(shlex.quote(t) for t in texts)
+    program = texts[0]
+    if "/" in program or program_name(program) not in TAIL_PROGRAMS:
+        return exact
+    fixed = [program]
     for text in texts[1:3]:
         if not _SUBCOMMAND.match(text):
             break
         fixed.append(text)
-    shape = " ".join(shlex.quote(t) for t in fixed)
-    if len(texts) > len(fixed):
-        shape += f" {REST}"
-    parsed = parse(shape)
-    if isinstance(parsed, Refusal) or not matches(parsed, command):
+    name = program_name(program)
+    if len(texts) == len(fixed) or any((name, t) in NO_TAIL for t in fixed[1:]):
+        return exact
+    return " ".join(shlex.quote(t) for t in fixed) + f" {REST}"
+
+
+def suggest(command: str) -> str:
+    """The pattern a card offers for *command*: for a program in :data:`TAIL_PROGRAMS` found on the
+    path, its name, up to two following words that look like subcommands, then ``**`` when more
+    words follow; any other command as itself, and so is one whose shape would not match it.
+    ``""`` when the command is not one a pattern could name."""
+    words = _readable_words(command)
+    if words is None:
         return ""
-    return shape
+    texts = [w.text for w in words]
+    exact = " ".join(shlex.quote(t) for t in texts)
+    for shape in dict.fromkeys((_shape(texts), exact)):
+        parsed = parse(shape)
+        if isinstance(parsed, Pattern) and matches(parsed, command):
+            return shape
+    return ""
