@@ -32,10 +32,11 @@ contract.yml's wake is held the same way. A poster may also hold the in-place re
 ``actions: write`` with ``contents: read``, deploys nowhere, reads no secret, and runs exactly three
 steps: the runner identity, main's checkout and the controller's ``rerun`` on its own token, within
 a bound inside the merge queue's check limit, with the App's id as post hands it (post's ``app``
-output, read in ci-controller's environment, where the variable lives) or as the variable itself
-until it is handed; ``rerun-fallback``, for that run whenever ``rerun``
+output, read in ci-controller's environment, where the variable lives); ``rerun-fallback``, for
+that run whenever ``rerun``
 did not succeed, holds post's reads and post's one token step and decides the queue commit with its
-rerun ended.
+rerun ended. Across the workflows, a job that reads ``vars.CONTROLLER_APP_ID`` deploys to
+ci-controller: anywhere else it reads as empty.
 Each rule fails on a planted edit.
 """
 
@@ -188,19 +189,19 @@ _FALLBACK_MINUTES = 10
 _RERUN_GRANTS = {"contents": "read", "actions": "write"}
 _POST_GRANTS = {"contents": "read", "actions": "read", "security-events": "read"}
 _RERUN_RUN = "merge-controller rerun "
-#: The rerun step's whole environment: the job's own token, post's run, and the App whose note
-#: it reads.
-_RERUN_ENV_ = {
-    "GH_TOKEN": "${{ github.token }}",
-    "RERUN": "${{ needs.post.outputs.rerun }}",
-    "APP_ID": "${{ vars.CONTROLLER_APP_ID }}",
-}
 #: The App's id is a variable of the ``ci-controller`` environment alone, and a job that deploys
-#: nowhere reads it as empty. So post, which deploys there, may hand it to the rerun job as its
-#: ``app`` output, read from that variable, and the rerun step's ``APP_ID`` is then that output.
+#: nowhere reads it as empty. So post, which deploys there, hands it to the rerun job as its
+#: ``app`` output, read from that variable, and the rerun step's ``APP_ID`` is that output.
 _APP_OUTPUT = "${{ vars.CONTROLLER_APP_ID }}"
 _HANDED_APP = "${{ needs.post.outputs.app }}"
-_RERUN_ENV_HANDED = {**_RERUN_ENV_, "APP_ID": _HANDED_APP}
+_APP_ENVIRONMENT = "ci-controller"
+#: The rerun step's whole environment: the job's own token, post's run, and the App whose note
+#: it reads, as post hands it.
+_RERUN_ENV_HANDED = {
+    "GH_TOKEN": "${{ github.token }}",
+    "RERUN": "${{ needs.post.outputs.rerun }}",
+    "APP_ID": _HANDED_APP,
+}
 _RERUN_ENDED = '--rerun-ended "$RERUN"'
 #: The closed lists of lines each step that holds a write runs (CORE F3), as test_ci_contract holds
 #: ``results``' (``_TIER_LINES``): each line stripped, blank and comment lines aside, in order.
@@ -343,8 +344,7 @@ _DISPATCH_ = {
     "env": {"GH_TOKEN": _OWN_TOKEN, "BRANCH": "${{ steps.tree.outputs.branch }}"},
     "run": _DISPATCH_SCRIPT,
 }
-_RERUNS_ = {"env": _RERUN_ENV_, "run": _RERUN_SCRIPT}
-_RERUNS_HANDED_ = {"env": _RERUN_ENV_HANDED, "run": _RERUN_SCRIPT}
+_RERUNS_ = {"env": _RERUN_ENV_HANDED, "run": _RERUN_SCRIPT}
 _FALLBACK_DECIDE_ = {
     "id": "decide",
     "env": {"GH_TOKEN": _OWN_TOKEN, "RERUN": _NAMED_RERUN, "APP_ID": _APP_ID},
@@ -378,9 +378,6 @@ _JOBS = {
         (*_OPENING, ("decision", _FALLBACK_DECIDE_), *_POSTING_STEPS),
     ),
 }
-#: The rerun job as its step reads the App's id handed by post: the same job, its step's fixture
-#: the handed one.
-_HANDED_RERUN_JOB = (_JOBS["rerun"][0], (*_OPENING, ("rerun step", _RERUNS_HANDED_)))
 _WORKFLOW_KEYS = {"name", "on", "concurrency", "permissions", "jobs"}
 #: The runner every job of the poster and contract.yml's wake runs on: GitHub-hosted, as the file
 #: names it (CORE N1 on #6312). A self-hosted runner's own hooks run beside each step, the token
@@ -511,6 +508,29 @@ def _posting_problems(where: str, steps: list[dict]) -> list[str]:
     return found
 
 
+#: ci-controller's variable as the workflows spell it, ``vars.CONTROLLER_APP_ID``, and only that
+#: spelling: ``vars['CONTROLLER_APP_ID']`` or ``toJSON(vars)`` is not read here. A job that
+#: misses this rule only reads the id as empty, which the rerun command refuses with its own
+#: annotation.
+_READS_APP = re.compile(r"\bvars\.CONTROLLER_APP_ID\b")
+
+
+def _app_reader_problems(name: str, job: dict) -> list[str]:
+    """A job that reads the App's id where it is not set: the variable lives in ci-controller's
+    environment alone, so a job that deploys elsewhere, or nowhere, reads it as empty."""
+    if not _READS_APP.search(json.dumps(job)):
+        return []
+    environment = job.get("environment")
+    if isinstance(environment, dict):
+        environment = environment.get("name")
+    if environment == _APP_ENVIRONMENT:
+        return []
+    return [
+        f"the {name} job reads vars.CONTROLLER_APP_ID, which only {_APP_ENVIRONMENT} sets, and"
+        f" deploys to {environment!r}"
+    ]
+
+
 def _rerun_problems(job: dict, post: dict) -> list[str]:
     found: list[str] = []
     if job.get("needs") != "post" or job.get("if") != _RERUN_IF:
@@ -538,16 +558,13 @@ def _rerun_problems(job: dict, post: dict) -> list[str]:
         or _RERUN_RUN not in str(runs[0].get("run"))
         or _script_lines(runs[0]) != _RERUN_SCRIPT
         or set(runs[0]) != {"name", "env", "run"}
-        or runs[0].get("env") not in (_RERUN_ENV_, _RERUN_ENV_HANDED)
+        or runs[0].get("env") != _RERUN_ENV_HANDED
     ):
         found.append(
             "the rerun job runs other than the controller's rerun alone, of the run post names,"
             " on the job's own token"
         )
-    elif (
-        runs[0].get("env") == _RERUN_ENV_HANDED
-        and (post.get("outputs") or {}).get("app") != _APP_OUTPUT
-    ):
+    if (post.get("outputs") or {}).get("app") != _APP_OUTPUT:
         found.append(
             "the rerun job reads an App id post does not hand it (post's `app` output must be"
             f" {_APP_OUTPUT})"
@@ -665,11 +682,8 @@ def _problems(text: str) -> list[str]:
     if set(jobs) not in ({"post", "contract"}, {"post", "contract", *_RERUN_JOBS}):
         return [*found, f"has jobs {sorted(jobs)}"]
     for name, each in jobs.items():
-        found += _step_problems(name, each)
-        spec = _JOBS[name]
-        if name == "rerun" and _HANDED_APP in json.dumps(each):
-            spec = _HANDED_RERUN_JOB
-        found += _closed_job_problems(f"the {name} job", each, *spec)
+        found += _step_problems(name, each) + _app_reader_problems(name, each)
+        found += _closed_job_problems(f"the {name} job", each, *_JOBS[name])
     # The beside shape's triggers carry the queue shape's condition (0.4.0 A1): main's merge queue
     # is judged through this poster, so a condition that takes no queue commit's run is not this
     # file's, and neither is the after shape's.
@@ -1814,7 +1828,7 @@ _RERUN_JOB = (
     + _RERUN_STEP
     + "        env:\n          GH_TOKEN: ${{ github.token }}\n"
     "          RERUN: ${{ needs.post.outputs.rerun }}\n"
-    "          APP_ID: ${{ vars.CONTROLLER_APP_ID }}\n"
+    f"          APP_ID: {_HANDED_APP}\n"
     "        run: |\n          set -euo pipefail\n"
     '          python3 -m tools.ci merge-controller rerun --repo "$GITHUB_REPOSITORY" \\\n'
     '            --run-id "$RERUN" --controller-app-id "$APP_ID"\n'
@@ -1846,7 +1860,9 @@ def _rerun_poster() -> str:
         return text
     named = "      cleanup: ${{ steps.decide.outputs.cleanup }}\n"
     assert text.count(named) == 1, "the post job's outputs moved"
-    text = text.replace(named, f"{named}      rerun: {_RERUN_OUTPUT}\n", 1)
+    text = text.replace(
+        named, f"{named}      rerun: {_RERUN_OUTPUT}\n      app: {_APP_OUTPUT}\n", 1
+    )
     return text.rstrip("\n") + "\n" + _RERUN_JOB
 
 
@@ -2101,30 +2117,15 @@ def test_a_planted_edit_of_the_in_place_rerun_fails(old: str, new: str, says: st
     assert any(says in p for p in found), found
 
 
-#: The rerun step's App id, read where the job deploys nowhere, and as post hands it.
-_RERUN_READS_APP = (
-    "          RERUN: ${{ needs.post.outputs.rerun }}\n"
-    f"          APP_ID: {_APP_OUTPUT}\n"
-    "        run: |\n          set -euo pipefail\n"
-    "          python3 -m tools.ci merge-controller rerun "
-)
+#: Post's ``app`` output and the rerun step's ``APP_ID``, as the tree spells them.
 _POST_HANDS_APP = f"      app: {_APP_OUTPUT}\n"
+_RERUN_TAKES_APP = f"          APP_ID: {_HANDED_APP}\n"
 
 
-def _handed_poster() -> str:
-    """The poster with its rerun job handed the App's id by post: post's ``app`` output, read in
-    ci-controller's environment, and the rerun step's ``APP_ID`` that output."""
+def test_the_rerun_is_handed_its_app_id_by_post() -> None:
     text = _rerun_poster()
-    if _HANDED_APP in text:
-        return text
-    named = f"      rerun: {_RERUN_OUTPUT}\n"
-    assert text.count(named) == 1 and text.count(_RERUN_READS_APP) == 1, "the rerun moved"
-    text = text.replace(named, named + _POST_HANDS_APP, 1)
-    return text.replace(_RERUN_READS_APP, _RERUN_READS_APP.replace(_APP_OUTPUT, _HANDED_APP), 1)
-
-
-def test_the_rerun_handed_its_app_id_by_post_keeps_its_trust_shape() -> None:
-    assert _problems(_handed_poster()) == []
+    assert text.count(_POST_HANDS_APP) == 1 and text.count(_RERUN_TAKES_APP) == 1
+    assert _problems(text) == []
 
 
 @pytest.mark.parametrize(
@@ -2139,19 +2140,50 @@ def test_the_rerun_handed_its_app_id_by_post_keeps_its_trust_shape() -> None:
             "reads an App id post does not hand it",
             id="post hands another variable",
         ),
+        # The id post hands is an identifier, never a key or a token.
         pytest.param(
-            f"          APP_ID: {_HANDED_APP}\n",
+            _POST_HANDS_APP,
+            "      app: ${{ secrets.CONTROLLER_APP_KEY }}\n",
+            "reads an App id post does not hand it",
+            id="post hands the App's key",
+        ),
+        pytest.param(
+            _POST_HANDS_APP,
+            f"      app: {_APP_TOKEN}\n",
+            "reads an App id post does not hand it",
+            id="post hands the App's token",
+        ),
+        pytest.param(
+            _RERUN_TAKES_APP,
             "          APP_ID: ${{ needs.post.outputs.dispatch }}\n",
             "the rerun job runs other than the controller's rerun alone",
             id="the rerun reads another output",
         ),
+        # The shape that never reran: the rerun job reading ci-controller's variable itself.
+        pytest.param(
+            _RERUN_TAKES_APP,
+            f"          APP_ID: {_APP_OUTPUT}\n",
+            "the rerun job reads vars.CONTROLLER_APP_ID, which only ci-controller sets",
+            id="the rerun reads the variable itself",
+        ),
     ],
 )
 def test_a_planted_edit_of_the_handed_app_id_fails(old: str, new: str, says: str) -> None:
-    text = _handed_poster()
+    text = _rerun_poster()
     assert text.count(old) == 1, f"the plant's anchor is not one: {old!r}"
     found = _problems(text.replace(old, new, 1))
     assert any(says in p for p in found), found
+
+
+def test_every_job_that_reads_the_app_id_deploys_where_it_is_set() -> None:
+    """In every workflow, not the poster's alone: a job that reads ci-controller's variable from
+    another environment, or from none, reads it as empty."""
+    found = []
+    for path in sorted((REPO / ".github" / "workflows").glob("*.y*ml")):
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for name, job in (data.get("jobs") or {}).items():
+            found += [f"{path.name}: {each}" for each in _app_reader_problems(name, job)]
+    assert found == []
 
 
 def test_the_beside_shape_keeps_its_trust_shape() -> None:

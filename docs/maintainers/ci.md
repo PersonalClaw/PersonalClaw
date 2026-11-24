@@ -496,7 +496,10 @@ verdict says all it must fix:
   until attempt 2 completes or the deadline, at most 95 minutes, and dispatches the poster on
   `main` for the queue commit. It runs no action but `main`'s checkout and nothing of the
   candidate's, and it holds one Linux runner while the jobs rerun, which counts against the
-  account's concurrent jobs. Attempt 2 is judged by `main`'s verdict in its `results`: still red,
+  account's concurrent jobs. It deploys nowhere, so `post` hands it the App's id as its `app`
+  output: `CONTROLLER_APP_ID` is a variable of the `ci-controller` environment alone, and a job
+  outside that environment reads it as empty (the rail holds every workflow's jobs to that).
+  Attempt 2 is judged by `main`'s verdict in its `results`: still red,
   since a rerun never turns a red green there, but when every reason is a key red only on an
   earlier attempt and attempt 2's own listing shows every other job green or skipped, its one
   notice "red only on an earlier attempt" names those keys as a JSON list. The poster excuses

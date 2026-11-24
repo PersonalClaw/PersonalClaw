@@ -150,6 +150,9 @@ jobs:
       base: ${{ steps.decide.outputs.base }}
       cleanup: ${{ steps.decide.outputs.cleanup }}
       rerun: ${{ steps.decide.outputs.rerun }}
+      # The controller App's id, for the rerun job: it is a variable of ci-controller alone, and
+      # the rerun job deploys nowhere, so it reads the variable as empty.
+      app: ${{ vars.CONTROLLER_APP_ID }}
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -296,7 +299,8 @@ jobs:
   # workflow_run when it completes. The controller reads the run again first (it must still be
   # the queue commit's attempt 1, red, its failed jobs the note's) and waits no longer than the
   # note's deadline. The job's token holds actions: write for this alone: no action but main's
-  # checkout, no secret, nothing of the candidate's checked out, fetched or run. One Linux
+  # checkout, no secret, nothing of the candidate's checked out, fetched or run. It deploys
+  # nowhere, so the App's id, a variable of ci-controller alone, comes from post. One Linux
   # runner, held while the jobs rerun: it counts in the account's concurrent jobs.
   rerun:
     needs: post
@@ -339,7 +343,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RERUN: ${{ needs.post.outputs.rerun }}
-          APP_ID: ${{ vars.CONTROLLER_APP_ID }}
+          APP_ID: ${{ needs.post.outputs.app }}
         run: |
           set -euo pipefail
           python3 -m tools.ci merge-controller rerun --repo "$GITHUB_REPOSITORY" \

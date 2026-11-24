@@ -4070,7 +4070,9 @@ def main(
         help="rerun a queue commit's failed jobs in place, wait for them, then wake the poster",
     )
     six.add_argument("--run-id", required=True, type=int)
-    six.add_argument("--controller-app-id", required=True, type=int)
+    # Read as text and checked below: an empty id (the variable read outside its environment)
+    # is a refusal with its annotation, which argparse's usage error never writes.
+    six.add_argument("--controller-app-id", required=True)
     for each in (one, two, three, four, five, six):
         each.add_argument("--repo", required=True)
     args = parser.parse_args(argv)
@@ -4080,8 +4082,15 @@ def main(
     reader = content_addressed(get or merge_verdict.github_get(API, token))
     writer = api or github_api(token)
     if args.command == "rerun":
+        app = str(args.controller_app_id)
+        if not (app.isascii() and app.isdigit()):
+            print(
+                f"::error title=no rerun in place::the controller App's id is {app!r}, not a"
+                " number: the job reads it where it is not set"
+            )
+            return 3
         try:
-            why = rerun_in_place(reader, writer, args.repo, args.run_id, args.controller_app_id)
+            why = rerun_in_place(reader, writer, args.repo, args.run_id, int(app))
         except (Unread, trust.Refused) as exc:
             why = _unread(exc)
         if why:

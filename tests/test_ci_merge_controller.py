@@ -6265,6 +6265,27 @@ def test_the_rerun_command_exits_red_when_it_sends_no_wake(
     assert writer.calls == []
 
 
+@pytest.mark.parametrize(
+    "app",
+    ["", "Iv23liClientId", "-1", "\u00b2"],
+    ids=["post hands none", "not a number", "signed", "a digit outside ASCII"],
+)
+def test_the_rerun_command_refuses_an_app_id_that_is_no_number_with_its_annotation(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], app: str
+) -> None:
+    """The rerun job once read ci-controller's variable from outside that environment, as empty:
+    argparse's usage error exited 2 and wrote no annotation. With post's ``app`` output gone the
+    id is empty again: the refusal is the command's own, loud, before it reads or writes
+    anything, and the job's red runs the fallback, whose red says its rerun ended."""
+    api, writer, _ = _poller(monkeypatch)
+    read = len(api.calls)
+    argv = ["rerun", "--repo", REPO, "--run-id", str(RUN), "--controller-app-id", app]
+    assert mc.main(argv, get=api, api=writer) == 3
+    assert writer.calls == [] and len(api.calls) == read
+    out = capsys.readouterr().out
+    assert "::error title=no rerun in place::the controller App's id is " in out
+
+
 def test_a_queue_commit_s_note_it_cannot_read_leaves_its_red_as_it_is() -> None:
     api, queue = _queue_red_run()
     del api.answers[f"/repos/{REPO}/git/commits/{HEAD}"]
