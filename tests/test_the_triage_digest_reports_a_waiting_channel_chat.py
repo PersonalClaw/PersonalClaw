@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -28,6 +29,7 @@ from personalclaw import channel_inbound as ci
 from personalclaw import channel_trust as ct
 from personalclaw.channel_transports.base import ChannelMessage
 from personalclaw.config.loader import AppConfig
+from personalclaw.dashboard import chat_names
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
 from personalclaw.proactive.collect import collect_all, collect_channels, current_item
@@ -107,15 +109,25 @@ async def test_a_channel_chat_whose_message_waits_is_reported(tmp_path):
     assert item.detail.endswith(", for under an hour"), item.detail
 
 
+#: The second a merge-queue run opened its chat in (`chat-1-1795512322`), whose digits hold "123".
+QUEUE_RUN_SECOND = 1795512322.0
+
+
 @pytest.mark.asyncio
-async def test_no_channel_item_carries_what_the_message_says(tmp_path):
+@pytest.mark.parametrize("second", [None, QUEUE_RUN_SECOND], ids=["now", "a second holding 123"])
+async def test_no_channel_item_carries_what_the_message_says(tmp_path, monkeypatch, second):
     """🔴 Before: an item's `detail` was the waiting message's text. Now no word of it reaches the
-    digest, whose run's record other chats' agents can read."""
+    digest, whose run's record other chats' agents can read. Whatever second the chat opened in:
+    🔴 the check read the chat's own name too, and failed in every second whose digits hold 123."""
+    if second is not None:
+        monkeypatch.setattr(chat_names, "time", SimpleNamespace(time=lambda: second))
     gateway = _Gateway(tmp_path)
     await gateway.message(SECRET, answered=False)
     await gateway.message("and the CVV is 123", answered=False)
     (item,) = _items(gateway)
-    said = f"{item.title} {item.detail}".lower()
+    # The chat's own name is the door's, not her words: an untitled chat is named by the second it
+    # opened (`chat-1-1795512322`), whose digits hold "123" about one second in 125.
+    said = f"{item.title.removesuffix(item.source_id)} {item.detail}".lower()
     for word in ("card", "4111", "book", "cvv", "123"):
         assert word not in said, (word, item)
     assert item.detail.startswith("2 messages waiting on "), item.detail
