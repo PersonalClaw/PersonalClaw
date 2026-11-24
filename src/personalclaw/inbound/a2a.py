@@ -33,9 +33,10 @@ minting an A2A id and remembering the pairing — puts the mapping in a process-
 cache that a restart drops, so ``GET /a2a/tasks/<id>`` would 404 on a run that plainly
 exists. The A2A spec has the *server* assign ``Task.id``, so nothing is owed to the
 client here. A client's ``messageId`` (or an explicit ``idempotencyKey``) becomes
-``start_run``'s caller key instead, held to the client that sent it: a retried send returns
-the same task rather than starting a second run, and another client's send with the same
-key starts a task of its own.
+``start_run``'s caller key instead, held to the client that sent it and kept with the run
+(``durable_key``): a retried send returns the same task rather than starting a second run, for
+as long as the run is kept, after a restart too, and another client's send with the same key
+starts a task of its own.
 
 **Headless is inherited, not configured.** The run's session key is
 ``inbound:a2a:<client>``, and ``session_keys.INBOUND`` already classifies
@@ -776,9 +777,10 @@ def _started_by(run_id: str, client_id: str) -> bool:
 
 
 async def _start_task(
-    body: dict[str, Any], *, client_id: str
+    request: web.Request, body: dict[str, Any], *, client_id: str
 ) -> tuple[dict[str, Any] | None, web.Response | None]:
-    """Start one run for an A2A task. ``(started_status, refusal)``."""
+    """Start one run for an A2A task, on the gateway's workflow supervisor.
+    ``(started_status, refusal)``."""
     from personalclaw.workflows.models import OriginKind
     from personalclaw.workflows.service import start_run
 
@@ -812,7 +814,17 @@ async def _start_task(
         origin_kind=OriginKind.API,
         session_key=session_key_for(client_id),
         idempotency_key=_caller_key_of(body, client_id=client_id),
+        durable_key=True,
+        supervisor=getattr(request.app.get("state"), "workflows", None),
     )
+    if started.get("code") == "WF_IDEMPOTENCY_KEY_REUSED":
+        # The key started another request's task: neither that task nor a second one answers it.
+        return None, json_error(
+            "idempotency_key_reused",
+            message=str(started.get("message") or "this key already started another request"),
+            status=409,
+            headers=_NO_STORE,
+        )
     if not started.get("ok"):
         # `workflows.service._service_failure` returns a FLAT envelope — `{"ok": False,
         # "code": ..., "message": ...}` — not a nested `{"error": {...}}`. Reading
@@ -867,7 +879,7 @@ async def handle_tasks(request: web.Request) -> web.StreamResponse:
             client_id=client_id,
         )
 
-    started, start_refusal = await _start_task(body, client_id=client_id)
+    started, start_refusal = await _start_task(request, body, client_id=client_id)
     if start_refusal is not None:
         return _refuse(
             start_refusal,

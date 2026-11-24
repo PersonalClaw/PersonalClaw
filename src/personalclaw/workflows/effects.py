@@ -368,8 +368,9 @@ class CallerDedupe:
     A chat tool call that times out client-side gets retried with the SAME caller key;
     without this cache the retry mints a second run doing the same work. Deliberately
     in-memory and short-TTL: the window it protects is the seconds-scale tool-retry
-    window, not cross-restart history — the run store already answers "does this run
-    exist" durably.
+    window. A caller whose retries cross a restart or outlast it (the A2A door) asks
+    ``start_run`` to keep its key with the run (``durable_key``), and a miss here is
+    then answered from the run store (``store.run_for_caller_key``).
     """
 
     ttl_secs: float = 900.0
@@ -381,6 +382,10 @@ class CallerDedupe:
             return
         self._sweep()
         self._entries[caller_key] = (run_id, float(self.clock()))
+
+    def forget(self, caller_key: str) -> None:
+        """Let *caller_key* go: the run it names never launched, so a retry starts anew."""
+        self._entries.pop(caller_key, None)
 
     def lookup(self, caller_key: str) -> str | None:
         if not caller_key:

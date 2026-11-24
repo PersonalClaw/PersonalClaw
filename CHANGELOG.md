@@ -102,6 +102,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Deleting a chat asks whether the workflow runs it started stop with it: the dialog says how many are still going and offers to stop them too. Left unticked, they keep running, as they did before.**
 - **Judge guidance you save on a project's run page now reaches that project's runs. Every stage's task and every judge's rubric opens with it, read as each step starts, as the panel always said. An agent can no longer write a project's instructions.**
 - **A run's temporary folder no longer stays on disk for good.**
+- **Accepting a workflow proposal in the Inbox starts its run. Every accept used to make a run that never started, and the row said only `WF_NO_SUPERVISOR`; a start the service refuses now says why in its own words.**
+- **An A2A task starts its run. Every `POST /a2a/tasks` used to make a run that never started and answer that the workflow supervisor was unavailable.**
+- **An A2A client's retry of a task returns the same task after a restart and however long after the first send, and the same key sent with another request is refused with 409 `idempotency_key_reused`. A retry the gateway had restarted since, or sent 15 minutes on, used to start a second run of the template, and two sends at once under one key started two.**
 
 ### Security
 
