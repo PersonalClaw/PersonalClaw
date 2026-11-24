@@ -14,8 +14,10 @@ and any start under an operator ceiling that says a person answers every approva
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import time
+import weakref
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -71,13 +73,18 @@ class _Owner:
 
 class _Work:
     """What a started agent does: the first process's never finishes (the restart cuts it off),
-    and every later one answers at once."""
+    and every later one answers at once.
+
+    Each first process is held as itself, never by its ``id()``. A test that restarts twice freed
+    the first restart's first process, and CPython can hand a freed object's id to the next one
+    made: a second process that drew it was taken for a first one, its agent hung, and the run
+    timed out after 20 s, under one random test order of the many that pass."""
 
     def __init__(self) -> None:
-        self.hanging: set[int] = set()
+        self.hanging: list[SubagentManager] = []
 
     async def __call__(self, manager: SubagentManager, info: Any) -> None:
-        if id(manager) in self.hanging:
+        if any(first is manager for first in self.hanging):
             await asyncio.Event().wait()
         info.result = "The draft holds up."
         info.done = True
@@ -120,7 +127,7 @@ async def _restart(run: WorkflowRun, owner: _Owner, work: _Work, *, spec=None) -
     works. A second process — a fresh manager that knows no agent, a controller built from the
     store — resumes the run and drives it to its end."""
     first = _manager(owner)
-    work.hanging.add(id(first))
+    work.hanging.append(first)
     a = RunController(run, _spec(), services=EngineServices(subagents=first))
     await a.start()
     await _until(lambda: owner.asked and _stage(run.id).state == InstanceState.RUNNING)
@@ -176,6 +183,20 @@ async def test_only_the_request_she_allowed_resumes_on_her_answer(work):
     status = await _restart(run, changed, work, spec=_spec("Judge the draft and rewrite it."))
     assert status is RunStatus.COMPLETE, store.get(run.id).error_message
     assert len(changed.asked) == 2, changed.asked
+
+
+def test_a_first_process_is_held_by_itself_so_no_later_one_is_taken_for_it():
+    """The plant for `_Work`: a first process kept by its id alone is freed, and its id can be
+    drawn by the next manager made. Held as itself, it lives as long as the test does."""
+    work = _Work()
+    first = _manager(_Owner())
+    work.hanging.append(first)
+    kept = weakref.ref(first)
+    del first
+    gc.collect()
+    assert kept() is not None, "a first process was freed: its id can go to a second process"
+    later = _manager(_Owner())
+    assert not any(m is later for m in work.hanging)
 
 
 # ── the grant, at the spawn gate ─────────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from collections.abc import Awaitable, Callable
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
@@ -88,21 +89,125 @@ def test_a_full_worker_pool_shows_as_wait_and_a_queue() -> None:
     ), f"{pool['queued_max_1m']} queued behind a full pool of {pool['workers']}"
 
 
-def test_a_calm_gateway_reads_calm() -> None:
-    gauge = loop_gauge.LoopGauge()
+#: How late a calm loop's tick may wake, and how long a calm pool's probe may wait to start.
+CALM_MS = 100
+#: Fresh windows a calm gateway gets to read calm in.
+TRIES = 3
 
-    async def scenario() -> dict[str, object]:
+Window = Callable[[loop_gauge.LoopGauge], Awaitable[dict[str, object]]]
+
+
+def _reads_calm(report: dict[str, object]) -> bool:
+    lag, wait = report["loop_lag"], report["pool_wait"]
+    assert isinstance(lag, dict) and isinstance(wait, dict)
+    return lag["max_1m_ms"] < CALM_MS and wait["max_1m_ms"] < CALM_MS
+
+
+def _tries(window: Window) -> list[dict[str, object]]:
+    """Up to :data:`TRIES` fresh gauges, each run through *window*, stopping at the first whose
+    report reads calm.
+
+    A shared CI runner can take the whole process off the CPU once for over 100 ms: on a loaded
+    macOS runner one 20 ms tick woke 122.5 ms late, with the median at 5.8 ms. That is the machine,
+    and it spoils one window. A loop held by the gateway's own work, a pool kept full, or a gauge
+    that reads lag or wait where there is none spoils every window.
+    """
+    reports: list[dict[str, object]] = []
+    for _ in range(TRIES):
+        reports.append(asyncio.run(window(loop_gauge.LoopGauge())))
+        if _reads_calm(reports[-1]):
+            break
+    return reports
+
+
+def _worst(reports: list[dict[str, object]]) -> list[tuple[object, object]]:
+    return [
+        (r["loop_lag"]["max_1m_ms"], r["pool_wait"]["max_1m_ms"])  # type: ignore[index]
+        for r in reports
+    ]
+
+
+async def _calm(gauge: loop_gauge.LoopGauge) -> dict[str, object]:
+    gauge.start()
+    try:
+        await asyncio.sleep(0.3)
+        return gauge.report()
+    finally:
+        await gauge.stop()
+
+
+async def _loop_held_twice(gauge: loop_gauge.LoopGauge) -> dict[str, object]:
+    gauge.start()
+    try:
+        for _ in range(2):
+            await asyncio.sleep(0.05)
+            time.sleep(0.15)  # a handler's synchronous work, on the loop
+        await asyncio.sleep(0.05)
+        return gauge.report()
+    finally:
+        await gauge.stop()
+
+
+async def _pool_kept_full(gauge: loop_gauge.LoopGauge) -> dict[str, object]:
+    loop = asyncio.get_running_loop()
+    release = threading.Event()
+    gauge.start()
+    try:
+        await asyncio.sleep(0.05)
+        pool = loop_gauge._pool_of(loop)
+        workers = pool._max_workers if pool is not None else 32
+        held = [loop.run_in_executor(None, release.wait, 10) for _ in range(workers + 1)]
+        await asyncio.sleep(0.25)
+        release.set()
+        await asyncio.gather(*held)
+        await asyncio.sleep(0.1)  # the probe that waited behind the full pool starts and lands
+        return gauge.report()
+    finally:
+        release.set()
+        await gauge.stop()
+
+
+def test_a_calm_gateway_reads_calm() -> None:
+    reports = _tries(_calm)
+    last = reports[-1]
+    # Vacuity: a gauge that took no sample reads nothing late.
+    for measure in ("loop_lag", "pool_wait"):
+        assert last[measure]["last_sample_s_ago"] is not None, last  # type: ignore[index]
+    assert _reads_calm(last), f"worst (lag, wait) ms in each of {TRIES} windows: {_worst(reports)}"
+
+
+def test_one_late_sample_spoils_one_window_only() -> None:
+    """What the loaded runner did: the process taken off the CPU once, 120 ms, in the first window
+    (here a single hold on the loop). The next window reads calm."""
+    first = True
+
+    async def spiked_once(gauge: loop_gauge.LoopGauge) -> dict[str, object]:
+        nonlocal first
+        if not first:
+            return await _calm(gauge)
+        first = False
         gauge.start()
         try:
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.1)
+            time.sleep(0.12)
+            await asyncio.sleep(0.1)
             return gauge.report()
         finally:
             await gauge.stop()
 
-    report = asyncio.run(scenario())
-    lag, wait = report["loop_lag"], report["pool_wait"]
-    assert isinstance(lag, dict) and isinstance(wait, dict)
-    assert lag["max_1m_ms"] < 100 and wait["max_1m_ms"] < 100, report
+    reports = _tries(spiked_once)
+    assert not _reads_calm(reports[0]), "the spike did not show: this proves nothing"
+    assert _reads_calm(reports[-1]), _worst(reports)
+
+
+@pytest.mark.parametrize(
+    "window", [_loop_held_twice, _pool_kept_full], ids=["a held loop", "a full pool"]
+)
+def test_a_gateway_that_is_not_calm_never_reads_calm(window: Window) -> None:
+    """The plant for the rule above: what spoils every window is never let through."""
+    reports = _tries(window)
+    assert len(reports) == TRIES, f"read calm in window {len(reports)}: {_worst(reports)}"
+    assert not any(_reads_calm(r) for r in reports)
 
 
 def test_a_sample_leaves_the_minute_once_it_is_older_than_it(
