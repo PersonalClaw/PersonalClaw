@@ -4,7 +4,7 @@ The guard is ``tests/state_leak_guard.py``.
 
 Planted tests each leave one thing behind: a live thread, a changed working directory, a signal
 handler, a child process still running, a socket still listening, an entry in a fenced registry,
-or a file written outside the run's temporary folders.
+the scratch folders' sweep left running, or a file written outside the run's temporary folders.
 They run through this suite's own ``conftest`` in a fresh pytest, so what is read is what the real
 guard writes: ``reports/state-leaks.json`` in report mode, and a failure of the leaking test under
 ``--strict-state``. The tests after each leaker show the working directory and the handler given
@@ -109,6 +109,19 @@ _LEAKS = """
         from personalclaw import event_triggers
 
         assert not event_triggers.router_attached()
+
+
+    def test_leaves_the_scratch_sweep_running():
+        from personalclaw import run_bounds
+
+        run_bounds._SWEEP._sweep = lambda: None  # sweeps nothing of this machine's
+        run_bounds.start_scratch_sweep()
+
+
+    def test_finds_no_scratch_sweep_running():
+        from personalclaw import run_bounds
+
+        assert not run_bounds._SWEEP.running()
 """
 
 #: The kind each leaker's record carries, whether strict mode fails it, and whether a fence
@@ -122,6 +135,7 @@ _EXPECTED = {
     "test_registers_into_a_fenced_registry": ("fenced registry", False, True),
     "test_writes_outside_its_temporary_folders": ("file written", False, False),
     "test_leaves_an_event_router_attached": ("fenced registry", False, True),
+    "test_leaves_the_scratch_sweep_running": ("fenced registry", False, True),
 }
 
 
@@ -172,7 +186,7 @@ def test_report_mode_names_each_leaker_and_fails_none(tmp_path: Path) -> None:
     proc = _pytest(tmp_path, "-p", "no:xdist", "test_leaks.py")
     out = proc.stdout[-4000:] + proc.stderr[-2000:]
     assert proc.returncode == 0, out
-    assert "13 passed" in proc.stdout and "error" not in proc.stdout.lower(), out
+    assert "15 passed" in proc.stdout and "error" not in proc.stdout.lower(), out
     report = _report(tmp_path)
     assert report["strict"] is False
     found = _by_test(report)
@@ -187,6 +201,7 @@ def test_report_mode_names_each_leaker_and_fails_none(tmp_path: Path) -> None:
     # The fenced entry shows, though its fence restored it before the next test (which passed).
     assert "notification_kinds" in found["test_registers_into_a_fenced_registry"][0]["detail"]
     assert "event_router" in found["test_leaves_an_event_router_attached"][0]["detail"]
+    assert "scratch_sweep" in found["test_leaves_the_scratch_sweep_running"][0]["detail"]
     # The file in the run's root is named; the one in the test's own folder is not.
     [written] = found["test_writes_outside_its_temporary_folders"]
     assert "written-outside.txt" in written["detail"] and "inside.txt" not in written["detail"]
@@ -194,8 +209,8 @@ def test_report_mode_names_each_leaker_and_fails_none(tmp_path: Path) -> None:
     order = list(dict.fromkeys(name for name in _names_in(_LEAKS)))
     for name, leaks in found.items():
         assert leaks[0]["position"] == order.index(name) + 1, (name, leaks[0])
-    assert report["tests"] == 13 and report["guard_seconds"] >= 0
-    assert "state leaks: 8 recorded over 13 tests, 5 strict (5 kinds)," in proc.stdout, out
+    assert report["tests"] == 15 and report["guard_seconds"] >= 0
+    assert "state leaks: 9 recorded over 15 tests, 5 strict (5 kinds)," in proc.stdout, out
 
 
 def _names_in(source: str) -> list[str]:
@@ -224,7 +239,7 @@ def test_strict_mode_fails_each_unfenced_leaker_but_an_allowlisted_one(tmp_path:
     )
     out = proc.stdout[-6000:] + proc.stderr[-2000:]
     assert proc.returncode == 1, out
-    assert "13 passed" in proc.stdout and "4 errors" in proc.stdout, out
+    assert "15 passed" in proc.stdout and "4 errors" in proc.stdout, out
     for name in (
         "test_leaves_a_thread",
         "test_changes_directory",
@@ -236,6 +251,7 @@ def test_strict_mode_fails_each_unfenced_leaker_but_an_allowlisted_one(tmp_path:
         "test_installs_a_signal_handler",
         "test_registers_into_a_fenced_registry",
         "test_leaves_an_event_router_attached",
+        "test_leaves_the_scratch_sweep_running",
         "test_writes_outside_its_temporary_folders",
         "test_clean",
     ):
@@ -245,7 +261,7 @@ def test_strict_mode_fails_each_unfenced_leaker_but_an_allowlisted_one(tmp_path:
     [allowed] = _by_test(report)["test_installs_a_signal_handler"]
     assert allowed["allowlisted"] == 4242
     # The allowlisted handler is not counted: the line counts what strict mode fails.
-    assert "state leaks: 8 recorded over 13 tests, 4 strict (4 kinds)," in proc.stdout, out
+    assert "state leaks: 9 recorded over 15 tests, 4 strict (4 kinds)," in proc.stdout, out
 
 
 def test_the_summary_line_counts_what_strict_mode_fails_and_its_kinds() -> None:

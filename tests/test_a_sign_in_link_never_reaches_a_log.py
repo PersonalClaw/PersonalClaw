@@ -31,7 +31,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from personalclaw import cli_server, gateway
+from personalclaw import cli_server, gateway, run_bounds
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard import session_store
 from personalclaw.gateway import GatewayOrchestrator
@@ -60,9 +60,10 @@ def _start_gateway(
     """Run one gateway start up to its dashboard banner (what it prints, the test captures).
 
     Only what reaches outside the test is faked: the services' boot steps, the update check,
-    the MCP probe and the browser, and whether a person started it at a terminal (a service
-    manager's start, unless *started_at_a_terminal*), so the terminal this test runs in decides
-    nothing. The banner, the link and the session store are real.
+    the MCP probe, the sweep of this machine's idle scratch folders and the browser, and whether a
+    person started it at a terminal (a service manager's start, unless *started_at_a_terminal*),
+    so the terminal this test runs in decides nothing. The banner, the link and the session store
+    are real.
     """
     cfg = AppConfig()
     with patch.object(cfg, "load_credentials", return_value={}):
@@ -111,6 +112,7 @@ def _start_gateway(
             patch("personalclaw.gateway._is_wsl", return_value=False),
             patch("webbrowser.open", _browser),
             patch("personalclaw.session.cleanup_orphaned_sessions"),
+            patch("personalclaw.run_bounds.start_scratch_sweep"),
             patch("personalclaw.dashboard.handlers._bg_mcp_probe", new_callable=AsyncMock),
             patch("os._exit"),
             patch("resource.getrlimit", return_value=(256, 10240)),
@@ -121,6 +123,9 @@ def _start_gateway(
                 await asyncio.sleep(0)
 
     asyncio.run(_drive())
+    # The boot's sweep of idle scratch folders reaches this machine's temporary folder, and its
+    # faked shutdown would leave it running for the tests after this one: it is faked too.
+    assert not run_bounds._SWEEP.running(), "the boot left the scratch folders' sweep running"
 
 
 def _startup_links() -> dict[str, session_store.SessionRecord]:

@@ -169,9 +169,29 @@ def test_a_runtime_whose_folder_was_swept_is_handed_it_again(tmp):
     assert os.path.isdir(folder)
 
 
+def test_a_tests_runs_never_reach_this_machines_scratch_parent():
+    """The real ``<tmp>/personalclaw-scratch-<uid>`` is the owner's own gateway's: a test that
+    leaves ``tempfile`` alone is handed a folder under a parent of its own
+    (``conftest._a_scratch_parent_of_its_own``), so its sweeps and removals reach none of hers.
+    🔴 Red before: the folder was made in the machine's own parent."""
+    real = os.path.realpath(
+        os.path.join(tempfile.gettempdir(), f"personalclaw-scratch-{os.getuid()}")
+    )
+
+    folder = run_bounds.scratch_dir("cron:nightly:run-1")
+
+    assert folder and os.path.isdir(folder)
+    assert not folder.startswith(real + os.sep), folder
+
+
 def test_the_gateways_sweep_runs_as_it_starts_and_stops(tmp):
     stale = _filled(run_bounds.scratch_dir("cron:nightly:run-1"))
     _aged(stale, 3)
+    # A sweeper an earlier test left running would be returned asleep, and run no first pass
+    # (``conftest._stop_a_scratch_sweep_a_test_left``).
+    assert (
+        not run_bounds._SWEEP.running()
+    ), "an earlier test left the scratch folders' sweep running"
 
     run_bounds.start_scratch_sweep()
     try:

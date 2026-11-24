@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import hashlib
 import importlib
 import inspect
 import itertools
@@ -1823,6 +1824,56 @@ def _reset_app_restart_reasons_and_kept_skills() -> object:
     app_runtime._kept.clear()
 
 
+#: This process's temporary folder as the run began, before any test pointed ``tempfile`` at one
+#: of its own.
+_STARTING_TEMP = os.path.realpath(tempfile.gettempdir())
+
+
+@pytest.fixture(autouse=True)
+def _a_scratch_parent_of_its_own(request, tmp_path_factory, monkeypatch) -> None:
+    """Every test's runs get a scratch parent of their own, never this machine's
+    ``<tmp>/personalclaw-scratch-<uid>`` (``run_bounds._scratch_parent``).
+
+    That parent is per user, not per home, and a sweep removes every folder in it that no runtime
+    of its own process holds and that has been idle for two days. So a test that made, swept or
+    removed folders there reached the owner's own gateway's: a run of hers paused for days lost
+    its temporary files to a test's sweep, and a test's run with the same session key as hers
+    shared her folder. A test that points ``tempfile`` at a folder of its own keeps its parent
+    there, as the scratch tests do; every other test's is under the run's own temporary root.
+    """
+    from personalclaw import run_bounds
+
+    resolved = run_bounds._scratch_parent
+    digest = hashlib.sha256(request.node.nodeid.encode("utf-8")).hexdigest()[:12]
+    own = tmp_path_factory.getbasetemp() / "scratch-parents" / digest
+
+    def parent() -> Path:
+        if os.path.realpath(tempfile.gettempdir()) != _STARTING_TEMP:
+            return resolved()
+        own.mkdir(parents=True, exist_ok=True)
+        return own / f"personalclaw-scratch-{os.getuid()}"
+
+    monkeypatch.setattr(run_bounds, "_scratch_parent", parent)
+
+
+@pytest.fixture(autouse=True)
+def _stop_a_scratch_sweep_a_test_left() -> object:
+    """Stop the sweep of idle scratch folders a test left running (``run_bounds._SWEEP``).
+
+    The gateway starts it as it runs and stops it as it shuts down, and a start is idempotent: a
+    sweeper already running is returned as it is, asleep for its six-hour interval. A test that ran
+    the gateway with its shutdown faked left it running for the rest of its worker, so a later
+    test's start found it and no first pass ran (breadth's random-order leg, seed 681, run
+    45412989839: a stale folder still there 10 s after the start). The guard names such a test:
+    ``scratch_sweep`` in ``state_leak_guard.fenced_state``. Read through ``sys.modules``, so a test
+    that never loaded ``run_bounds`` does not load it here.
+    """
+    yield
+    bounds = sys.modules.get("personalclaw.run_bounds")
+    if bounds is not None and bounds._SWEEP.running():
+        bounds.stop_scratch_sweep()
+
+
 @pytest.fixture(autouse=True)
 def _restore_event_router() -> object:
     """Put the event bus's router back as the test found it.
@@ -2135,6 +2186,7 @@ def _a_test_leaves_process_state_as_it_found_it(
     _restore_local_model_registry,
     _restore_notification_kinds,
     _restore_event_router,
+    _stop_a_scratch_sweep_a_test_left,
 ):
     """Name the test that leaves a fenced registry changed, read before its fence restores it.
 

@@ -1384,6 +1384,15 @@ class TestAutoApplyUpdateGitPath:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _assert_no_scratch_sweep_left() -> None:
+    """A boot of ``run()`` whose shutdown is faked fakes the sweep of idle scratch folders too: it
+    reaches this machine's temporary folder, and the faked shutdown would leave it running for the
+    tests after this one (``run_bounds._SWEEP``)."""
+    from personalclaw import run_bounds
+
+    assert not run_bounds._SWEEP.running(), "the boot left the scratch folders' sweep running"
+
+
 class TestRunMethod:
     """Gateway run method."""
 
@@ -1409,7 +1418,10 @@ class TestRunMethod:
         # Set shutdown immediately
         personalclaw.shutdown_event.set()
         try:
-            with patch("personalclaw.session.cleanup_orphaned_sessions"):
+            with (
+                patch("personalclaw.session.cleanup_orphaned_sessions"),
+                patch("personalclaw.run_bounds.start_scratch_sweep"),
+            ):
                 with patch("personalclaw.dashboard.handlers._bg_mcp_probe", new_callable=AsyncMock):
                     with patch("os._exit"):
                         with patch("resource.getrlimit", return_value=(256, 10240)):
@@ -1417,6 +1429,7 @@ class TestRunMethod:
                                 await orch.run()
         finally:
             personalclaw.shutdown_event.clear()
+        _assert_no_scratch_sweep_left()
 
         orch._init_services.assert_called_once()
         orch._init_cron.assert_awaited_once()
@@ -1442,7 +1455,10 @@ class TestRunMethod:
 
         personalclaw.shutdown_event.set()
         try:
-            with patch("personalclaw.session.cleanup_orphaned_sessions"):
+            with (
+                patch("personalclaw.session.cleanup_orphaned_sessions"),
+                patch("personalclaw.run_bounds.start_scratch_sweep"),
+            ):
                 with patch("personalclaw.dashboard.handlers._bg_mcp_probe", new_callable=AsyncMock):
                     with patch("os._exit"):
                         with patch("resource.getrlimit", return_value=(256, 10240)):
@@ -1450,6 +1466,7 @@ class TestRunMethod:
                                 await orch.run()
         finally:
             personalclaw.shutdown_event.clear()
+        _assert_no_scratch_sweep_left()
 
         orch._init_dashboard.assert_awaited_once()
 
@@ -2852,7 +2869,10 @@ class TestSessionPoolDashboardBranch:
                                 "personalclaw.gateway.format_dashboard_urls",
                                 return_value=["url-line-1", "url-line-2"],
                             ):
-                                with patch("personalclaw.session.cleanup_orphaned_sessions"):
+                                with (
+                                    patch("personalclaw.session.cleanup_orphaned_sessions"),
+                                    patch("personalclaw.run_bounds.start_scratch_sweep"),
+                                ):
                                     with patch(
                                         "personalclaw.dashboard.handlers._bg_mcp_probe",
                                         new_callable=AsyncMock,
@@ -2868,6 +2888,7 @@ class TestSessionPoolDashboardBranch:
                                                     await asyncio.sleep(0)
 
         orch.sessions.start_pool.assert_awaited_once_with()
+        _assert_no_scratch_sweep_left()
 
 
 class TestCheckMissingDepsPip:
