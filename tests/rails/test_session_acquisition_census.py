@@ -275,6 +275,26 @@ def test_the_census_fails_a_module_that_names_the_method_for_a_later_getattr():
     assert not _accounted(site)
 
 
+@pytest.mark.parametrize(
+    ("planted", "owner"),
+    [
+        ("class Chores:\n    take = sessions.get_or_create\n", "<module>"),
+        (
+            "def make_chores(sessions):\n"
+            "    class Chores:\n"
+            "        take = sessions.get_or_create\n"
+            "    return Chores\n",
+            "make_chores",
+        ),
+    ],
+    ids=["at-import", "inside-a-function"],
+)
+def test_a_class_bodys_acquisition_is_the_code_around_the_classs(planted, owner):
+    """A class body runs where the class is defined: at import its module's, inside a function
+    that function's, never a function of its own."""
+    assert acquisitions(planted) == [owner]
+
+
 def test_a_one_turn_session_nothing_ends_is_caught():
     keeps = (
         "async def rewrite(sessions, key, prompt):\n"
