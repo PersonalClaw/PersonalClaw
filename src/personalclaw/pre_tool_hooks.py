@@ -21,11 +21,13 @@ The hooks asked are those bound to the agent the call's turn runs as, read at th
 profile of that name, or the default agent's for a turn that names none, as a chat's are.
 
 A hook that blocks the call refuses it, in its own words. A hook that fails to run refuses it too:
-the agent's bindings cannot be read, the store cannot fire its hooks, or one of them did not run to
-an exit of its own (it could not start, it timed out, its action was held or refused, its provider
-failed). A policy hook that did not run cannot say the call is safe. A hook that ran and exited with
-another code lets the call go on, as a hook's non-blocking error does. Each path says a refusal the
-same way (:class:`HooksSaid`).
+the agent's bindings cannot be read (``config.json`` too, when the loader discards it and reads the
+defaults, which bind none), a bound hook is missing from the store because ``hooks.json`` cannot be
+read, the store cannot fire its hooks, or one of them did not run to an exit of its own (it could
+not start, it timed out, its action was held or refused, its provider failed). A policy hook that
+did not run cannot say the call is safe. A hook that ran and exited with another code lets the call
+go on, as a hook's non-blocking error does. Each path says a refusal the same way
+(:class:`HooksSaid`).
 """
 
 from __future__ import annotations
@@ -96,13 +98,38 @@ class HooksSaid:
 PASSED = HooksSaid()
 
 
+class BindingsUnread(Exception):
+    """The hooks bound to an agent cannot be known, and why, in the refusal's words."""
+
+
 def bound_hook_ids(agent: str | None) -> list[str]:
     """The ids of the hooks bound to the agent a turn runs as, read now: *agent* is a profile's
     name, or empty for the default agent, which a turn that names none runs as. Raises when the
-    configuration cannot be read; the caller says what an unknown binding means."""
-    from personalclaw.config.loader import AppConfig, resolve_agent_bindings
+    configuration cannot be read, and :class:`BindingsUnread` when the loader discarded
+    ``config.json`` and read the defaults, which bind no hook (``config_discard``); the caller
+    says what an unknown binding means (:func:`_none_could_be_asked`)."""
+    from personalclaw.config.loader import AppConfig, config_discard, resolve_agent_bindings
 
-    return list(resolve_agent_bindings(AppConfig.load(), agent or None).triggers or [])
+    cfg = AppConfig.load()
+    if config_discard() is not None:
+        raise BindingsUnread(
+            "config.json could not be read, so the hooks bound to its agent are not known. Fix "
+            "config.json (Settings → Health → Doctor shows what's wrong) and its calls go on"
+        )
+    return list(resolve_agent_bindings(cfg, agent or None).triggers or [])
+
+
+def _none_could_be_asked(store: ScriptHookStore | None) -> bool:
+    """Whether no hook could be asked about a call whatever the agent's bindings say: *store*
+    (the gateway's, or the home's when ``None``) reads ``hooks.json`` and holds no enabled
+    ``PreToolUse`` hook. So an owner with no hooks keeps an agent that works while
+    ``config.json`` cannot be read. Anything else, a store that cannot say among it, is False."""
+    try:
+        held = store if store is not None else get_global_hook_store()
+        return (held if held is not None else ScriptHookStore()).asks_before_calls() is False
+    except Exception:  # noqa: BLE001 - a store that cannot say leaves the call refused
+        logger.debug("whether any pre-tool hook could be asked is not known", exc_info=True)
+        return False
 
 
 async def on_tool(
@@ -127,6 +154,11 @@ async def on_tool(
     "" for none, the workspace."""
     try:
         hook_ids = bound_hook_ids(agent)
+    except BindingsUnread as unread:
+        if _none_could_be_asked(store):
+            return PASSED
+        logger.warning("%s; refusing %s", unread, log_title(tool_name))
+        return HooksSaid(refusal=HOOK_FAILED, error=str(unread))
     except Exception:  # noqa: BLE001 - see the module docstring: an unread binding refuses
         logger.warning(
             "the pre-tool hooks bound to %r could not be read; refusing %s",
@@ -153,6 +185,8 @@ async def on_tool(
                 parent_session_key=parent_session_key,
                 agent_role=(agent or "") if subagent_id else "",
                 cwd=cwd,
+                # A bound hook missing because hooks.json cannot be read refuses (HooksFileUnread).
+                every_bound=True,
             )
         )
     except Exception as exc:  # noqa: BLE001 - a hook that cannot run refuses, as one that blocks
