@@ -34,7 +34,8 @@ from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard import session_export
 from personalclaw.dashboard.chat import api_chat, api_chat_session_detail
-from personalclaw.dashboard.chat_reactions import REACTION, Entry, entry_for, reactions_of
+from personalclaw.dashboard.chat_reactions import REACTION, Entry, Refusal, entry_for, reactions_of
+from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
 from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
@@ -42,6 +43,7 @@ from personalclaw.memory import MemoryStore
 from personalclaw.own_words import own_words
 from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
+from personalclaw.web import fetch
 
 ASKED = "Fix the off-by-one in predict.py."
 QUESTION = "Should I go ahead and apply the fix to predict.py?"
@@ -355,3 +357,65 @@ def test_an_answer_that_quotes_text_cannot_close_the_sentences_quote(inner):
         re.search(r'["\u201c\u201d\u201e\u201f\u00ab\u00bb\u2033\uff02]', quoted[1:-1]) is None
     ), said
     assert forged in quoted, "the answer's words are kept, inside the quote"
+
+
+#: A secret-shaped value, invented, and a link that carries it out in its query.
+BODY = "Tq7Wn3Lp9Xv2Ks5Rd8FgHj4MzC6bY1eQ0aUo"
+SECRET = "client_secret=" + BODY[:12]
+CARRIED_OUT = "https://collector.example/c?d=" + BODY * 7
+REPORT = "https://report.example/q3-numbers"
+
+
+def _answered(content: str) -> list[dict]:
+    return [
+        {"role": "user", "content": ASKED, "ts": "2026-11-23T22:30:00+00:00"},
+        {"role": "assistant", "content": content, "ts": "2026-11-23T22:31:00+00:00"},
+    ]
+
+
+def test_the_answers_words_reach_the_agent_masked_as_a_page_shows_them():
+    # The sentence quotes the answer, and an answer can carry what a tool read: a credential, a
+    # link that would carry data out. The agent is shown neither.
+    rows = _answered(f"Found {SECRET} and {CARRIED_OUT} in the log.")
+    entry = entry_for(rows, "2026-11-23T22:31:00+00:00", "thumbs_up", running=False)
+    assert isinstance(entry, Entry), entry
+    assert BODY[:12] not in entry.text, entry.text
+    assert BODY[:20] not in entry.text, entry.text
+    assert entry.text.startswith("The user reacted"), entry.text
+
+
+def test_a_reaction_to_the_answer_of_a_turn_still_running_is_refused():
+    rows = _answered(QUESTION)
+    refused = entry_for(rows, "2026-11-23T22:31:00+00:00", "thumbs_up", running=True)
+    assert isinstance(refused, Refusal), refused
+    assert (refused.code, refused.status) == ("reaction_not_an_answer", 409)
+    assert "still being written" in refused.message
+    # Once it is done, or once the owner has started another turn, it is a finished answer.
+    done = entry_for(rows, "2026-11-23T22:31:00+00:00", "thumbs_up", running=False)
+    assert isinstance(done, Entry), done
+    later = [
+        *rows,
+        {"role": "user", "content": "And the tests?", "ts": "2026-11-23T22:32:00+00:00"},
+    ]
+    assert isinstance(entry_for(later, "2026-11-23T22:31:00+00:00", "heart", running=True), Entry)
+
+
+@pytest.mark.asyncio
+async def test_the_answers_links_a_reaction_quotes_are_not_taken_in_as_hers(tmp_path, monkeypatch):
+    # A link the owner sends becomes hers for the chat's web_fetch. The link a reaction's
+    # sentence quotes is the agent's, so it does not; one she then types herself does.
+    monkeypatch.setattr(fetch, "_seen_by_session", {})
+    world = _World(tmp_path, f"The numbers are at {REPORT}. Shall I chart them?", "ok", "ok")
+    async with world.client() as client:
+        key = (await world.send(client, ASKED))["session"]
+        answer = _answer(
+            (await world.settled(key)).messages, f"The numbers are at {REPORT}. Shall I chart them?"
+        )
+        assert (await world.react(client, key, answer["ts"], "thumbs_up")).status == 200
+        await world.settled(key)
+        assert REPORT in world.model.last_said(), "the sentence quotes the answer's link"
+        assert fetch.url_provenance(_history_key_for(key), REPORT) != fetch.FROM_USER
+
+        await world.send(client, f"Use {REPORT} as the source.", session=key)
+        await world.settled(key)
+    assert fetch.url_provenance(_history_key_for(key), REPORT) == fetch.FROM_USER
