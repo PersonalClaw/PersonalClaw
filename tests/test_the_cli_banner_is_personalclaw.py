@@ -56,7 +56,7 @@ def test_the_chat_prompt_prints_it(monkeypatch, capsys):
     # Nothing reaches a gateway: the chat is opened by the first message, and the prompt ends at
     # its first read.
     unreached = home_gateway.HomeGateway(home=Path("/home/user/.personalclaw"), port=0, pid=0)
-    assert cli_chat._interactive(cli_chat._SignIn(unreached), "") == 0
+    assert cli_chat._interactive(cli_chat._SignIn(unreached), cli_chat._Opening()) == 0
     assert capsys.readouterr().out.startswith(PERSONALCLAW_ART)
 
 

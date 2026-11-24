@@ -135,6 +135,17 @@ class RunError(Exception):
     """A headless run could not be set up or completed. Message is user-facing."""
 
 
+class RouteRefused(RunError):
+    """A gateway route answered with an error: its HTTP *status* and its *reason*, what its answer
+    says (``home_gateway.error_text``), for a caller that tells the owner why in the route's
+    words."""
+
+    def __init__(self, message: str, *, status: int, reason: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.reason = reason
+
+
 class TurnTimedOut(RunError):
     """The time a run gave its turn passed before the turn ended."""
 
@@ -411,7 +422,17 @@ def _api(port: int, token: str, path: str, body: dict | None = None) -> dict:
         detail = ""
         with contextlib.suppress(Exception):
             detail = exc.read().decode()[:500]
-        raise RunError(f"{path} failed: HTTP {exc.code} {detail}") from exc
+        answer: Any = None
+        with contextlib.suppress(ValueError):
+            answer = json.loads(detail)
+        reason = (
+            home_gateway.error_text(answer, exc.code)
+            if isinstance(answer, dict)
+            else detail.strip() or f"HTTP {exc.code}"
+        )
+        raise RouteRefused(
+            f"{path} failed: HTTP {exc.code} {detail}", status=exc.code, reason=reason
+        ) from exc
     except (urllib.error.URLError, OSError) as exc:
         raise RunError(f"{path} failed: {exc}") from exc
     try:

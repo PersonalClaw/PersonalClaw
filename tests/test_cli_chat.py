@@ -145,7 +145,11 @@ class _Gateway:
 
 
 @contextlib.asynccontextmanager
-async def _gateway(tmp_path: Path, model: _ScriptedModel, monkeypatch) -> AsyncIterator[_Gateway]:
+async def _gateway(
+    tmp_path: Path, model: _ScriptedModel, monkeypatch, extra: Any = None
+) -> AsyncIterator[_Gateway]:
+    """The gateway on loopback. *extra*, given, is handed the app before it starts, to add the
+    routes and middleware a test needs beyond these."""
     from aiohttp import web
     from aiohttp.test_utils import TestServer
 
@@ -202,6 +206,8 @@ async def _gateway(tmp_path: Path, model: _ScriptedModel, monkeypatch) -> AsyncI
     app.router.add_post("/api/chat/sessions/{session}/stop", api_chat_session_stop)
     app.router.add_get("/api/approvals", api_approvals)
     app.router.add_post("/api/approvals/{id}/{action}", api_approval_resolve)
+    if extra is not None:
+        extra(app)
     server = TestServer(app, host="127.0.0.1")
     await server.start_server()
     try:
@@ -467,7 +473,7 @@ async def test_ctrl_c_during_a_turn_stops_it_in_the_gateway(tmp_path, monkeypatc
     async with _gateway(tmp_path, model, monkeypatch) as gw:
         sign_in = cli_chat._SignIn(await asyncio.to_thread(home_gateway.reach, gw.port))
         key = await asyncio.get_running_loop().run_in_executor(
-            None, cli_chat._open_chat, sign_in, ""
+            None, cli_chat._open_chat, sign_in, cli_chat._Opening()
         )
         turn = cli_chat._Turn(key)
         conversing = asyncio.ensure_future(cli_chat._converse(sign_in, turn, "note: milk"))

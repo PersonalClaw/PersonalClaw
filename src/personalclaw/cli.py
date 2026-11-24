@@ -284,6 +284,42 @@ def _add_explain(parser: argparse.ArgumentParser, what: str) -> None:
     )
 
 
+def _add_chat_parser(sub: argparse._SubParsersAction) -> None:
+    """``chat``: the attended terminal client of the running gateway's chat (``cli_chat``)."""
+    chat_parser = sub.add_parser(
+        "chat",
+        help="Chat with your assistant through the running gateway",
+        epilog="""
+Examples:
+  personalclaw chat                      # Chat until you type exit (or press Ctrl+D)
+  personalclaw chat -m 'check my PRs'    # One message: its reply prints, then it exits
+  personalclaw chat --model MODEL        # This chat on another model you set up
+  personalclaw chat --cwd . --agent dev  # Work in this folder, as the agent dev
+  personalclaw chat --project Website    # A chat in the project Website (its name or id)
+  personalclaw chat --session notes      # Go on with the chat named notes (opened the first time)
+
+The chat runs in your running gateway, as a chat you can open in the dashboard. A call
+that asks for approval waits for your answer in PersonalClaw (the dashboard or your
+phone) or on your paired chat channel. Ctrl+C during a reply stops that turn.
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    chat_parser.add_argument("-m", "--message", help="One message: print its reply and exit")
+    chat_parser.add_argument(
+        "--model", help="Model for this chat (default: Settings → Models & Providers → Models)"
+    )
+    chat_parser.add_argument("--agent", default="", metavar="NAME", help="Agent to chat with")
+    chat_parser.add_argument("--project", default="", help="Project to chat in, by name or id")
+    chat_parser.add_argument("--session", default="", metavar="NAME", help="Chat to go on with")
+    chat_parser.add_argument("--cwd", default="", metavar="DIR", help="Folder it works in (. here)")
+    chat_parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help=_HOME_GATEWAY_PORT_HELP,
+    )
+
+
 def _add_auth_parser(sub: argparse._SubParsersAction) -> None:
     """``auth``: the owner login. Setting a password is CLI-only on purpose: a plaintext
     credential should never ride in an HTTP body."""
@@ -477,32 +513,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Helper for commands with examples
     _fmt = argparse.RawDescriptionHelpFormatter
 
-    # chat — the attended terminal client of the running gateway's chat (`cli_chat`).
-    chat_parser = sub.add_parser(
-        "chat",
-        help="Chat with your assistant through the running gateway",
-        epilog="""
-Examples:
-  personalclaw chat                      # Chat until you type exit (or press Ctrl+D)
-  personalclaw chat -m 'check my PRs'    # One message: its reply prints, then it exits
-  personalclaw chat --model MODEL        # This chat on another model you set up
-
-The chat runs in your running gateway, as a chat you can open in the dashboard. A call
-that asks for approval waits for your answer in PersonalClaw (the dashboard or your
-phone) or on your paired chat channel. Ctrl+C during a reply stops that turn.
-""",
-        formatter_class=_fmt,
-    )
-    chat_parser.add_argument("-m", "--message", help="One message: print its reply and exit")
-    chat_parser.add_argument(
-        "--model", help="Model for this chat (default: Settings → Models & Providers → Models)"
-    )
-    chat_parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help=_HOME_GATEWAY_PORT_HELP,
-    )
+    _add_chat_parser(sub)
 
     # run — headless one-shot scripted turn.
     # NOTE: `run` is a NEW TOP-LEVEL command. The pre-existing `run` in this parser is
