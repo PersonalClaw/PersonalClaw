@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # uv reads the lock. It is a build tool here: the runtime stage copies /opt/venv alone, so uv
 # never ships. Pinned, like everything this stage installs, so a newer uv cannot meet the
 # lock on a day nothing in the repository changed.
-ARG UV_VERSION=0.13.1
+ARG UV_VERSION=0.13.9
 RUN pip install --no-cache-dir --root-user-action=ignore "uv==${UV_VERSION}"
 
 # pip is one of PersonalClaw's own dependencies (the app installer runs it), so the locked one

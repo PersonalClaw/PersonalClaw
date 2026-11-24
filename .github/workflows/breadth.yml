@@ -167,7 +167,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: ${{ matrix.python }}
           enable-cache: true
           prune-cache: true
@@ -280,7 +280,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: ${{ matrix.python }}
           enable-cache: true
           prune-cache: true
@@ -393,7 +393,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.12.15"
           enable-cache: true
           prune-cache: true
@@ -494,7 +494,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.13.16"
           enable-cache: true
           prune-cache: true
@@ -592,7 +592,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: ${{ matrix.python }}
           enable-cache: true
           prune-cache: true
@@ -706,7 +706,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.12.15"
           enable-cache: true
           prune-cache: true
@@ -786,7 +786,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.13.16"
           enable-cache: true
           prune-cache: true
@@ -872,7 +872,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: ${{ matrix.python }}
           enable-cache: true
           prune-cache: true
@@ -1001,7 +1001,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: ${{ matrix.python }}
           enable-cache: true
           prune-cache: true
@@ -1206,7 +1206,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.13.16"
           prune-cache: true
       # Each smoke is a POSIX script under tools/ci/, run as `sh <path>`: the one way
@@ -1295,7 +1295,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.12.15"
           enable-cache: true
           prune-cache: true
@@ -1373,7 +1373,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.13.16"
           enable-cache: true
           prune-cache: true
@@ -1460,7 +1460,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.12.15"
           enable-cache: true
           prune-cache: true
@@ -1545,7 +1545,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.13.16"
           enable-cache: true
           prune-cache: true
@@ -1633,7 +1633,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.12.15"
           enable-cache: true
           prune-cache: true
@@ -1720,7 +1720,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.13.16"
           enable-cache: true
           prune-cache: true
@@ -1803,7 +1803,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.13.16"
           enable-cache: true
           prune-cache: true
@@ -1875,7 +1875,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.13.16"
           enable-cache: true
           prune-cache: true
