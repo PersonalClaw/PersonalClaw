@@ -50,13 +50,21 @@ describe('an artifact whose read could not follow its file', () => {
     served = { source_unfollowed: 'outside' }
     view()
     const note = await screen.findByRole('note')
-    expect(note.textContent).toBe(`This no longer follows ${PATH}: it is outside the folders an artifact can follow. It shows its last saved copy, and saving changes only that copy.`)
+    expect(note.textContent).toBe(`This no longer follows ${PATH}: it is outside the folders an artifact can follow. It shows its last saved copy, and saving changes only that copy. To link it again, save the file from your workspace as an artifact in Files.`)
   })
 
   it('says a file that is gone is gone', async () => {
     served = { source_unfollowed: 'missing' }
     view()
     expect((await screen.findByRole('note')).textContent).toContain(`${PATH}: there is no file there.`)
+  })
+
+  it('offers no way to link again when the file is there but could not be read', async () => {
+    served = { source_unfollowed: 'unreadable' }
+    view()
+    const note = await screen.findByRole('note')
+    expect(note.textContent).toContain(`${PATH}: it could not be read.`)
+    expect(note.textContent).not.toContain('To link it again')
   })
 
   it('says nothing while it follows its file', async () => {

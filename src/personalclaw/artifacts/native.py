@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 from collections.abc import Callable, Sequence
@@ -694,6 +695,44 @@ class NativeArtifactProvider(ArtifactProvider):
         for art in self.list(source_path=source_path):
             return art
         return None
+
+    def find_link_for(self, source_path: str) -> Artifact | None:
+        """The artifact linked to *source_path*, else the newest whose link this home can no
+        longer follow (``source_unfollowed``) and that names the same file: the file at the same
+        place under the workspace, as the home or release that made the link had it
+        (``memory_locality.is_the_workspace``). The workspace earlier releases made under the
+        user's home is no longer one of the folders an artifact follows, and a file the owner
+        moves from there into this workspace is the same file. A save of it takes the link back
+        instead of making a second artifact beside the first."""
+        return self.find_by_source_path(source_path) or self._moved_link_for(source_path)
+
+    def _moved_link_for(self, source_path: str) -> Artifact | None:
+        from personalclaw.memory_locality import is_the_workspace, this_homes_workspaces
+
+        if not source_path:
+            return None
+        here = Path(os.path.realpath(source_path))
+        rel: Path | None = None
+        for workspace in map(Path, this_homes_workspaces()):
+            if here.is_relative_to(workspace):
+                rel = here.relative_to(workspace)
+                break
+        if rel is None or not rel.parts:
+            return None
+        n = len(rel.parts)
+        places = source_files.places()
+        found: Artifact | None = None
+        for art in self.list():
+            old = Path(art.source_path)
+            if is_binary_kind(art.kind) or not old.is_absolute() or old.parts[-n:] != rel.parts:
+                continue
+            if self._read_source_path(art.source_path, places)[1] == "":
+                continue  # it follows a file of its own
+            if is_the_workspace(str(old.parents[n - 1])) and (
+                found is None or art.updated_at > found.updated_at
+            ):
+                found = art
+        return found
 
     def get(self, slug: str, *, version: int | None = None) -> Artifact | None:
         with self._lock:
