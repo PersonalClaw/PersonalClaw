@@ -32,6 +32,7 @@ import time
 from typing import Any
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.triggers.models import ADAPTIVE_WAITING
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,9 @@ logger = logging.getLogger(__name__)
 #: `reconcile_digest_cron` records: `tools.create` mints a unique slug, so a convergence keyed on a
 #: generated id would add a second engine on every boot instead of recognizing its own.
 REMEDIATION_TRIGGER_ID = "system:self-remediation"
+
+#: The clock's state while every job it planned waits out its cooldown (`triggers.models`).
+WAITING = ADAPTIVE_WAITING
 
 #: The provider name. Present in FOUR places that must agree — `action_providers.registry`,
 #: `validation.ALLOWED_HOOK_PROVIDERS`, `triggers.screen.WRITE_CAPABLE_PROVIDERS` and here —
@@ -100,7 +104,7 @@ class SelfRemediationActionProvider(ActionProvider):
         # ran nothing, and a pass five minutes later would find the same. It looks again when the
         # soonest of them is due, or at the long cadence, whichever comes first.
         waits_until = result.next_due_at if not healthy and result.ran_nothing_but_waits() else 0.0
-        rearmed = _rearm(healthy=healthy or bool(waits_until), cfg=cfg, now=now, until=waits_until)
+        rearmed = _rearm(healthy=healthy, cfg=cfg, now=now, until=waits_until)
 
         # A maintenance job that failed must not read as a quiet success — the engine owns passes
         # whose absence is invisible (prunes, index reconciliation). Carried through the FIRE's
@@ -142,8 +146,10 @@ def _cadence_secs(cfg: Any) -> tuple[int, int]:
 def _rearm(*, healthy: bool, cfg: Any, now: float, until: float = 0.0) -> str:
     """Write the run's health verdict onto the spec and recompute `next_fire_at`. Returns the label.
 
-    *until*, when later than *now*, is when the job the engine waits on is due: the next fire is
-    then that or the long cadence's, whichever comes first.
+    *until*, when set, is when the job the engine waits on is due: the clock's state is then
+    :data:`WAITING`, not healthy, since its score is under target and a fix is only waiting for its
+    cooldown (`schedule_view` says so), and the next fire is that or the long cadence's, whichever
+    comes first.
 
     Best-effort: a store write that fails leaves the tick's own pre-fire arm standing, which is a
     cadence that is merely stale rather than a trigger that stops firing. Returns `""` when nothing
@@ -167,12 +173,12 @@ def _rearm(*, healthy: bool, cfg: Any, now: float, until: float = 0.0) -> str:
                 "kind": "adaptive",
                 "interval_secs_healthy": healthy_secs,
                 "interval_secs_degraded": degraded_secs,
-                "health_state": "healthy" if healthy else "degraded",
+                "health_state": WAITING if until else ("healthy" if healthy else "degraded"),
             }
         )
         trigger.spec = spec
         armed = _arm(trigger, now=now)
-        secs: float = healthy_secs if healthy else degraded_secs
+        secs: float = healthy_secs if healthy or until else degraded_secs
         if armed and now < until < now + secs:
             secs = until - now
             armed = to_iso(until)
