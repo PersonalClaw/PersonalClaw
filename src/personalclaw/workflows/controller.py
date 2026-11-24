@@ -67,6 +67,7 @@ from personalclaw.workflows import (
 )
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import (
+    left_running,
     liveness,
     longrun,
     loop_iteration,
@@ -720,6 +721,9 @@ class RunController:
         iteration_context.rehydrate_context(self)
         iteration_context.rehydrate_loop_progress(self)
         if resumed:
+            # What a step's last attempt left running ends first, or the step fails saying so:
+            # put back in the queue beside it, it would run twice at once (`left_running`).
+            await left_running.end_left_running(self)
             stage_settlement.requeue_orphaned_stages(self)
             run_start.requeue_lost_steps(self)
         async with self._lock:

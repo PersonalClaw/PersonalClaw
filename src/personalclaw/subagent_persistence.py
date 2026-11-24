@@ -11,13 +11,17 @@ Each subagent gets a folder at ``~/.personalclaw/subagents/{id}/`` containing:
 import json
 import logging
 import shutil
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from personalclaw import process_facts
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.llm.cleanup import _is_safe_path
+from personalclaw.session_keys import SUBAGENT
 
 
 def config_dir() -> Path:
@@ -110,6 +114,8 @@ def create_agent_folder(
     }
     if request is not None:
         state["request"] = request
+    if holder := _PENDING_TIES.pop(agent_id, ""):
+        state[CLAIM_HOLDER] = holder
     _atomic_write(d / "state.json", state)
     return d
 
@@ -154,6 +160,91 @@ def record_pid(agent_id: str, pid: int) -> None:
         pid_recorded_at=time.time(),
         pid_started=found.started if found is not None else None,
     )
+
+
+#: The key of a workflow step's attempt in its agent's state: the claim holder the step took its
+#: no-double-execution claim with (`engine.claim_holder`), written as the spawn returns, before the
+#: agent's task first runs, so a folder that holds none was no process of that attempt's.
+CLAIM_HOLDER = "claim_holder"
+#: The key of the commands an agent's in-process runtime runs, each in a process group it leads:
+#: ``[[pid, started], ...]``, kept while each runs, so a later run can end one it left behind.
+TOOL_GROUPS = "tool_groups"
+_TOOL_GROUPS_LOCK = threading.Lock()
+#: The holder of each spawn whose folder is not made yet (:func:`tie_to_claim`), by agent id.
+_PENDING_TIES: dict[str, str] = {}
+
+
+def tie_to_claim(agent_id: str, holder: str) -> None:
+    """Record in the agent *agent_id*'s folder the claim holder its workflow step took its claim
+    with (:data:`CLAIM_HOLDER`). Synchronous, so a spawn's caller writes it before the agent's
+    task first runs: a folder no holder names was then no process of that attempt's. A spawn
+    that waits (for a slot, or for her Allow) makes its folder only when it starts, so the holder
+    waits here and goes into the folder as it is made (:func:`create_agent_folder`)."""
+    if not (agent_id and holder):
+        return
+    if read_state(agent_id) is None:
+        _PENDING_TIES[agent_id] = holder
+        return
+    update_state(agent_id, **{CLAIM_HOLDER: holder})
+
+
+def holding(holder: str) -> dict | None:
+    """The state of the agent folder whose :data:`CLAIM_HOLDER` is *holder*, tombstoned or not, or
+    None when no folder holds it."""
+    if not holder:
+        return None
+    try:
+        dirs = sorted(_subagents_dir().iterdir())
+    except (FileNotFoundError, OSError):
+        return None
+    for d in dirs:
+        state = read_state(d.name) if d.is_dir() else None
+        if state is not None and state.get(CLAIM_HOLDER) == holder:
+            return state
+    return None
+
+
+def record_tool_group(agent_id: str, pid: int) -> None:
+    """Record that the agent *agent_id* runs a command in the process group *pid* leads, with the
+    kernel's start mark for it, so a later run can end it if this one leaves it behind."""
+    found = process_facts.process(pid)
+    if found is None or not agent_id:
+        return
+    with _TOOL_GROUPS_LOCK:
+        state = read_state(agent_id)
+        if state is None:
+            return
+        kept = [g for g in state.get(TOOL_GROUPS) or [] if isinstance(g, list)]
+        update_state(agent_id, **{TOOL_GROUPS: [*kept, [pid, found.started]]})
+
+
+def forget_tool_group(agent_id: str, pid: int) -> None:
+    """Drop the command in group *pid* from what the agent *agent_id* runs: it has ended."""
+    with _TOOL_GROUPS_LOCK:
+        state = read_state(agent_id) if agent_id else None
+        if state is None:
+            return
+        kept = [g for g in state.get(TOOL_GROUPS) or [] if isinstance(g, list) and g[:1] != [pid]]
+        update_state(agent_id, **{TOOL_GROUPS: kept})
+
+
+@contextmanager
+def tool_group(session_key: str, pid: int) -> Iterator[None]:
+    """While a command runs in the process group *pid* leads, keep it in the folder of the subagent
+    whose session is *session_key* (:func:`record_tool_group`); another session keeps nothing.
+
+    A gateway that dies leaves the group running: it is a session of its own, and on macOS a
+    system shell's marker is not shown (`run_processes`), so the restart ends it from here before
+    the step that ran it runs again (`workflows.left_running`). Called as the spawn returns, with
+    no await between, so the group is kept before the command can do much of its work."""
+    agent_id = session_key.removeprefix(SUBAGENT.prefix) if SUBAGENT.names(session_key) else ""
+    if agent_id:
+        record_tool_group(agent_id, pid)
+    try:
+        yield
+    finally:
+        if agent_id:
+            forget_tool_group(agent_id, pid)
 
 
 # ── result streaming ─────────────────────────────────────────────────
