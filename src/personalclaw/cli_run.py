@@ -61,6 +61,7 @@ import json
 import math
 import os
 import secrets
+import shlex
 import signal
 import subprocess
 import sys
@@ -893,10 +894,9 @@ def _run_one(args) -> int:
             )
         )
     elif fmt == "plain":
-        text = collector.result_text()
-        if text:
-            print(terminal_text(text))
+        _print_plain(collector)
     # streaming-json already wrote its NDJSON as frames arrived.
+    _offer_a_check(collector, args, finished=ending is None and ok)
 
     if ending is not None:
         said = _how_the_run_ended(
@@ -920,6 +920,36 @@ def _run_one(args) -> int:
         for err in collector.errors or ["the gateway reported no reason"]:
             print(f"personalclaw run: turn failed: {terminal_text(err)}", file=sys.stderr)
     return 0 if ok else 1
+
+
+def _print_plain(collector: _Collector) -> None:
+    text = collector.result_text()
+    if text:
+        print(terminal_text(text))
+
+
+def _offer_a_check(collector: _Collector, args: Any, *, finished: bool) -> None:
+    """Say on stderr how to check what a *finished* turn says it did, when it earned the offer."""
+    if finished and (offer := check_work_offer(collector, args)):
+        print(f"personalclaw run: {offer}", file=sys.stderr)
+
+
+def check_work_offer(collector: _Collector, args: Any) -> str:
+    """The line that offers a check of what the turn claims, for a turn that earned the offer the
+    web chat makes (`chat_followups.turn_earns_check_work_offer`), or "". The check itself is the
+    owner's choice and costs a turn, so this only says how to ask for it."""
+    from personalclaw.dashboard.chat_followups import turn_earns_check_work_offer
+
+    if not turn_earns_check_work_offer(collector.result_text(), len(collector.tool_calls)):
+        return ""
+    name = str(getattr(args, "session", "") or "").strip()
+    if not name:
+        return (
+            "to check what this turn says it did, run it in a named session (--session NAME) "
+            'and send "check your work" there'
+        )
+    command = f'personalclaw run --session {shlex.quote(name)} -p "check your work"'
+    return f"to check what this turn says it did: {command}"
 
 
 def _how_the_run_ended(
