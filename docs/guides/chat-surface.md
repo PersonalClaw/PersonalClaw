@@ -516,9 +516,10 @@ would not take) is shown as refused and never sent again.
 
 Drafts and waiting messages are kept in this browser, never in your PersonalClaw home, and only for
 this browser: another device does not see them. At most 200 drafts are kept, the oldest going
-first, and at most 50 waiting messages for a chat. Signing out takes all of them away, and so does a
-device that was signed out from elsewhere. A sign-in that only ran out keeps them, so you can sign
-back in and carry on. Deleting a chat takes its own.
+first, and at most 50 waiting messages for a chat. Signing out takes all of them away. A device
+signed out from elsewhere keeps them until the next time it opens PersonalClaw, which takes them
+away. A sign-in that only ran out keeps them, so you can sign back in and carry on. Deleting a chat
+takes its own.
 
 ## Chat preferences
 
