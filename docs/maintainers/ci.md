@@ -528,18 +528,20 @@ verdict says all it must fix:
   `MAINTAINERS`, both from its own checkout), over the pull request's commits as the commits API
   lists them and its title. The pull request is the one the run lists, or, for a fork's run, which
   GitHub lists none on, the one open pull request into `main` from the run's head branch whose head
-  is the run's head: none or several is red. The list must hold the pull request's own count and
-  end at the run's head, so a push between the reads, or a pull request longer than the 250 commits
-  the API lists, is red. A red names each commit and rule in a fenced block in its summary, with
-  the fix for each rule, and none of the commits' text in its title. `dco.yml` runs the head's copy
-  of the same check on `pull_request`, as feedback, and its run is never read: a pull request
-  that edits the check or `MAINTAINERS` is still judged by `main`'s. #5601's head went red on DCO
-  after GitHub's Update branch gave it a merge commit with no sign-off, while the verdict, which
-  did not read DCO then, stayed green. That merge commit is refused on purpose, with no exemption:
-  a commit's committer is text anyone can write, so naming GitHub proves nothing, and a merge
-  commit can carry a conflict resolution no one signed off. A red's rule 1 fix says to update with
-  rebase. A queue commit's own message, which is what lands, is held to rule 5 too, since a title
-  edited after the head's green verdict is what the queue builds it from.
+  is the run's head: none or several is red. So is an open pull request into another base with the
+  same head: GitHub does not say which pull request started a run, the other's run is built on its
+  own base, and the verdict is read on the head the two share. The list must hold the pull request's
+  own count and end at the run's head, so a push between the reads, or a pull request longer than
+  the 250 commits the API lists, is red. A red names each commit and rule in a fenced block in its
+  summary, with the fix for each rule, and none of the commits' text in its title. `dco.yml` runs
+  the head's copy of the same check on `pull_request`, as feedback, and its run is never read: a
+  pull request that edits the check or `MAINTAINERS` is still judged by `main`'s. #5601's head went
+  red on DCO after GitHub's Update branch gave it a merge commit with no sign-off, while the
+  verdict, which did not read DCO then, stayed green. That merge commit is refused on purpose, with
+  no exemption: a commit's committer is text anyone can write, so naming GitHub proves nothing, and
+  a merge commit can carry a conflict resolution no one signed off. A red's rule 1 fix says to
+  update with rebase. A queue commit's own message, which is what lands, is held to rule 5 too,
+  since a title edited after the head's green verdict is what the queue builds it from.
 - **The path-filtered gates:** a workflow of its own that a pull request's paths start, not the
   plan, is a gate (`tools/ci/workflows.py`'s `GATES`, each with its jobs and its outside-input
   steps). Every `pull_request` run of the gate's workflow file on the head is read, by its path, its

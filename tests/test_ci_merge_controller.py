@@ -104,6 +104,10 @@ def _oid(text: str) -> str:
     return (format(abs(hash(text)), "x") * 8)[:40]
 
 
+#: A listed pull request's base, as GitHub lists one into main.
+INTO_MAIN: dict[str, Any] = {"base": {"ref": "main", "repo": {"full_name": REPO}}}
+
+
 class FakeApi:
     """GET answers by path; a path it does not know raises, as a 404 would."""
 
@@ -141,10 +145,12 @@ class FakeApi:
         default, a hundred a page."""
         commits = commits or (commit(head),)
         query = urllib.parse.urlencode(
-            {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "base": "main", "per_page": 100}
+            {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "per_page": 100}
         )
         self.answers[f"/repos/{REPO}/pulls?{query}"] = (
-            listed if listed is not None else [{"number": number, "head": {"sha": head}}]
+            listed
+            if listed is not None
+            else [{"number": number, "head": {"sha": head}, **INTO_MAIN}]
         )
         self.answers[f"/repos/{REPO}/pulls/{number}"] = {
             "number": number,
@@ -1883,7 +1889,7 @@ def test_a_fork_s_run_lists_no_pull_request_and_its_head_s_is_found_and_checked(
     found = _decide(api)
     assert isinstance(found, mc.Posting) and found.conclusion == "success", found
     query = urllib.parse.urlencode(
-        {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "base": "main", "per_page": 100}
+        {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "per_page": 100}
     )
     assert f"/repos/{REPO}/pulls?{query}" in api.calls
     assert f"/repos/{REPO}/pulls/{PULL}" in api.calls
@@ -1912,7 +1918,7 @@ def test_a_fork_s_unsigned_commit_is_red_though_its_sign_off_run_is_green() -> N
 
 def test_a_run_of_this_repository_s_branch_reads_its_pull_request_by_number() -> None:
     api = FakeApi()
-    api.run(pull_requests=[{"number": PULL, "head": {"sha": HEAD}}])
+    api.run(pull_requests=[{"number": PULL, "head": {"sha": HEAD}, **INTO_MAIN}])
     found = _decide(api)
     assert isinstance(found, mc.Posting) and found.conclusion == "success", found
     assert not any(c.startswith(f"/repos/{REPO}/pulls?") for c in api.calls), api.calls
@@ -1923,9 +1929,12 @@ def test_a_run_of_this_repository_s_branch_reads_its_pull_request_by_number() ->
     ("listed", "says"),
     [
         ([], "0 open pull requests into main have this head, not one"),
-        ([{"number": PULL, "head": {"sha": OTHER}}], "0 open pull requests into main"),
+        ([{"number": PULL, "head": {"sha": OTHER}, **INTO_MAIN}], "0 open pull requests into main"),
         (
-            [{"number": PULL, "head": {"sha": HEAD}}, {"number": 13, "head": {"sha": HEAD}}],
+            [
+                {"number": PULL, "head": {"sha": HEAD}, **INTO_MAIN},
+                {"number": 13, "head": {"sha": HEAD}, **INTO_MAIN},
+            ],
             "2 open pull requests into main have this head, not one",
         ),
     ],
@@ -1938,6 +1947,76 @@ def test_a_head_that_is_not_one_pull_request_s_is_red(
     api.pull_request(listed=listed)
     _title, summary = _policy_red(api)
     assert says in summary, summary
+
+
+_INTO_RELEASE: dict[str, Any] = {"base": {"ref": "release", "repo": {"full_name": REPO}}}
+_ELSEWHERE = "an open pull request into release has this head too"
+
+
+def test_a_head_another_base_s_open_pull_request_also_has_is_red_on_a_branch_s_run() -> None:
+    """GitHub lists every open pull request with the run's head on its run, and not which one
+    started it. A run of the one into another base is built on that base, and the verdict is read
+    on the head the two share, so while it is open no run of the head is green. It costs no read:
+    the run's own list names both."""
+    api = FakeApi()
+    api.run(
+        pull_requests=[
+            {"number": PULL, "head": {"sha": HEAD}, **INTO_MAIN},
+            {"number": 13, "head": {"sha": HEAD}, **_INTO_RELEASE},
+        ]
+    )
+    assert _ELSEWHERE in _policy_red(api)[1]
+    assert not any(c.startswith(f"/repos/{REPO}/pulls") for c in api.calls), api.calls
+
+
+def test_a_head_another_base_s_open_pull_request_also_has_is_red_on_a_fork_s_run() -> None:
+    """A fork's run lists no pull request, so the open ones from its head branch are read, into
+    any base, in the one read the sign-off rule already makes."""
+    api = FakeApi()
+    api.pull_request(
+        listed=[
+            {"number": PULL, "head": {"sha": HEAD}, **INTO_MAIN},
+            {"number": 13, "head": {"sha": HEAD}, **_INTO_RELEASE},
+        ]
+    )
+    assert _ELSEWHERE in _policy_red(api)[1]
+    assert [c for c in api.calls if c.startswith(f"/repos/{REPO}/pulls?")] == [
+        f"/repos/{REPO}/pulls?"
+        + urllib.parse.urlencode(
+            {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "per_page": 100}
+        )
+    ]
+
+
+@pytest.mark.parametrize("fork", [False, True], ids=["branch", "fork"])
+def test_a_pull_request_into_another_base_with_another_head_changes_nothing(fork: bool) -> None:
+    """Only a pull request with the run's head is another run's: an older one into another base
+    from the same branch is not."""
+    api = FakeApi()
+    both = [
+        {"number": PULL, "head": {"sha": HEAD}, **INTO_MAIN},
+        {"number": 13, "head": {"sha": OTHER}, **_INTO_RELEASE},
+    ]
+    if fork:
+        api.pull_request(listed=both)
+    else:
+        api.run(pull_requests=both)
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+
+
+@pytest.mark.parametrize("fork", [False, True], ids=["branch", "fork"])
+def test_a_listed_pull_request_with_no_base_is_not_read_as_main_s(fork: bool) -> None:
+    api = FakeApi()
+    both = [
+        {"number": PULL, "head": {"sha": HEAD}, **INTO_MAIN},
+        {"number": 13, "head": {"sha": HEAD}},
+    ]
+    if fork:
+        api.pull_request(listed=both)
+    else:
+        api.run(pull_requests=both)
+    assert "an open pull request into an unread base has this head too" in _policy_red(api)[1]
 
 
 def test_a_run_that_names_no_head_branch_is_red() -> None:
@@ -1986,8 +2065,8 @@ def test_a_pull_request_longer_than_the_api_lists_is_red_after_three_pages() -> 
     api.pull_request(*(commit(s) for s in shas), head=shas[-1], count=251)
     api.answers[f"/repos/{REPO}/pulls/{PULL}"]["head"] = {"sha": HEAD}
     api.answers[f"/repos/{REPO}/pulls?" + urllib.parse.urlencode(
-        {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "base": "main", "per_page": 100}
-    )] = [{"number": PULL, "head": {"sha": HEAD}}]  # fmt: skip
+        {"state": "open", "head": f"{FORK_OWNER}:{BRANCH}", "per_page": 100}
+    )] = [{"number": PULL, "head": {"sha": HEAD}, **INTO_MAIN}]  # fmt: skip
     summary = _policy_red(api)[1]
     assert "the list holds 250 commit(s) where the pull request has 251" in summary, summary
     pages = [c for c in api.calls if c.startswith(f"/repos/{REPO}/pulls/{PULL}/commits")]
@@ -2737,7 +2816,7 @@ VERDICTS = (
 
 
 def _posted(api: FakeApi, *checks: Mapping[str, Any]) -> None:
-    api.answers[PULLS] = [{"number": 12, "head": {"sha": HEAD}}]
+    api.answers[PULLS] = [{"number": 12, "head": {"sha": HEAD}, **INTO_MAIN}]
     api.answers[VERDICTS] = {"total_count": len(checks), "check_runs": list(checks)}
 
 
@@ -3205,7 +3284,7 @@ def test_a_head_waiting_on_codeql_for_ever_costs_nothing_between_sweeps(
     api = _changes(FakeApi())
     now = datetime.datetime.now(datetime.timezone.utc)
     query, asked = _asked(_graph((HEAD, [(1, "FAILURE", _WAITS, _ago(48, now))])))
-    api.answers[PULLS] = [{"number": 12, "head": {"sha": HEAD}}]
+    api.answers[PULLS] = [{"number": 12, "head": {"sha": HEAD}, **INTO_MAIN}]
     api.answers[f"/repos/{REPO}/check-runs/55"] = {"id": 55, "name": "something else"}
     _refs(api, mc.CONTRACT_PREFIX, {})
     _refs(api, mc.TRUSTED_PREFIX, {})
@@ -3230,7 +3309,7 @@ def test_a_head_waiting_on_codeql_for_ever_costs_nothing_between_sweeps(
 
 def test_a_poster_run_does_not_judge_its_own_head_twice() -> None:
     api = FakeApi()
-    api.answers[PULLS] = [{"number": 12, "head": {"sha": HEAD}}]
+    api.answers[PULLS] = [{"number": 12, "head": {"sha": HEAD}, **INTO_MAIN}]
     query, _ = _asked(_graph((HEAD, [(1, "FAILURE", _WAITS)])))
     api.calls.clear()
     assert (
@@ -4409,7 +4488,9 @@ def _retried(
 ) -> FakeApi:
     """A red pull request run: by default one suite shard failed with one flaky test named."""
     api = FakeApi()
-    api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+    api.run(
+        event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}, **INTO_MAIN}]
+    )
     api.jobs(1, *(jobs or ((SHARD, "completed", "failure"),)), ("results", "completed", "failure"))
     api.flakes(1, *notes, title="failed test")
     files = [{"filename": "README.md", "status": "modified", "patch": README_PATCH}]
@@ -4515,7 +4596,9 @@ def test_an_earlier_head_that_is_no_red_retry_of_this_change_is_not_counted(
 def test_a_rerun_attempt_is_a_retry() -> None:
     api = _retried()
     api.run(
-        event="pull_request", run_attempt=2, pull_requests=[{"number": 12, "head": {"sha": HEAD}}]
+        event="pull_request",
+        run_attempt=2,
+        pull_requests=[{"number": 12, "head": {"sha": HEAD}, **INTO_MAIN}],
     )
     api.jobs(2, (SHARD, "completed", "failure"), ("results", "completed", "failure"))
     api.flakes(2, *_counted(_failed()), title="failed test")
@@ -4833,7 +4916,9 @@ def test_two_entries_listing_one_queue_commit_post_a_named_red() -> None:
 
 def test_the_note_changes_no_conclusion_and_a_green_reads_nothing_for_it() -> None:
     api = FakeApi()
-    api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+    api.run(
+        event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}, **INTO_MAIN}]
+    )
     retry = FakeRetry()
     outcome = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(retry, APP, False))
     assert outcome.posting is not None and outcome.posting.conclusion == "success"
@@ -4861,7 +4946,9 @@ def test_an_unread_answer_leaves_the_count_unread_and_the_red_as_it_is() -> None
 
 def test_a_red_that_only_waits_carries_no_note() -> None:
     api = FakeApi()
-    api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+    api.run(
+        event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}, **INTO_MAIN}]
+    )
     api.codeql(HEAD, status="in_progress")
     retry = FakeRetry()
     found = _note(api, retry)
@@ -6566,7 +6653,9 @@ def test_each_gate_s_wait_has_its_own_fence_word() -> None:
 def _gate_red(*jobs: tuple[str, str | None, str], results: str = "success") -> FakeApi:
     api = _retried() if results == "failure" else _gated()
     if results != "failure":
-        api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+        api.run(
+            event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}, **INTO_MAIN}]
+        )
         files = [{"filename": "uv.lock", "status": "modified", "patch": "@@ -1 +1 @@\n-a\n+b"}]
         api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
     api.gate("nix.yml", _nix(*jobs, conclusion="failure"))
@@ -6736,7 +6825,9 @@ def _errored(*keep: str) -> FakeApi:
         for a in RECORDED_ERRORED_ANALYSES
         if not keep or a["category"].removeprefix("/language:") in keep
     ]
-    api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+    api.run(
+        event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}, **INTO_MAIN}]
+    )
     files = [{"filename": "README.md", "status": "modified", "patch": README_PATCH}]
     api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
     return api
