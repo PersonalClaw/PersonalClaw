@@ -228,6 +228,7 @@
       "command_effects",
       "command_identity",
       "command_operands",
+      "command_patterns",
       "command_shell",
       "command_unsplit",
       "context_gauge",
