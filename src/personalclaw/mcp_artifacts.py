@@ -25,7 +25,7 @@ from personalclaw.artifacts.models import (
     is_valid_slug,
 )
 from personalclaw.mcp_core import MODEL_WORK, _resolve_session_key, get_current_session_key
-from personalclaw.mcp_sheet_versions import carry_note, carry_workbook
+from personalclaw.mcp_sheet_versions import Refusal, carry_note, carry_workbook
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import BUILDS_META_KEY, ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
@@ -2664,7 +2664,10 @@ def _sheet_model(
     carried, refused = carry_workbook(prov, named, expected, model, args)
     if carried is None:
         _audit("denied", named.slug, "workbook_carry")
-        return None, None, refused
+        why = refused or Refusal(
+            "the workbook's next version could not be made. Nothing was written."
+        )
+        return None, None, tool_failure(why.reason, code=why.code)
     return carried.model, carried, None
 
 

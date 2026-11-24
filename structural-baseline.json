@@ -254,6 +254,7 @@
       "manifest_reference",
       "mcp_automation",
       "mcp_prompts",
+      "mcp_sheet_versions",
       "mcp_status",
       "mcp_subagents",
       "mcp_workflows",
