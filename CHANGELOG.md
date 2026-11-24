@@ -106,6 +106,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Accepting a workflow proposal in the Inbox starts its run. Every accept used to make a run that never started, and the row said only `WF_NO_SUPERVISOR`; a start the service refuses now says why in its own words.**
 - **An A2A task starts its run. Every `POST /a2a/tasks` used to make a run that never started and answer that the workflow supervisor was unavailable.**
 - **An A2A client's retry of a task returns the same task after a restart and however long after the first send, and the same key sent with another request is refused with 409 `idempotency_key_reused`. A retry the gateway had restarted since, or sent 15 minutes on, used to start a second run of the template, and two sends at once under one key started two.**
+- **A payload the injection screen stopped no longer spends its automation's hourly cap (`rate_cap`, `max_runs_per_hour`, `max_actions_per_hour`); it did no work, and enough of them held the automation's real fires as running away.**
 
 ### Security
 
