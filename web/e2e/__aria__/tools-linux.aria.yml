@@ -581,10 +581,10 @@
   - button "Disable subagent_status"
   - text: personalclaw-tasks-tools built-in · #
   - button "Disable provider personalclaw-tasks-tools"
-  - 'button "project_create Caution Create a project (a scoping container for task lists). Args: name (str, required, unique), optional agent_instructions_template (str). # params"':
+  - 'button "project_create Caution Create a project (a scoping container for task lists). Args: name (str, required, unique). Its instructions are the owner''s, written on its page. # param"':
     - text: project_create Caution
-    - paragraph: "Create a project (a scoping container for task lists). Args: name (str, required, unique), optional agent_instructions_template (str)."
-    - text: # params
+    - paragraph: "Create a project (a scoping container for task lists). Args: name (str, required, unique). Its instructions are the owner's, written on its page."
+    - text: # param
   - button "Disable project_create"
   - button "project_list List projects (with their task lists). No args.":
     - text: project_list

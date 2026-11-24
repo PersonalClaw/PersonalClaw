@@ -465,6 +465,16 @@ so an edit that would change it on a run that exists is refused
 (`WF_MUT_START_ONLY_INPUT`). A run that keeps no document has no `run.document`, and a
 read of it says so.
 
+`{{run.guidance}}` is the owner's standing guidance for the run's project: its instructions,
+as the project holds them when the step starts (`node_bindings._project_guidance`), for a run in
+a project whose instructions say something. The engine opens every stage's task and every judge
+gate's rubric with it, labelled as hers (`step_dispatch.OWNER_GUIDANCE_BLOCK`); an approval
+gate's question and the other kinds are left as written. It goes in as a value, so guidance that
+reads like a binding is handed over as written, and it is her words, so it is not fenced. The run
+page's Judge guidance writes it, and a step started after the save reads the new text. Only she
+writes it: an app's create is refused the field (`apps/permissions`), and so is an agent's
+`project_create`.
+
 `{{run.dropped}}` is what the owner dropped into the run, for a workflow that
 declares `file_drop` (`filedrop.dropped_for_steps`): each file, oldest first, its
 text read by the injection screen and fenced with its name (`outside_text.admit`,

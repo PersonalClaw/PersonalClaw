@@ -313,17 +313,18 @@ async def test_an_ordinary_chats_agent_saves_tasks_projects_and_inbox_items(
     answers = [
         await agent.calls("task_create", {"title": WORDS}),
         await agent.calls("task_update", {"id": yours, "description": WORDS}),
-        await agent.calls(
-            "project_create", {"name": "Lake house", "agent_instructions_template": WORDS}
-        ),
+        # A name only: a project's instructions are the owner's, and an agent is refused them
+        # (`tests/test_judge_guidance_reaches_the_worker_and_the_judge.py`).
+        await agent.calls("project_create", {"name": "Lake house"}),
         await agent.calls("task_list_create", {"name": "Guests"}),
         await agent.calls("post_to_inbox", {"message": WORDS}),
     ]
 
     assert all(answer.ok for answer in answers), [a.text for a in answers]
     assert sorted(t.title for t in await _tasks()) == ["Book the band for the reunion", WORDS]
-    [project] = [p for p in HierarchyStore().list_projects() if p.name == "Lake house"]
-    assert project.agent_instructions_template == WORDS
+    assert [p.name for p in HierarchyStore().list_projects() if p.name == "Lake house"] == [
+        "Lake house"
+    ]
     assert WORDS in await _inbox(gateway)
 
 

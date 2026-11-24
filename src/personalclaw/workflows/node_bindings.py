@@ -164,7 +164,25 @@ def _step_fields(ctl: RunController, item: ReadyNode) -> dict[str, Any]:
         "input_secrets": input_secrets.of_run(ctl.run),
         "run_document": deliverable.document_path(ctl.run, ctl.spec),
         "run_dropped": _dropped_for(ctl, item),
+        "run_guidance": _project_guidance(ctl),
     }
+
+
+def _project_guidance(ctl: RunController) -> str:
+    """The owner's standing guidance for the run's project (its instructions), as the project's
+    record holds them now, or "": read for each step, so guidance saved while a run goes reaches
+    its next step and not the ones already given theirs."""
+    project_id = str(getattr(ctl.run, "project_id", "") or "")
+    if not project_id:
+        return ""
+    try:
+        from personalclaw.tasks.hierarchy import HierarchyStore
+
+        project = HierarchyStore().get_project(project_id)
+    except Exception:  # noqa: BLE001 - an unreadable project gives no guidance
+        logger.debug("run %s: project %s unreadable", ctl.run.id, project_id, exc_info=True)
+        return ""
+    return str(getattr(project, "agent_instructions_template", "") or "").strip() if project else ""
 
 
 #: The binding a step reads the files dropped into its run through (`filedrop.dropped_for_steps`).

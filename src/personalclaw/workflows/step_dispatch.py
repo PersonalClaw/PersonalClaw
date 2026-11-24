@@ -20,7 +20,15 @@ from personalclaw.workflows.bindings import BindingContext, BindingError
 from personalclaw.workflows.engine import NodeResult, dispatch
 from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
 from personalclaw.workflows.judge_contract import hints_from_dict as judge_hints_from_dict
-from personalclaw.workflows.models import SUCCESS_STATES, Failure, FailureClass, InstanceState, Node
+from personalclaw.workflows.models import (
+    SUCCESS_STATES,
+    Failure,
+    FailureClass,
+    GateKind,
+    InstanceState,
+    Node,
+    NodeKind,
+)
 from personalclaw.workflows.resilience import retry_prompt
 from personalclaw.workflows.scope import ScopeMode
 from personalclaw.workflows.scope import allowed_write_paths as scope_allowed
@@ -71,6 +79,39 @@ def _with_retry_hint(ctl: RunController, item: ReadyNode) -> Node:
     return node
 
 
+#: How the owner's standing guidance for a run's project opens a stage's task and a judge gate's
+#: rubric. A reference rather than the text itself: the prompt is a template the step's bindings
+#: resolve, so guidance spliced in as text would be read as bindings wherever it says `{{`, while
+#: a value is handed over as written. And it is her words, as an instruction is, so it is not
+#: fenced as text from outside.
+OWNER_GUIDANCE_BLOCK = (
+    "The owner's standing guidance for this project, for every step of its runs:\n"
+    "{{run.guidance}}\n\n---\n\n"
+)
+
+
+def _with_owner_guidance(node: Node, ctx: BindingContext) -> Node:
+    """*node* with the owner's guidance for the run's project (``ctx.run_guidance``) before its
+    prompt: a stage's task, and the rubric of a judge gate, which is what a judge reads it by. An
+    approval gate's prompt is the question she is asked, and other kinds hand no model a task.
+
+    🔴 The run page's Judge guidance saves a project's instructions and says they reach the
+    worker and the judge; no prompt a run's worker or judge started from held them.
+    """
+    if not ctx.run_guidance:
+        return node
+    cfg = node.config or {}
+    judged = node.kind == NodeKind.GATE and str(cfg.get("kind", "") or "") == GateKind.JUDGE.value
+    prompt = cfg.get("prompt")
+    if not (node.kind == NodeKind.STAGE or judged) or not isinstance(prompt, str) or not prompt:
+        return node
+    import copy
+
+    out = copy.deepcopy(node)
+    out.config["prompt"] = f"{OWNER_GUIDANCE_BLOCK}{prompt}"
+    return out
+
+
 def _worker_model(ctl: RunController) -> str:
     """The concrete model this run's WORKERS resolve to — the family a `cross_model`
     judge gate must avoid.
@@ -113,6 +154,7 @@ async def execute(ctl: RunController, item: ReadyNode, ctx: BindingContext) -> N
     # the correction and the handoff. Order between them does not matter — they are appended to
     # different ends — but dropping either on a retry would be a real loss.
     node = iteration_context.with_carried_context(ctl, node, item)
+    node = _with_owner_guidance(node, ctx)
     # Write-scope snapshot BEFORE the node runs. Only for nodes that opted
     # in: the walk is real work, and a fan-out of fast transforms must not each pay
     # for a tree scan.

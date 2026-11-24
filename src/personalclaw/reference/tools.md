@@ -1938,14 +1938,13 @@ Call with the agent ID from a subagent completion event to retrieve the full out
 
 ### `project_create`
 
-Create a project (a scoping container for task lists). Args: name (str, required, unique), optional agent_instructions_template (str).
+Create a project (a scoping container for task lists). Args: name (str, required, unique). Its instructions are the owner's, written on its page.
 
 **Response type:** `project.detail`
 
 **Safety:** risk: caution
 
 **Parameters:**
-- `agent_instructions_template` (string, optional)
 - `name` (string, required)
 
 **Example — Create a project to group tasks:**
