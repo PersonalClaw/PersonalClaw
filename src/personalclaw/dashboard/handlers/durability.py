@@ -34,6 +34,7 @@ from pathlib import Path, PurePosixPath
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
 
+from personalclaw.dashboard.owner_presence import ACTION_EXPORT, require_owner_presence
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body
@@ -252,7 +253,7 @@ async def api_durability_archive(request: web.Request) -> web.Response:
 
 
 async def api_durability_export(request: web.Request) -> web.Response:
-    """POST /api/durability/export {domains?} — the DSAR export.
+    """POST /api/durability/export {domains?} — the DSAR export, after a recent sign-in.
 
     Body ``{"domains": ["memory"]}`` scopes the zip to those inventory domains;
     omitting it (or an empty body) is the full "give me everything PersonalClaw knows
@@ -262,10 +263,17 @@ async def api_durability_export(request: web.Request) -> web.Response:
 
     POST rather than GET because the domain selection is a body, and because an export
     is not a cacheable idempotent read of a URL — it reads the user's entire home.
+
+    It asks for a recent sign-in first (``owner_presence``), before the body is read: the zip
+    hands out as much as a minted credential, so a session left signed in on a shared or lost
+    device cannot take it. ``personalclaw snapshot`` runs as the local user and does not ask.
     """
     denied = _reject_app(request)
     if denied is not None:
         return denied
+    refused = require_owner_presence(request, ACTION_EXPORT)
+    if refused is not None:
+        return refused
     from personalclaw.portability import create_export_zip
 
     body: dict = {}

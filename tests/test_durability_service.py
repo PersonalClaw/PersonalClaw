@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from signed_in_sessions import without_sign_in
 
 from personalclaw.durability import retention, service
 
@@ -695,7 +696,7 @@ class TestEndpoints:
         app.router.add_post(
             "/api/durability/archive/{id}/restore", mod.api_durability_archive_restore
         )
-        return app
+        return without_sign_in(app)
 
     @pytest.mark.asyncio
     async def test_status(self):

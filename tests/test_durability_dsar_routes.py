@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw.gateway_base import LiveGateway
 
@@ -40,7 +41,9 @@ def _app(*, app_token: str = "") -> web.Application:
     """The routes, with a middleware that stands in for the token-auth middleware.
 
     `app_token` non-empty simulates an app-scoped caller — the same `request["app"]`
-    the real middleware sets from a token's `app` claim.
+    the real middleware sets from a token's `app` claim. The app declares its sign-in off, as
+    a gateway with no token middleware is: what the export asks of a session is
+    `test_durability_export_needs_a_recent_sign_in`'s subject.
     """
     from personalclaw.dashboard.handlers import durability as mod
 
@@ -55,7 +58,7 @@ def _app(*, app_token: str = "") -> web.Application:
     app.router.add_post("/api/durability/import", mod.api_durability_import)
     app.router.add_get("/api/durability/archive", mod.api_durability_archive)
     app.router.add_post("/api/durability/archive/{id}/restore", mod.api_durability_archive_restore)
-    return app
+    return without_sign_in(app)
 
 
 # ── the app-token refusal (least privilege) ──────────────────────────────────

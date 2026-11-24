@@ -11,7 +11,9 @@ name to the function it is, not to a spelling of it. A route that reaches a mint
 (:func:`_minting`) must reach the gate too, or be a sign-in door: a route that redeems a
 credential of its own and so is the sign-in the window counts from (:data:`SIGN_IN_DOORS`, each
 with its reason). A route that changes how the owner signs in through a general write, which no
-minting function names, is listed (:data:`CHANGES_SIGN_IN`) and must reach the gate as well.
+minting function names, is listed (:data:`CHANGES_SIGN_IN`) and must reach the gate as well, as
+must a route that downloads everything PersonalClaw keeps (:data:`HANDS_OUT_THE_HOME`), which
+mints nothing and hands out as much.
 
 The other half: containment — signing a device out, signing out every other device, replacing the
 signing key, revoking an integration token, turning incident mode on, signing out — must work when
@@ -66,6 +68,12 @@ CHANGES_SIGN_IN: dict[tuple[str, str], str] = {
         "stores a secret under the name it is sent, and the gateway reads some of those names "
         "from its environment to decide who can sign in"
     ),
+}
+
+#: Routes that download a copy of everything PersonalClaw keeps: no credential, but as much as one
+#: hands out, from one request.
+HANDS_OUT_THE_HOME: dict[tuple[str, str], str] = {
+    ("POST", "/api/durability/export"): "downloads a copy of everything PersonalClaw keeps",
 }
 
 #: What the owner reaches for when something is wrong. These never ask.
@@ -286,6 +294,15 @@ def test_a_general_write_that_changes_how_the_owner_signs_in_asks_too():
         assert owner_presence.require_owner_presence in reached(
             table[key]
         ), f"{key[0]} {key[1]} — {why} — does not ask for the owner"
+
+
+def test_downloading_everything_personalclaw_keeps_asks_too():
+    table = _routes(_app())
+    for key, why in HANDS_OUT_THE_HOME.items():
+        assert key in table, f"{key} is listed ({why}) but the gateway serves no such route"
+        assert owner_presence.require_owner_presence in reached(
+            table[key]
+        ), f"{key[0]} {key[1]} {why} without asking for the owner"
 
 
 def test_containment_never_asks():

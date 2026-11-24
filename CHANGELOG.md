@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Security
 
 - **Settings › Secrets, a pack's connector setup and `personalclaw setup --credential` refuse a secret under 8 characters or over 16 KB, and say why. Every secret is masked out of what work prints, so a shorter one would hide ordinary text there. A short secret saved before is kept and still works, and Settings › Secrets marks it with Replace. A sign-in setting such as `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` keeps its own form, and `PERSONALCLAW_LOGIN_PASSWORD` needs the 12 characters any sign-in password needs.**
+- **Downloading a copy of everything PersonalClaw keeps asks for a recent sign-in, as making a pairing code or an integration token does. From a device that signed in more than ten minutes ago, Export in Settings › Import / Export asks you to sign in again, then the download starts. The desktop app's own window never asks, and `personalclaw snapshot` is unchanged.**
 
 ## [0.4.1] — 2026-11-25
 

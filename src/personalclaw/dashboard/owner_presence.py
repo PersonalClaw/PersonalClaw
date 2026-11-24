@@ -1,12 +1,13 @@
-"""Proof that the owner is here now, asked by every route that mints a lasting credential or
-changes how the owner signs in.
+"""Proof that the owner is here now, asked by every route that mints a lasting credential,
+changes how the owner signs in, or downloads everything PersonalClaw keeps.
 
 A live session is not that proof. A browser sign-in lasts 30 days by default and up to 90, so a
 phone left unlocked, or a session cookie copied once, could otherwise mint a pairing code, a
 device sign-in code or an integration token that outlives the session that minted it, set the
 password the owner signs in with, or store a secret the gateway reads to decide who can sign in
-(``secrets_vault.is_sign_in_key``). So each such route calls :func:`require_owner_presence`
-first, and it accepts one of:
+(``secrets_vault.is_sign_in_key``). A copy of the whole home hands out as much: everything the
+owner's work, memory and settings hold, from one request. So each such route calls
+:func:`require_owner_presence` first, and it accepts one of:
 
 * **a sign-in from the last** :data:`PRESENCE_WINDOW_SECS` **(ten minutes)** — the time the
   session's device signed in, as the session store records it (Settings → Devices shows the same
@@ -79,6 +80,7 @@ ACTION_CHANGE_PASSWORD = "Changing the sign-in password"
 ACTION_SIGN_IN_SETTING = "Making sign-in less strict"
 ACTION_SIGN_IN_SECRET = "Storing a secret that changes who can sign in"
 ACTION_CONFIRM = "Signing in again"
+ACTION_EXPORT = "Downloading a copy of everything PersonalClaw keeps"
 
 
 @dataclass(frozen=True)
