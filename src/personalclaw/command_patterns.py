@@ -215,6 +215,7 @@ RUNNERS = frozenset(
         ("mise", "x"),
         ("asdf", "exec"),
         ("nix", "run"),
+        ("nix", "shell"),
         ("go", "run"),
         ("deno", "run"),
         ("deno", "x"),
@@ -229,8 +230,44 @@ RUNNERS = frozenset(
         ("bun", "create"),
     }
 )
-#: The longest runner first, so ``uv tool run`` is read before anything shorter.
-_RUNNERS_LONGEST_FIRST = sorted(RUNNERS, key=len, reverse=True)
+#: Other subcommands that start a program, and how: ``docker run IMAGE COMMAND`` takes the image
+#: first; ``kubectl exec`` may run any word after it.
+SUBCOMMAND_WRAPPERS: dict[tuple[str, ...], str] = {
+    **{
+        (*tool, verb): "launcher after a value"  # an image, a container or a service first
+        for tool in (
+            ("docker",),
+            ("podman",),
+            ("docker", "container"),
+            ("podman", "container"),
+            ("docker", "compose"),
+            ("podman", "compose"),
+            ("docker-compose",),
+            ("podman-compose",),
+        )
+        for verb in ("run", "exec")
+    },
+    ("kubectl", "run"): "runs its words",
+    ("kubectl", "exec"): "runs its words",
+    ("kubectl", "debug"): "runs its words",
+    ("nix", "develop"): "runs its words",
+}
+#: Every wrapper of more than one word, and its kind; the longest first, so ``uv tool run`` is
+#: read before anything shorter.
+_SUBCOMMANDS_LONGEST_FIRST = sorted(
+    [*((r, "package runner") for r in RUNNERS), *SUBCOMMAND_WRAPPERS.items()],
+    key=lambda pair: len(pair[0]),
+    reverse=True,
+)
+#: The programs with a subcommand that starts another program, and those subcommands' words. No
+#: wildcard stands where the subcommand goes (``npm **``), and none covers one (``npm --x y **``
+#: does not match ``npm --x y exec …``).
+SUBCOMMAND_PROGRAMS: dict[str, frozenset[str]] = {
+    first: frozenset(t[-1] for t, _ in _SUBCOMMANDS_LONGEST_FIRST if len(t) > 1 and t[0] == first)
+    for first in sorted({t[0] for t, _ in _SUBCOMMANDS_LONGEST_FIRST if len(t) > 1})
+}
+#: The kinds a single word is (a shell, an interpreter, a launcher…).
+_ONE_WORD_KINDS = ("shell", "interpreter", "launcher", "launcher after a value", "runs its words")
 #: The table, as one name for the owner's and a reviewer's reading.
 WRAPPERS = {
     "shell": SHELLS,
@@ -239,6 +276,7 @@ WRAPPERS = {
     "launcher after a value": LAUNCHERS_AFTER_A_VALUE,
     "runs its words": RUNS_ITS_WORDS,
     "package runner": frozenset(" ".join(r) for r in RUNNERS),
+    "subcommand": frozenset(" ".join(t) for t in SUBCOMMAND_WRAPPERS),
 }
 
 _SED = frozenset({"-e", "--expression", "-f", "--file"})
@@ -424,14 +462,22 @@ def _exec_table(name: str) -> dict[str, frozenset[str]]:
     return EXEC_OPTIONS.get(name) or EXEC_OPTIONS.get(_family(name), {})
 
 
+def _subcommands_of(name: str) -> frozenset[str]:
+    """The words of *name*'s subcommands that start a program (:data:`SUBCOMMAND_PROGRAMS`)."""
+    return SUBCOMMAND_PROGRAMS.get(name) or SUBCOMMAND_PROGRAMS.get(_family(name), frozenset())
+
+
 def wrapper_kind(word: str) -> str:
     """The kind of wrapper *word* names as a program (a key of :data:`WRAPPERS`), ``""`` for none.
-    A package runner of more than one word is named by its first (``uv`` for ``uv run``)."""
+    A program whose subcommand starts another is named by its first word: ``uv`` is a package
+    runner (``uv run``), ``docker`` a subcommand (``docker run``)."""
     name = program_name(word)
-    for kind, table in WRAPPERS.items():
-        if kind != "package runner" and _named(name, table):
+    for kind in _ONE_WORD_KINDS:
+        if _named(name, WRAPPERS[kind]):
             return kind
-    return "package runner" if any(r[0] in (name, _family(name)) for r in RUNNERS) else ""
+    if any(r[0] in (name, _family(name)) for r in RUNNERS):
+        return "package runner"
+    return "subcommand" if _subcommands_of(name) else ""
 
 
 def _one_simple(text: str) -> tuple[Simple | None, bool]:
@@ -500,18 +546,31 @@ def _wrapper_at(words: list[str | None], i: int) -> tuple[str, int]:
     """The kind of wrapper the fixed word at *i* is (``""`` for none), and the index of the word
     after it: past every word of a package runner (``uv tool run``)."""
     first = program_name(words[i] or "")
-    for runner in _RUNNERS_LONGEST_FIRST:
-        spelled = words[i : i + len(runner)]
+    for spelling, kind in _SUBCOMMANDS_LONGEST_FIRST:
+        spelled = words[i : i + len(spelling)]
         if (
-            len(spelled) == len(runner)
-            and runner[0] in (first, _family(first))
-            and all(w == r for w, r in zip(spelled[1:], runner[1:], strict=True))
+            len(spelled) == len(spelling)
+            and spelling[0] in (first, _family(first))
+            and all(w == r for w, r in zip(spelled[1:], spelling[1:], strict=True))
         ):
-            return "package runner", i + len(runner)
-    for kind, table in WRAPPERS.items():
-        if kind != "package runner" and _named(first, table):
+            return kind, i + len(spelling)
+    for kind in _ONE_WORD_KINDS:
+        if _named(first, WRAPPERS[kind]):
             return kind, i + 1
     return "", i + 1
+
+
+def _wildcard_at_a_subcommand(words: list[str | None], i: int) -> bool:
+    """Whether, for a program at *i* with a subcommand that starts another program, a wildcard
+    stands where its subcommand goes: before any fixed word but its options."""
+    if not _subcommands_of(program_name(words[i] or "")):
+        return False
+    for word in words[i + 1 :]:
+        if word is None:
+            return True
+        if not word.startswith("-"):
+            return False
+    return False
 
 
 def _wildcard_where_the_program_is_chosen(words: list[str | None]) -> bool:
@@ -522,7 +581,7 @@ def _wildcard_where_the_program_is_chosen(words: list[str | None]) -> bool:
             return True  # the program itself, or the one a wrapper runs
         kind, step = _wrapper_at(words, i)
         if not kind:
-            return _wildcard_after_an_exec_option(words, i)
+            return _wildcard_at_a_subcommand(words, i) or _wildcard_after_an_exec_option(words, i)
         if kind == "runs its words":
             return any(w is None for w in words[step:])
         if step >= len(words):
@@ -601,6 +660,7 @@ class _ExecOptions:
         name = program_name(word)
         table = _exec_table(name)
         self.cluster_next = name in _OLD_STYLE_CLUSTERS
+        self.options = self.options | _subcommands_of(name)
         if table:
             self.tables.append(table)
             self.options = self.options | table.get("", frozenset())
@@ -617,9 +677,12 @@ class _ExecOptions:
 
 
 def _wildcard_after_an_exec_option(words: list[str | None], start: int) -> bool:
-    """Whether a wildcard stands where an option that runs a command (named at or after *start*)
-    takes its value, or in the command that value names."""
+    """Whether a wildcard after *start* stands where an option that runs a command takes its
+    value, or in the command that value names. The options of every program named before it are
+    in force too: ``nix shell nixpkgs#hello -c`` is nix's ``-c``."""
     in_force = _ExecOptions()
+    for word in words[:start]:
+        in_force.read(word or "")
     for j in range(start, len(words)):
         word = words[j]
         if word is None:
