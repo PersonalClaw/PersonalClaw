@@ -73,7 +73,9 @@ trusted-run branch the old path left).
    main's ``scripts/check_commit_provenance.py`` itself (:func:`policy_reading`), pr mode with
    main's MAINTAINERS, over the commits API's list of the
    head's pull request and its title. A fork's run lists no pull request, so it is found by the
-   run's head branch and kept only if its head is the run's. ``dco.yml`` runs the head's copy of
+   run's head branch and kept only if its head is the run's. An open pull request into another
+   base with the same head is red (:func:`judged_pull`): GitHub does not say which pull request
+   started a run, and the verdict is read on the head. ``dco.yml`` runs the head's copy of
    the same check under ``pull_request``, as feedback, and gates nothing. GitHub's Update branch
    makes a merge commit with no sign-off, and rule 1 refuses it on purpose, with no exemption: a
    commit's committer is text anyone can write, so naming GitHub proves nothing, and a merge
@@ -395,6 +397,10 @@ class Run:
     #: The login of the head repository's owner: with :attr:`branch`, how the sign-off rule finds a
     #: fork's pull request, which GitHub lists on none of its runs (:func:`judged_pull`).
     head_owner: str = ""
+    #: The base of each open pull request the run lists with its head that is not into main (an
+    #: unreadable base is not main's). Its run is built on that base, and the verdict is read on
+    #: the head they share, so while one is open no run of the head is green (:func:`judged_pull`).
+    elsewhere: tuple[str, ...] = ()
 
 
 def read_run(get: Get, repo: str, run_id: int) -> Run | str:
@@ -422,18 +428,29 @@ def read_run(get: Get, repo: str, run_id: int) -> Run | str:
         return f"run {run_id} is a queue run on {branch!r}, which names no entry of main's queue"
     event, url = str(run.get("event")), str(run.get("html_url") or "")
     pulls = run.get("pull_requests")
-    numbers = [
-        _int(p.get("number"))
+    # GitHub lists each open pull request whose head is the run's, whatever its base, and lists
+    # them only by the head: which of them started this run, it does not say.
+    listed = [
+        p
         for p in (pulls if isinstance(pulls, list) else [])
         if isinstance(p, Mapping)
         and isinstance(p.get("head"), Mapping)
         and p["head"].get("sha") == head
     ]
+    numbers = [_int(p.get("number")) for p in listed if _base_ref(p) == "main"]
+    elsewhere = tuple(sorted({_base_ref(p) or "an unread base" for p in listed} - {"main"}))
     pull = numbers[0] if len(numbers) == 1 and numbers[0] else None
     head_repository = run.get("head_repository")
     owner_of = head_repository.get("owner") if isinstance(head_repository, Mapping) else None
     head_owner = str(owner_of.get("login") or "") if isinstance(owner_of, Mapping) else ""
-    return Run(run_id, attempt, head, event, url, branch, pull, head_owner)
+    return Run(run_id, attempt, head, event, url, branch, pull, head_owner, elsewhere)
+
+
+def _base_ref(pull: Mapping[str, Any]) -> str:
+    """The branch a listed pull request is into, or "" when the listing names none."""
+    base = pull.get("base")
+    ref = base.get("ref") if isinstance(base, Mapping) else None
+    return ref if isinstance(ref, str) else ""
 
 
 def results_reasons(
@@ -894,34 +911,43 @@ def provenance() -> Any:
 def judged_pull(get: Get, repo: str, run: Run) -> Mapping[str, Any] | str:
     """The open pull request into main whose head is the run's head, read whole, or why there is
     not exactly one. A run of this repository's branch lists it (:attr:`Run.pull`). GitHub lists no
-    pull request on a fork's run, so for one the open pull requests into main from the run's head
-    branch are read: the branch and its owner are the fork's to name, so they only find candidates,
-    and each is kept only if its head is the run's. None, or more than one, is a red, never a pass.
-    """
+    pull request on a fork's run, so for one the open pull requests from the run's head branch are
+    read: the branch and its owner are the fork's to name, so they only find candidates, and each
+    is kept only if its head is the run's. None, or more than one, is a red, never a pass.
+
+    So is an open pull request into another base with the run's head (:attr:`Run.elsewhere`, and
+    for a fork's run the listing's own): GitHub does not say which pull request started a run, its
+    run is built on that base, and the verdict is read on the head the two share."""
     head = run.head_sha
+    elsewhere = set(run.elsewhere)
+    numbers: list[int] = []
     if run.pull is not None:
         numbers = [run.pull]
-    elif not run.head_owner or not run.branch:
+    elif not elsewhere and (not run.head_owner or not run.branch):
         return "the run names no head branch, so no pull request's commits are checked"
-    else:
+    elif run.head_owner and run.branch:
         query = urllib.parse.urlencode(
-            {
-                "state": "open",
-                "head": f"{run.head_owner}:{run.branch}",
-                "base": "main",
-                "per_page": _PER_PAGE,
-            }
+            {"state": "open", "head": f"{run.head_owner}:{run.branch}", "per_page": _PER_PAGE}
         )
         listed = _read(get, f"/repos/{repo}/pulls?{query}")
         if not isinstance(listed, list):
             raise Unread(f"the open pull requests from {head}'s branch are not a list")
-        numbers = []
         for item in listed:
             number = _int(item.get("number")) if isinstance(item, Mapping) else None
             found = item.get("head") if isinstance(item, Mapping) else None
-            if number and isinstance(found, Mapping) and found.get("sha") == head:
+            if not (number and isinstance(found, Mapping) and found.get("sha") == head):
+                continue
+            if _base_ref(item) == "main":
                 numbers.append(number)
+            else:
+                elsewhere.add(_base_ref(item) or "an unread base")
         numbers = sorted(set(numbers))
+    if elsewhere:
+        return (
+            f"an open pull request into {', '.join(sorted(elsewhere))} has this head too, and"
+            " GitHub does not say which of them started this run, which would then be built on"
+            " that base and not on main: close it, or give it a head of its own"
+        )
     if len(numbers) != 1:
         return (
             f"{len(numbers)} open pull requests into main have this head, not one, so its commits"
