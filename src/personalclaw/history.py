@@ -29,7 +29,6 @@ import re
 import threading
 import time as _time
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType
@@ -41,7 +40,7 @@ from personalclaw.concurrency import single_flight
 from personalclaw.config import loader as config_loader
 from personalclaw.credential_locations import CREDENTIAL_LOCATIONS
 from personalclaw.guardrails.incident import incident_active
-from personalclaw.instants import as_instant, utc_iso, utc_now_iso
+from personalclaw.instants import utc_iso, utc_now_iso
 from personalclaw.search_snippets import match_snippet
 from personalclaw.security import (
     MaskConflict,
@@ -51,6 +50,16 @@ from personalclaw.security import (
 )
 from personalclaw.sel import sel
 from personalclaw.skills import AutoSkillProvenance
+from personalclaw.transcript_heads import (
+    _Head,
+    _listed_title,
+    _message_line,
+    _metadata_line,
+    _mode_of,
+    _recorded_count,
+    _TranscriptHeads,
+    _with_instants,
+)
 from personalclaw.transcript_rewrites import messages_unchanged
 from personalclaw.turn_source import arrived_on, model_text, provenance, someone_elses
 
@@ -333,50 +342,6 @@ def import_conversation(
 _TITLE_SCAN_LINES = 21
 
 
-@dataclass(frozen=True)
-class _Head:
-    """What the chat list reads of one transcript: its metadata line, how many messages it holds,
-    and — when the metadata names no title — its first prompt.
-
-    ``meta`` is the metadata line (empty when the first line is not one) and ``head_bytes`` that
-    line's length. A head read for its metadata alone (:meth:`ConversationLog.get_metadata`) is
-    not ``complete``: ``messages`` and ``first_prompt`` are ``None`` until a listing reads them.
-    """
-
-    meta: Mapping[str, Any]
-    head_bytes: int
-    messages: int | None
-    first_prompt: str | None
-    complete: bool
-
-
-def _with_instants(record: dict) -> dict:
-    """*record*, a parsed transcript line, with each time it holds read as an instant.
-
-    A message's ``ts`` and the metadata's ``*_at`` times were written as this machine's local
-    time with no offset until stamps carried one, and a reader in another zone read them hours
-    off. Each is read here as the instant it was (:func:`personalclaw.instants.as_instant`), so
-    every reader of a transcript sees the same one; a stamp with an offset keeps its text.
-    """
-    for key, value in record.items():
-        if (key == "ts" or key.endswith("_at")) and isinstance(value, str):
-            record[key] = as_instant(value)
-    return record
-
-
-def _metadata_line(first: bytes) -> dict:
-    """The metadata a transcript's first line holds, or ``{}`` when it is not a metadata line."""
-    if not first.strip():
-        return {}
-    try:
-        data = json.loads(first)
-    except ValueError:
-        return {}
-    if not isinstance(data, dict) or data.get("_type") != "metadata":
-        return {}
-    return _with_instants(data)
-
-
 def read_memory_mode(path: Path) -> str | None:
     """The memory mode the chat at ``path`` records: its record's while its first line is the one
     the record matched (``chat_record.trusted``, ``matches``), else the line's, or the record's
@@ -412,12 +377,6 @@ def read_memory_mode(path: Path) -> str | None:
     return _mode_of(chat_record.over(data, record), UNREADABLE)
 
 
-def _mode_of(metadata: Mapping[str, Any], unreadable: str) -> str | None:
-    """The memory mode *metadata* names: ``None`` for none, *unreadable* for a mode no string."""
-    mode = metadata.get("memory_mode")
-    return mode if mode is None or isinstance(mode, str) else unreadable
-
-
 def _prompt_of(data: object) -> str:
     """A message line's text when it is the user's, as the title fallback takes it."""
     if isinstance(data, dict) and data.get("role") == "user":
@@ -425,21 +384,6 @@ def _prompt_of(data: object) -> str:
         if isinstance(content, str) and content:
             return content[:80]
     return ""
-
-
-def _listed_title(head: _Head | None, name: str) -> str:
-    """The title the chat list shows: the metadata's, else the first user message, else *name*."""
-    return (head.meta.get("title") or head.first_prompt or name) if head is not None else name
-
-
-def _recorded_count(meta: Mapping[str, Any], message_bytes: int) -> int | None:
-    """The message count the metadata records, while the file still holds exactly the message
-    bytes it was recorded with — the dashboard's save and the import both record them. A writer
-    that appended since (a channel app's ``append``) changed those bytes: ``None``, count them."""
-    recorded, recorded_bytes = meta.get("message_count"), meta.get("message_bytes")
-    if type(recorded) is int and type(recorded_bytes) is int and recorded_bytes == message_bytes:
-        return recorded
-    return None
 
 
 def _read_head(path: Path, stat: os.stat_result, *, listing: bool) -> _Head | None:
@@ -493,61 +437,10 @@ def _read_head(path: Path, stat: os.stat_result, *, listing: bool) -> _Head | No
     return _Head(MappingProxyType(meta), len(first), messages, prompt, True)
 
 
-def _message_line(raw: bytes) -> dict | None:
-    """A transcript line as :meth:`ConversationLog._read_messages` reads it: a message, or
-    ``None`` for a blank, unparsable or metadata line."""
-    if not raw.strip():
-        return None
-    try:
-        data = json.loads(raw)
-    except ValueError:
-        return None
-    if not isinstance(data, dict) or data.get("_type") == "metadata":
-        return None
-    return data
-
-
 def _signature(path: str, stat: os.stat_result) -> tuple[int, ...]:
     """What changes when a chat does: its transcript, which every write replaces (a new inode) or
     grows, and its record."""
     return (stat.st_ino, stat.st_size, stat.st_mtime_ns, *chat_record.stamp(Path(path)))
-
-
-class _TranscriptHeads:
-    """Each transcript's :class:`_Head`, kept for as long as the file is unchanged.
-
-    ONE store for every :class:`ConversationLog` in the process — the dashboard's, the search
-    index's, a script's — so a log made after another lists without opening a transcript again.
-    Two logs each keeping their own had every new one read all of them: 24,000 opens to list
-    12,005 chats, which the search index's pass paid every five minutes (measured). Keyed by the
-    file's path and valid for its :func:`_signature`; it holds metadata lines, never a message.
-    """
-
-    #: A bound far past any real history: cleared whole when crossed.
-    LIMIT = 200_000
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._kept: dict[str, tuple[tuple[int, ...], _Head]] = {}
-
-    def get(self, path: str, signature: tuple[int, ...]) -> _Head | None:
-        with self._lock:
-            kept = self._kept.get(path)
-        return kept[1] if kept is not None and kept[0] == signature else None
-
-    def keep(self, path: str, signature: tuple[int, ...], head: _Head) -> None:
-        with self._lock:
-            if len(self._kept) >= self.LIMIT:
-                self._kept.clear()
-            self._kept[path] = (signature, head)
-
-    def drop(self, path: str) -> None:
-        with self._lock:
-            self._kept.pop(path, None)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._kept.clear()
 
 
 #: The process's transcript heads, shared by every conversation log.
