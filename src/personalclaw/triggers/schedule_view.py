@@ -41,6 +41,7 @@ import logging
 from typing import Any
 
 from personalclaw.security import redact_values_for_display
+from personalclaw.triggers.models import ADAPTIVE_WAITING
 
 logger = logging.getLogger(__name__)
 
@@ -395,12 +396,15 @@ def _describe_adaptive(spec: dict[str, Any]) -> str:
     degraded = _int_or_none(spec.get("interval_secs_degraded"))
     if not healthy or not degraded:
         return "adaptive"
-    live = (
-        degraded if str(spec.get("health_state") or "").strip().lower() == "degraded" else healthy
-    )
+    state = str(spec.get("health_state") or "").strip().lower()
+    if state == ADAPTIVE_WAITING:
+        # Its score is under target and its fix waits for a cooldown: neither cadence is "now".
+        now = "waiting for a fix in its cooldown"
+    else:
+        now = f"every {_mins(degraded if state == 'degraded' else healthy)}"
     return (
         f"adaptive — every {_mins(healthy)} with nothing to repair, {_mins(degraded)} while "
-        f"repairing (now: every {_mins(live)})"
+        f"repairing (now: {now})"
     )
 
 

@@ -30,6 +30,12 @@ from personalclaw.safety_flags import strict_bool
 
 # ── the closed vocabularies ──
 
+#: An `adaptive` clock's ``health_state`` while the work that would repair it waits for its
+#: cooldown: its score is under target, so it is not healthy, and it has nothing to run until the
+#: work is due, so it is not on its short cadence either (`remediation_provider`, `schedule_view`).
+#: The clock arms on its long cadence; its writer sets the due time when that comes first.
+ADAPTIVE_WAITING = "waiting"
+
 #: Trigger kinds. `pulse`/`observe` are NOT accepted yet: a kind the
 #: service cannot dispatch would let a user author a trigger that never fires, which is the failure
 #: the never-throw validation exists to make impossible.
