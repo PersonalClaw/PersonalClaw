@@ -131,3 +131,48 @@ def test_the_check_is_registered_with_the_apps_checks() -> None:
     probes = {p.id: p for p in doctor.all_probes()}
     assert probes["apps.capabilities"].capability == "apps"
     assert probes["apps.backends"].capability == "apps"
+
+
+# ── what a check says is masked, evidence included ───────────────────────────────────────────
+
+_TOKEN = "ghp_" + "A1b2C3d4" * 4 + "Zz9Y"
+
+
+@pytest.mark.asyncio
+async def test_a_capabilitys_secret_shaped_reason_is_masked_in_the_doctors_evidence(
+    tmp_path, built
+) -> None:
+    built.fail["inbox"] = f"the token {_TOKEN} was refused"
+    _install(tmp_path)
+    result = await doctor._safe_run(
+        [p for p in doctor.all_probes() if p.id == "apps.capabilities"][0],
+        doctor.DoctorContext(home=tmp_path),
+    )
+    (inbox,) = [c for c in result.evidence["apps"][APP]["capabilities"] if c["id"] == "inbox"]
+    assert _TOKEN not in json.dumps(result.evidence), result.evidence
+    assert "was refused" in inbox["reason"], "the reason is masked, not dropped"
+    assert _TOKEN not in result.detail
+
+
+@pytest.mark.asyncio
+async def test_every_string_in_any_checks_evidence_is_masked(tmp_path) -> None:
+    class _Leaky:
+        id = "test.leaky"
+
+        async def run(self, ctx):
+            return doctor.ProbeResult(
+                ok=False,
+                detail="a provider said no",
+                evidence={
+                    "error": f"401 for {_TOKEN}",
+                    "attempts": [{"said": f"retry with {_TOKEN}"}, 3],
+                    "count": 2,
+                    "ok_before": True,
+                },
+            )
+
+    result = await doctor._safe_run(_Leaky(), doctor.DoctorContext(home=tmp_path))
+    assert _TOKEN not in json.dumps(result.evidence), result.evidence
+    assert result.evidence["error"].startswith("401 for ")
+    assert result.evidence["attempts"][1] == 3 and result.evidence["count"] == 2
+    assert result.evidence["ok_before"] is True
