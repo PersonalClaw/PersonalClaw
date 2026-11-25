@@ -1028,7 +1028,10 @@ requires is empty), `starting`, `running`, `failed` (with the sentence its build
 `unavailable` (the availability check's reason, as last measured: a status read starts no check).
 Each `/api/apps` row's `capabilities` carry `on`, `status` and `reason`, and the row's
 `capabilitySummary` is the app's one line about them ("2 of 3 capabilities running · Mail in your
-Inbox failed: the token was refused"); the switch routes answer with the same reading.
+Inbox failed: the token was refused"); the switch routes answer with the same reading, and so
+does the Doctor's `apps.capabilities` check (`resilience/app_probes.py`): a line per enabled app,
+failing on a capability whose build failed or that cannot run here, or on switches that couldn't
+be read, while a capability switched off reads as off.
 
 A capability may declare its own check of the settings a form saves for it (`settingsCheck`,
 `module.path:function`, resolved as `implementation` is; core feature `settings-check`). Every
