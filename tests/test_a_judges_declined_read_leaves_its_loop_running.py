@@ -145,6 +145,13 @@ def _general(step: str) -> Node:
             ),
             False,
         ),
+        # The posture is read as the engine reads it, whatever its case or spacing.
+        (
+            Node.from_dict(
+                {"kind": "stage", "id": "survey", "config": {"tools_posture": " Verify "}}
+            ),
+            False,
+        ),
         (
             Node.from_dict({"kind": "stage", "id": "draft", "config": {"tools_posture": "full"}}),
             True,
@@ -168,6 +175,7 @@ def _general(step: str) -> Node:
         "a judge stage",
         "a judge gate",
         "a read-only verifier",
+        "a read-only verifier written Verify",
         "a writer",
         "a verifier that may change things",
         "gone",
