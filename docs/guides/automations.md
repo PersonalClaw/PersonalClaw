@@ -256,6 +256,29 @@ Notifications is **Missed or interrupted runs to review**.
 
 ---
 
+## See when it will run
+
+**In your words:** *"Before I save a schedule, show me when it will really run, and tell me about
+the days it won't."*
+
+A clock automation's next runs come from the clock's own steps, so what you read is what fires.
+`POST /api/triggers/preview` takes the schedule part of a create or an edit (`every`, `cron`,
+`at`, `timezone`, `skip_dates`, `strict_schedule`, and `trigger_id` for one you're editing) and
+answers its next runs (5 by default, up to 10). Each run has its time in the automation's zone and,
+when something about it is worth saying, a note in words:
+
+- a time the clocks skip as they go forward runs when they jump: "02:30 does not happen on Sun 8 Mar
+  2026 (the clocks go forward), so it runs at 03:00.";
+- a time the clocks show twice as they go back runs once, at the first;
+- a skip date is a skipped run, listed and struck through, never a gap: "Skipped: 25 Dec 2026 is one
+  of its skip dates.";
+- quiet hours that skip say so, and quiet hours that catch up say it runs when they end;
+- a new automation with a spread says it runs up to that long after the time shown.
+
+A schedule the save would refuse is answered with the save's own words, and one that never runs
+again says why ("That time has passed."). When the agent makes an automation for you, its answer
+lists the next three runs the same way, and so does its answer to moving one's schedule.
+
 ## When a scheduled time is missed
 
 **In your words:** *"If my laptop was closed at 3am, I want to decide whether the 3am backup runs

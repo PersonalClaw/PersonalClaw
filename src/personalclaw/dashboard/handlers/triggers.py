@@ -1348,9 +1348,6 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
-    every = body.get("every")
-    cron_expr = body.get("cron")
-    at_ts = body.get("at")
     channel = str(body.get("channel", "")).strip() or None
     problem = _channel_problem(channel)
     if problem:
@@ -1383,28 +1380,12 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     # store's spellings are `expr`/`interval_secs`/`at` (the legacy `cron_expr`/`every_secs`/`at_ts`
     # live on the wire only), and every validation above is unchanged — the re-point moves where the
     # row is PERSISTED, never what the API accepts.
-    spec: dict[str, Any] = {}
-    if every:
-        try:
-            spec = {"kind": "interval", "interval_secs": int(every)}
-        except (ValueError, TypeError):
-            return web.json_response({"error": "'every' must be an integer"}, status=400)
-    elif cron_expr:
-        spec = {"kind": "cron", "expr": str(cron_expr).strip()}
-    elif at_ts:
-        at, problem = _one_shot_time(at_ts)
-        if problem:
-            return json_error("invalid_request", message=problem, status=400)
-        spec = {"kind": "at", "at": at, "delete_after_run": True}
-    else:
-        return web.json_response({"error": "every, cron, or at required"}, status=400)
+    # One reading of the cadence for a save and a preview (`schedule_body.spec_from_body`).
+    from personalclaw.triggers.schedule_body import spec_from_body
 
-    if timezone_val:
-        spec["timezone"] = timezone_val
-    if strict_schedule:
-        spec["strict"] = True
-    if isinstance(body.get("skip_dates"), list):
-        spec["skip_dates"] = [str(d) for d in body["skip_dates"]]
+    spec, problem = spec_from_body(body, strict=strict_schedule)
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
 
     from personalclaw.triggers import tools as _tools
 
@@ -1833,12 +1814,13 @@ def _update_schedule(
             )
         kwargs["timezone"] = tz_val
     # `skip_dates` used to be absent from this whole function while `_create_schedule` read it and
-    # `_carried` went out of its way to preserve it across a cadence change — so the field could be
-    # set at creation and preserved forever, but never CHANGED. Editing a holiday list returned
-    # 200 with the old list intact (issue 272). The coercion is character-for-character the create
-    # path's, because two endpoints that accept the same field must accept it identically: a
-    # non-list is ignored rather than rejected there, so it is ignored here too. (Validating the
-    # date STRINGS is issue 270 and belongs to both paths at once, not to this one.)
+    # `schedule_body.carried` went out of its way to preserve it across a cadence change — so the
+    # field could be set at creation and preserved forever, but never CHANGED. Editing a holiday
+    # list returned 200 with the old list intact (issue 272). The coercion is
+    # character-for-character the create path's, because two endpoints that accept the same field
+    # must accept it identically: a non-list is ignored rather than rejected there, so it is ignored
+    # here too. (Validating the date STRINGS is issue 270 and belongs to both paths at once, not to
+    # this one.)
     if isinstance(body.get("skip_dates"), list):
         kwargs["skip_dates"] = [str(d) for d in body["skip_dates"]]
     if not kwargs:
@@ -1852,43 +1834,14 @@ def _update_schedule(
     row = store.get(raw)
     if row is not None:
         from personalclaw.triggers import tools as _tools
+        from personalclaw.triggers.schedule_body import spec_from_body
         from personalclaw.triggers.schedule_view import channel_of
 
         before = dict(row.trigger.spec or {})
-        spec = dict(before)
-        if "at_ts" in kwargs:
-            was_once = str(before.get("kind") or "") == "at"
-            at_ts, problem = _one_shot_time(
-                kwargs["at_ts"], kept=before.get("at") if was_once else None
-            )
-            if problem:
-                return json_error("invalid_request", message=problem, status=400)
-            kwargs["at_ts"] = at_ts
-        if "cron_expr" in kwargs and kwargs["cron_expr"]:
-            spec = {"kind": "cron", "expr": str(kwargs["cron_expr"]).strip(), **_carried(spec)}
-        elif "every_secs" in kwargs and kwargs["every_secs"]:
-            spec = {
-                "kind": "interval",
-                "interval_secs": int(kwargs["every_secs"]),
-                **_carried(spec),
-            }
-        elif "at_ts" in kwargs:
-            # A one-shot keeps what it was made as while its time moves: the page's leaves the list
-            # after its run and the chat's stays (`service.retire_after_run`). A cadence changed
-            # into a one-shot here is the page's, as `_create_schedule` makes one.
-            was_once = str(before.get("kind") or "") == "at"
-            spec = {
-                "kind": "at",
-                "at": kwargs["at_ts"],
-                "delete_after_run": bool(before.get("delete_after_run")) if was_once else True,
-                **_carried(spec),
-            }
-        if "timezone" in kwargs:
-            spec["timezone"] = kwargs["timezone"]
-        if "strict_schedule" in kwargs:
-            spec["strict"] = bool(kwargs["strict_schedule"])
-        if "skip_dates" in kwargs:
-            spec["skip_dates"] = kwargs["skip_dates"]
+        # The body's cadence merged into the stored spec, as the preview of this row reads it.
+        spec, problem = spec_from_body(body, stored=before, strict=kwargs.get("strict_schedule"))
+        if problem:
+            return json_error("invalid_request", message=problem, status=400)
         # The next fire follows in `tools.update` (`arm.next_fire_after_edit`), the one rule the
         # chat's edit goes through too. It compares the spec this builds with the stored one, never
         # which keys the body carried: the form sends `timezone` on every save, and re-arming on
@@ -1916,7 +1869,7 @@ def _update_schedule(
             # 🔴 MERGED, never replaced. `failure_policy` also holds `autopause_after`, the
             # threshold `autopause.evaluate` reads, and the form owns exactly one of its keys.
             # Sending `{"dedupe_hash": …}` alone would silently reset a user's tuned failure budget
-            # to the default — the quietly-losable class `_carried` exists for one field up.
+            # to the default — the quietly-losable class `schedule_body.carried` exists for.
             policy = dict(row.trigger.failure_policy or {})
             policy["dedupe_hash"] = bool(kwargs["failure_dedupe"])
             patch["failure_policy"] = policy
@@ -1944,41 +1897,62 @@ def _update_schedule(
     return web.json_response({"error": "not found"}, status=404)
 
 
-def _carried(spec: dict[str, Any]) -> dict[str, Any]:
-    """Spec keys that survive a CADENCE change.
+# ── preview ──
 
-    Replacing `{kind, expr}` wholesale would silently drop `timezone`/`skip_dates`/`strict` — the
-    quietly-losable class, and the exact fields `verify-migration` exists to
-    catch going missing. A user changing `0 9 * * *` to `0 10 * * *` must not lose their holidays.
+
+async def api_triggers_preview(request: web.Request) -> web.Response:
+    """POST /api/triggers/preview — a clock automation's next runs, before it is saved.
+
+    The body is the schedule part of a create or edit (``every``, ``cron``, ``at``, ``timezone``,
+    ``skip_dates``, ``strict_schedule``), read through the builder the save reads it with
+    (`schedule_body.spec_from_body`), so a preview and a save are one spec. ``trigger_id`` names the
+    automation being edited (``schedule:<id>`` or its id): its spec, gates and id are used, with the
+    body's fields over its spec, as the edit merges them. ``count`` is how many runs, 1 to 10.
+
+    200 for any readable body, a spec the save would refuse included: the form asks on every pause
+    in typing, and the refusal is the preview's ``outcome`` (`triggers.preview`). 400 for a body
+    that is not a schedule, 404 for a ``trigger_id`` that names no clock automation. Owner only, and
+    it reads the store and writes nothing.
     """
-    return {k: v for k, v in spec.items() if k in ("timezone", "skip_dates", "strict")}
+    import copy
+    import time
 
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.preview import DEFAULT_COUNT, MAX_COUNT, next_runs
+    from personalclaw.triggers.schedule_body import spec_from_body
 
-def _one_shot_time(value: Any, *, kept: Any = None) -> tuple[float, str]:
-    """A one-shot's ``at`` as a request sends it: epoch seconds still to come, or why not.
-
-    One reading for the create and the edit, so a time is taken or refused alike wherever it is
-    typed. A time already gone is refused rather than saved: the row would sit listed, switched on,
-    and never fire, which is why the chat's one-time task refuses it too, in these words. *kept* is
-    the time an edited row already has, which its form sends back with every save: taken as it is,
-    so a one-shot whose time has passed can still be renamed.
-    """
-    import math
-    import time as _time
-
-    try:
-        at = float(value)
-    except (TypeError, ValueError):
-        return 0.0, "'at' must be a Unix timestamp in seconds"
-    if not math.isfinite(at):
-        return 0.0, "'at' must be a Unix timestamp in seconds"
-    try:
-        unchanged = kept is not None and at == float(kept)
-    except (TypeError, ValueError):
-        unchanged = False
-    if at <= _time.time() and not unchanged:
-        return 0.0, "That time has already passed. Give a time that is still to come."
-    return at, ""
+    body = await json_object_body(request)
+    count = body.get("count", DEFAULT_COUNT)
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= MAX_COUNT:
+        return json_error(
+            "invalid_request",
+            message=f"count must be a whole number from 1 to {MAX_COUNT}.",
+            status=400,
+        )
+    strict = optional_bool(body, "strict_schedule")
+    stored = None
+    raw_id = str(body.get("trigger_id") or "").strip()
+    if raw_id:
+        raw = raw_id.removeprefix(f"{_SCHEDULE}:")
+        row = _trigger_store().get(raw)
+        if row is None or row.trigger.kind != "clock":
+            return json_error("not_found", message="No automation with that id.", status=404)
+        stored = row.trigger
+    spec, problem = spec_from_body(
+        body,
+        stored=dict(stored.spec or {}) if stored is not None else None,
+        strict=None if strict is MISSING else bool(strict),
+        future_only=False,
+    )
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
+    if stored is not None:
+        trigger = copy.copy(stored)
+        trigger.spec = spec
+    else:
+        trigger = Trigger(id="", name="", kind="clock", spec=spec)
+    preview = next_runs(trigger, now=time.time(), count=count)
+    return web.json_response({**preview.to_dict(), "next_cursor": None})
 
 
 # ── toggle (run, fire, answer and test are `trigger_runs`) ──
@@ -2713,6 +2687,7 @@ def register_trigger_routes(app: web.Application) -> None:
     # Registered BEFORE `/{id}` so aiohttp does not capture the literal segments as trigger ids —
     # the ordering landmine `/surfacing` already paid for.
     app.router.add_get("/api/triggers/week", api_triggers_week)
+    app.router.add_post("/api/triggers/preview", api_triggers_preview)
     app.router.add_get("/api/triggers/doctor", api_triggers_doctor)
     # The `view` kind's render caller. Literal path, registered BEFORE `/{id}` for the
     # same reason as `/week` and `/doctor` — otherwise aiohttp captures `view` as a trigger id.

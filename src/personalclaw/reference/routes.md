@@ -878,6 +878,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/triggers` — create a schedule, lifecycle or data-event trigger.
 - `GET /api/triggers/doctor` — structural problems across every trigger.
 - `GET /api/triggers/history` — the run feed across every kind.
+- `POST /api/triggers/preview` — a clock automation's next runs, before it is saved.
 - `POST /api/triggers/restore-hold/resume` — Resume all: every automation a restore holds.
 - `GET /api/triggers/review` — what a restart left for you to decide.
 - `POST /api/triggers/review` — decide one of them.
