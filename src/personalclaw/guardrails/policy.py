@@ -89,42 +89,6 @@ INTERACTIVE = SafetyProfile(
     scan_mode="warn",
 )
 
-# Write inside the workspace, dev-registry egress only.
-CODING = SafetyProfile(
-    name="coding",
-    approval="hook_based",
-    tool_grants=TOOL_READ_WRITE,
-    egress_tier="registry",
-    scan_mode="redact",
-)
-
-# Read-only tools, no external writes — a reviewer/analyst.
-REVIEW_ONLY = SafetyProfile(
-    name="review_only",
-    approval="hook_based",
-    tool_grants=TOOL_READ,
-    egress_tier="listed",
-    scan_mode="redact",
-)
-
-# Delete allowed inside granted dirs only (a cleanup job).
-CLEANUP = SafetyProfile(
-    name="cleanup",
-    approval="hook_based",
-    tool_grants=TOOL_READ_WRITE,
-    egress_tier="off",
-    scan_mode="redact",
-)
-
-# Everything denied except notify — the incident posture.
-INCIDENT = SafetyProfile(
-    name="incident",
-    approval="hook_based",
-    tool_grants=TOOL_READ,
-    egress_tier="off",
-    scan_mode="block",
-)
-
 # The unattended default: read-only + creation-time grants. Auto-fired runs resolve
 # HERE by construction (never blocks waiting for a human; writes require a grant on
 # the job/trigger reviewed when the automation was created).
@@ -150,16 +114,6 @@ HEADLESS = SafetyProfile(
     scan_mode="redact",
 )
 
-_PROFILES: dict[str, SafetyProfile] = {
-    p.name: p for p in (INTERACTIVE, CODING, REVIEW_ONLY, CLEANUP, INCIDENT, HEADLESS)
-}
-
-
-def get_profile(name: str) -> SafetyProfile:
-    """Look up a named profile (defaults to HEADLESS — the safe unattended posture —
-    for an unknown name, NOT interactive: an unrecognized profile must fail closed)."""
-    return _PROFILES.get(name, HEADLESS)
-
 
 def safety_profile_for(base: SafetyProfile) -> SafetyProfile:
     """Layer the operator's ``guardrails`` config onto a base profile.
@@ -178,10 +132,8 @@ def safety_profile_for(base: SafetyProfile) -> SafetyProfile:
         max_tokens=gr.budgets.max_tokens_per_day, max_dollars=gr.budgets.max_dollars_per_day
     )
     budget = base.budget if not base.budget.is_unlimited else day_budget
-    # An INTERACTIVE/local profile keeps its own scan_mode; the unattended profiles
-    # inherit the operator's configured mode when they didn't force 'block'.
-    scan_mode = base.scan_mode if base.scan_mode == "block" else gr.scan_mode
-    return base.with_overrides(budget=budget, scan_mode=scan_mode)
+    # Every profile takes the operator's configured scan mode; the ceiling narrows it after.
+    return base.with_overrides(budget=budget, scan_mode=gr.scan_mode)
 
 
 # ── Headless-by-construction resolution ─────────────────────────────────────────
@@ -296,8 +248,8 @@ def rung_ceiling_for_profile(profile: SafetyProfile, *, unattended: bool = False
       ceiling must never move: each step down the approval scale is at most as permissive
       as the one above it.
 
-    The INCIDENT posture is not expressed here: ``resolve_rung`` clamps every resolution
-    to ``one_tap`` while an incident is active, which outranks both levels.
+    Incident mode is not expressed here (``guardrails/incident.py``): ``resolve_rung`` clamps
+    every resolution to ``one_tap`` while an incident is active, which outranks both levels.
     """
     if profile.approval == "auto":
         return RUNG_AUTONOMOUS

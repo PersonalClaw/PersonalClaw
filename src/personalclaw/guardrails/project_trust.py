@@ -7,13 +7,13 @@ would execute. So a folder answers **Trust** vs **Preview**:
 
 * **Trust** → the run gets the write access its step asks for.
 * **Preview** (the safe default, and what an untrusted/undecided folder gets) → the run proceeds
-  under ``REVIEW_ONLY``: read-only, no script execution. The files its Allow names one by one
+  read-only: no script execution. The files its Allow names one by one
   (``write_scope``) stay its to change; what Preview holds back is the write access to change
   anything else and run commands.
 
 Preview maps onto the capability class rather than inventing a second read-only mechanism:
 :func:`held_to` is the class a run in a folder is held to, ``research`` for one not trusted, so
-"REVIEW_ONLY for project-script execution" is the SAME approval-layer denial a read-only research
+a read-only run for project-script execution is the SAME approval-layer denial a read-only research
 spawn gets (``subagent._run_inner``). One read-only control, asked through one door by both actions
 and by what their Allow says (``automation_posture.agent_run_policy``).
 

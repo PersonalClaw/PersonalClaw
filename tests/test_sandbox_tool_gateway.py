@@ -12,9 +12,9 @@ sandboxed agent would run it):
   fd numbers plus an advertised tool list. Asserted as a whole-env check (no key or value carries
   a secret-shaped name), with a floor proving the same check catches a planted token.
 * **(c) a research-profile sandbox is refused write-class tools host-side** — the same tool, in
-  the same surface, over the same channel: refused under ``REVIEW_ONLY`` (``tool_grants="read"``)
-  and served under ``CODING`` (``read_write``). Both directions, because a gateway that refuses
-  everything would pass the refusal alone.
+  the same surface, over the same channel: refused under a read-only profile
+  (``tool_grants="read"``) and served under a read-write one (``read_write``). Both directions,
+  because a gateway that refuses everything would pass the refusal alone.
 * **the docker/lima promise is NOT verified here.** The container tiers do not
   exist in this tree (``sandbox_providers`` ships ``none`` only), so "inside a docker/lima
   sandbox" cannot be honestly claimed. What IS claimed is the transport and the policy the
@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw.guardrails.policy import CODING, INTERACTIVE, REVIEW_ONLY, SafetyProfile
+from personalclaw.guardrails.policy import INTERACTIVE, SafetyProfile
 from personalclaw.sandbox_providers.pclaw_tool import (
     DEFAULT_REQUEST_FD,
     DEFAULT_RESPONSE_FD,
@@ -56,6 +56,15 @@ from personalclaw.sandbox_providers.tool_gateway import (
     ToolSpec,
 )
 from personalclaw.tool_providers.base import RiskLevel
+
+#: A run held to reading (a research spawn's posture) and one that may write, built here: the
+#: gateway's refusal reads ``tool_grants`` alone, so these two are all a profile needs to say.
+READ_ONLY = SafetyProfile(
+    name="read_only", approval="hook_based", tool_grants="read", egress_tier="listed"
+)
+READ_WRITE = SafetyProfile(
+    name="read_write", approval="hook_based", tool_grants="read_write", egress_tier="registry"
+)
 
 #: Tokens that would mean a network hop exists somewhere in the transport.
 _NETWORK_TOKENS = (
@@ -170,14 +179,14 @@ def test_a_research_profile_is_refused_a_write_class_tool_and_a_coding_profile_i
         "args": {"text": "prefers tabs"},
     }
 
-    refused = ToolGateway(profile=REVIEW_ONLY, context=_ctx(ws)).handle_request(request)
+    refused = ToolGateway(profile=READ_ONLY, context=_ctx(ws)).handle_request(request)
     assert not refused["ok"], refused
     assert refused["code"] == ERR_REFUSED, refused
     assert "write-class" in refused["error"]
 
     # Vacuity floor: the identical request under a read_write profile is SERVED, so the refusal
     # above is the profile doing work rather than the tool being broken.
-    served = ToolGateway(profile=CODING, context=_ctx(ws)).handle_request(request)
+    served = ToolGateway(profile=READ_WRITE, context=_ctx(ws)).handle_request(request)
     assert served["ok"], served
     assert "prefers tabs" in served["result"]
 
@@ -186,7 +195,7 @@ def test_a_read_tool_is_served_under_the_research_profile(home: Path, tmp_path: 
     """Read-only does not mean useless: the same profile that refuses the write serves the read."""
     ws = tmp_path / "ws"
     ws.mkdir()
-    gateway = ToolGateway(profile=REVIEW_ONLY, context=_ctx(ws))
+    gateway = ToolGateway(profile=READ_ONLY, context=_ctx(ws))
     response = gateway.handle_request({"protocol": 1, "id": "1", "tool": "memory_read", "args": {}})
     assert response["ok"], response
 
@@ -196,8 +205,8 @@ def test_the_advertised_surface_matches_the_enforced_one(home: Path, tmp_path: P
     burn a turn discovering the policy. ``offered`` is derived from the same refusal function."""
     ws = tmp_path / "ws"
     ws.mkdir()
-    research = ToolGateway(profile=REVIEW_ONLY, context=_ctx(ws))
-    coding = ToolGateway(profile=CODING, context=_ctx(ws))
+    research = ToolGateway(profile=READ_ONLY, context=_ctx(ws))
+    coding = ToolGateway(profile=READ_WRITE, context=_ctx(ws))
     assert "memory_remember" not in research.offered
     assert "memory_recall" in research.offered
     assert "memory_remember" in coding.offered
@@ -239,7 +248,7 @@ def test_every_gateway_call_writes_a_sel_row(home: Path, tmp_path: Path) -> None
     ws = tmp_path / "ws"
     ws.mkdir()
     before = len(sel().recent(limit=500))
-    ToolGateway(profile=REVIEW_ONLY, context=_ctx(ws)).handle_request(
+    ToolGateway(profile=READ_ONLY, context=_ctx(ws)).handle_request(
         {"protocol": 1, "id": "7", "tool": "memory_remember", "args": {"text": "x"}}
     )
     rows = [r for r in sel().recent(limit=500) if r.get("operation") == "memory_remember"]
@@ -315,7 +324,7 @@ def test_pclaw_tool_memory_recall_succeeds_through_the_exec_channel(
     shim = install_shim(tmp_path / "bin")
     assert shim.is_file() and os.access(shim, os.X_OK), shim
 
-    gateway = ToolGateway(profile=REVIEW_ONLY, context=_ctx(ws))
+    gateway = ToolGateway(profile=READ_ONLY, context=_ctx(ws))
     proc = _run_shim_against(gateway, shim, ["memory_recall", "--query", "runbook"])
     assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
     # NOT `"runbook" in stdout`: the empty-result sentence is "No memory matched 'runbook'.",
@@ -328,7 +337,7 @@ def test_pclaw_tool_memory_recall_succeeds_through_the_exec_channel(
     # Vacuity floor for the pairing: a query that matches nothing DOES produce the empty
     # sentence, so the assertion above is discriminating between two real outcomes.
     empty = _run_shim_against(
-        ToolGateway(profile=REVIEW_ONLY, context=_ctx(ws)),
+        ToolGateway(profile=READ_ONLY, context=_ctx(ws)),
         shim,
         ["memory_recall", "--query", "zzzznothingmatchesthis"],
     )
@@ -341,7 +350,7 @@ def test_pclaw_tool_reports_the_hosts_refusal_verbatim(home: Path, tmp_path: Pat
     ws = tmp_path / "ws"
     ws.mkdir()
     shim = install_shim(tmp_path / "bin")
-    gateway = ToolGateway(profile=REVIEW_ONLY, context=_ctx(ws))
+    gateway = ToolGateway(profile=READ_ONLY, context=_ctx(ws))
     proc = _run_shim_against(gateway, shim, ["memory_remember", "--text", "nope"])
     assert proc.returncode == 1, (proc.returncode, proc.stdout, proc.stderr)
     assert ERR_REFUSED in proc.stderr, proc.stderr

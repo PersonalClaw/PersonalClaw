@@ -8,7 +8,7 @@ actually denied, because getting any wrong widens what unattended code may do:
 2. Cron-approval rewire — an unattended result-injection turn resolves its approval through
    ``profile_for_session`` (via ``gateway.injection_approval_policy``), not a blanket AUTO_APPROVE.
 3. Project Trust/Preview gate — a project folder's first script touch persists a Preview
-   decision and runs read-only (REVIEW_ONLY); only an explicit Trust admits a write grant.
+   decision and runs read-only; only an explicit Trust admits a write grant.
 """
 
 from __future__ import annotations

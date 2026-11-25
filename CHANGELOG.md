@@ -36,6 +36,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **In the desktop app, the System status card's update row reads Update App, and a gateway built into the app no longer offers an Update of its own beside it.**
 - **In the desktop app, rolling the gateway back past the app's own version says the app stays on its version, newer than the gateway, before it rolls back.**
 
+### Removed
+
+- **Removed four unused safety profiles; the interactive and headless profiles are unchanged.**
+
 ### Fixed
 
 - **A notice wraps a word wider than it, such as a folder's path, where it ran past the notice's edge and was cut off.**

@@ -10,7 +10,6 @@ from personalclaw.guardrails.policy import (
     INTERACTIVE,
     SafetyProfile,
     approval_policy_for_session,
-    get_profile,
     is_unattended_session,
     profile_for_session,
     safety_profile_for,
@@ -21,15 +20,17 @@ from personalclaw.net.policy import REGISTRY, egress_policy_for_tier, get_policy
 # ── SafetyProfile ────────────────────────────────────────────────────────────
 
 
-def test_named_profiles_exist():
-    for name in ("interactive", "coding", "review_only", "cleanup", "incident", "headless"):
-        assert get_profile(name).name == name
+def test_only_the_profiles_the_product_runs_exist():
+    """A session resolves to INTERACTIVE or HEADLESS (`profile_for_session`), and nothing else
+    selects a profile. Four more were defined and never chosen, so a reader took a coding,
+    review-only, cleanup or incident posture for one that exists."""
+    from personalclaw import guardrails
+    from personalclaw.guardrails import policy
 
-
-def test_unknown_profile_fails_closed_to_headless():
-    # An unrecognized profile must NOT default to interactive (that would grant a
-    # human-watched posture to an unattended run) — it fails closed to headless.
-    assert get_profile("bogus").name == "headless"
+    defined = {name for name, value in vars(policy).items() if isinstance(value, SafetyProfile)}
+    assert defined == {"INTERACTIVE", "HEADLESS"}
+    assert {INTERACTIVE.name, HEADLESS.name} == {"interactive", "headless"}
+    assert not hasattr(policy, "get_profile") and not hasattr(guardrails, "get_profile")
 
 
 def test_headless_is_read_only_by_construction():
@@ -103,16 +104,9 @@ def test_safety_profile_for_layers_config(monkeypatch, tmp_path):
     )
     layered = safety_profile_for(HEADLESS)
     assert layered.budget.max_tokens == 5000  # operator day budget filled in
-    # HEADLESS didn't force block; it inherits the operator's configured mode.
+    # Every profile takes the operator's configured mode.
     assert layered.scan_mode == "block"
-
-
-def test_incident_profile_forces_block_scan():
-    # INCIDENT declares scan_mode=block; safety_profile_for keeps a forced block even
-    # when config says otherwise (an incident must not relax the scan).
-    from personalclaw.guardrails.policy import INCIDENT
-
-    assert INCIDENT.scan_mode == "block"
+    assert safety_profile_for(INTERACTIVE).scan_mode == "block"
 
 
 def test_profile_with_overrides():

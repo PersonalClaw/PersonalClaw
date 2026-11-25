@@ -171,7 +171,7 @@ class ActionTypeSpec:
     runs_code: bool = False
 
 
-# Process-global registry, the ``_PROFILES`` pattern from ``policy.py``. Populated at
+# Process-global registry, keyed by name, as a module-level table. Populated at
 # declaration sites (provider registration, inbox affordances, app manifests) — see
 # ``register_action_type``. Reset between tests by ``reset_action_types``.
 _REGISTRY: dict[str, ActionTypeSpec] = {}
