@@ -172,10 +172,10 @@ export function AppUpdateControls({ update, place }: { update: AppUpdate; place:
       {popover ? (
         (canUpdate || canFinish) && (
           <Button size="xs" variant="secondary" shape="squircle" onClick={canFinish ? askToFinish : download}
-            ariaLabel={canFinish ? 'Restart to finish the update of this app' : 'Update the app'}>
+            ariaLabel={canFinish ? 'Restart to finish the update of this app' : undefined}>
             {canFinish
               ? <><RotateCw size={12} aria-hidden /> Restart to Finish the Update</>
-              : <><DownloadCloud size={12} aria-hidden /> Update</>}
+              : <><DownloadCloud size={12} aria-hidden /> Update App</>}
           </Button>
         )
       ) : (

@@ -111,7 +111,7 @@ describe('the System popover: the app row, only while a new version is on offer'
     const card = await openPopover()
 
     expect(await within(card).findByText('PersonalClaw 0.3.8 is available for this app.')).toBeTruthy()
-    fireEvent.click(within(card).getByRole('button', { name: 'Update the app' }))
+    fireEvent.click(within(card).getByRole('button', { name: 'Update App' }))
     await waitFor(() => expect(app.asked).toEqual(['download 0.3.8']))
     expect(within(card).queryByText(/^Restart PersonalClaw/)).toBeNull()
     expect(wire.probes).toBe(0)
@@ -125,7 +125,7 @@ describe('the System popover: the app row, only while a new version is on offer'
     const card = await openPopover()
 
     expect(await within(card).findByText('PersonalClaw 0.3.8 is ready. Restart to finish the update.')).toBeTruthy()
-    expect(within(card).queryByRole('button', { name: 'Update the app' })).toBeNull()
+    expect(within(card).queryByRole('button', { name: 'Update App' })).toBeNull()
     fireEvent.click(within(card).getByRole('button', { name: 'Restart to finish the update of this app' }))
     expect(await within(card).findByText(
       'Restart PersonalClaw to finish updating to 0.3.8? Your gateway restarts with it, which interrupts 2 running agents.',
@@ -166,11 +166,13 @@ describe('the System popover: the app row, only while a new version is on offer'
     await waitFor(() => expect(app.asked).toEqual(['finish 0.3.8']))
   })
 
-  it("leaves the gateway's own Update as it was on the app's own gateway: it is the gateway's, and the row stands beside it", async () => {
+  it("🔴 offers no Update of its own for a gateway built into the app: it updates with the app", async () => {
     installedAs('desktop')
     fakeApp(stands())
     const card = await openPopover()
-    expect(within(card).getByRole('button', { name: 'Update the gateway' })).toBeTruthy()
+    await waitFor(() => expect(within(card).queryByRole('button', { name: 'Update the gateway' })).toBeNull())
+    expect(within(card).queryByRole('button', { name: /^Update/ })).toBeNull()
+    expect(within(card).getByRole('button', { name: 'Restart' })).toBeTruthy()
     expect(within(card).queryByText(/for this app/)).toBeNull()
   })
 
@@ -180,7 +182,7 @@ describe('the System popover: the app row, only while a new version is on offer'
     const card = await openPopover()
     expect(await within(card).findByText('PersonalClaw 0.3.8 is available for this app.')).toBeTruthy()
     expect(within(card).getAllByRole('button', { name: /Update & Restart/ })).toHaveLength(1)
-    fireEvent.click(within(card).getByRole('button', { name: 'Update the app' }))
+    fireEvent.click(within(card).getByRole('button', { name: 'Update App' }))
     await waitFor(() => expect(app.asked).toEqual(['download 0.3.8']))
     app.push(stands({ ...READY, restartsGateway: false }))
     fireEvent.click(await within(card).findByRole('button', { name: 'Restart to finish the update of this app' }))
@@ -188,15 +190,22 @@ describe('the System popover: the app row, only while a new version is on offer'
     expect(wire.probes).toBe(0)
   })
 
-  it("names the popover's two Update presses for whose they are: the app's and the gateway's", async () => {
+  it("🔴 reads Update App on the app's row, with no gateway Update beside it when the gateway is the app's own", async () => {
     installedAs('desktop')
     fakeApp(OFFERED)
     const card = await openPopover()
-    const app = await within(card).findByRole('button', { name: 'Update the app' })
+    const app = await within(card).findByRole('button', { name: 'Update App' })
+    expect(app.textContent?.trim()).toBe('Update App')
+    expect(within(card).getAllByRole('button', { name: /^Update/ })).toEqual([app])
+  })
+
+  it("names the two presses for whose they are beside a gateway the app found running", async () => {
+    installedAs('desktop')
+    fakeApp(stands({ ...OFFERED, restartsGateway: false }))
+    const card = await openPopover()
+    const app = await within(card).findByRole('button', { name: 'Update App' })
     const gateway = within(card).getByRole('button', { name: 'Update the gateway' })
-    expect(app).not.toBe(gateway)
-    // The labels stay as the owner tried them: both read Update.
-    expect([app.textContent?.trim(), gateway.textContent?.trim()]).toEqual(['Update', 'Update'])
+    expect([app.textContent?.trim(), gateway.textContent?.trim()]).toEqual(['Update App', 'Update'])
   })
 
   it('says a Restart to Finish the update settings refused, and keeps saying it after the check that follows', async () => {
@@ -219,7 +228,7 @@ describe('the System popover: the app row, only while a new version is on offer'
     fakeApp(stands({ ...OFFERED, phase: 'failed', sentence: "The new version couldn't be put in place. This copy is unchanged; install it from the releases page." }))
     const card = await openPopover()
     expect(await within(card).findByRole('link', { name: 'Open the releases page' })).toBeTruthy()
-    expect(within(card).getByRole('button', { name: 'Update the app' })).toBeTruthy()
+    expect(within(card).getByRole('button', { name: 'Update App' })).toBeTruthy()
   })
 
   it('offers the releases page, not a press, for a copy the app cannot replace here', async () => {
@@ -231,19 +240,19 @@ describe('the System popover: the app row, only while a new version is on offer'
     const card = await openPopover()
     expect(await within(card).findByText('This copy was installed as a package. Install the new version from the releases page.')).toBeTruthy()
     expect(within(card).getByRole('link', { name: 'Open the releases page' }).getAttribute('href')).toBe(RELEASES_PAGE_URL)
-    expect(within(card).queryByRole('button', { name: 'Update the app' })).toBeNull()
+    expect(within(card).queryByRole('button', { name: 'Update App' })).toBeNull()
   })
 
   it('follows the update as the app pushes it, and says a refused start', async () => {
     installedAs('desktop')
     const app = fakeApp(OFFERED, { ok: false, sentence: 'An update is already under way.' })
     const card = await openPopover()
-    fireEvent.click(await within(card).findByRole('button', { name: 'Update the app' }))
+    fireEvent.click(await within(card).findByRole('button', { name: 'Update App' }))
     expect(await within(card).findByText('An update is already under way.')).toBeTruthy()
 
     app.push(stands({ ...OFFERED, phase: 'downloading', progress: { received: 50, total: 200 } }))
     expect(await within(card).findByText('Downloading PersonalClaw 0.3.8… 25%')).toBeTruthy()
-    expect(within(card).queryByRole('button', { name: 'Update the app' })).toBeNull()
+    expect(within(card).queryByRole('button', { name: 'Update App' })).toBeNull()
     app.push(READY)
     expect(await within(card).findByRole('button', { name: 'Restart to finish the update of this app' })).toBeTruthy()
     app.push(stands({ ...READY, phase: 'placing', sentence: 'Putting PersonalClaw 0.3.8 in place…' }))

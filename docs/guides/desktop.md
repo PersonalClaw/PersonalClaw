@@ -849,8 +849,10 @@ starts and then once a day, and at once when it finds the gateway it uses on a n
 itself (one you updated from a browser tab, say), and says so in two places: **Settings › Updates › Desktop app**, and a
 row in the System status card while a new version is on offer. **PersonalClaw › Check for
 Updates…** (on Linux, **Help › Check for Updates…**) looks now and opens the Desktop app section. It takes two
-presses. **Update** downloads and checks the new version in the background, and changes nothing
-beside the app; when it is ready, the Desktop app section and the row say **Restart to Finish the Update**. That
+presses. **Update** (in the status card's row, **Update App**) downloads and checks the new version in the
+background, and changes nothing beside the app; when it is ready, the Desktop app section and the row say
+**Restart to Finish the Update**. The card offers no Update for a gateway built into the app, since it updates
+with the app; a gateway the app found running keeps its own. That
 press, once you confirm, installs it; the confirm says whether your gateway restarts with the app,
 and how many running agents that interrupts. With a gateway the app found serving your home on an
 older release, it says that gateway is updated to the new release first. Nothing is downloaded
