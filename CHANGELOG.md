@@ -17,6 +17,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **For apps, `personalclaw.sdk.manifest.ProviderConfig` has `startsOn` (default `true`): `"startsOn": false` installs that capability switched off. No shipped app needs a change.**
 - **For apps, `personalclaw.sdk.manifest.CronEntry` has `capability`: a scheduled job that names one of the app's capability ids runs only while that capability is switched on, and switching it off takes the job out at once. A job that names none is the app's own, as before. No shipped app needs a change.**
 - **Switching off an agent CLI app's capability withdraws its runtime: what a capability's code registers as it is built (an `acp:<cli>` agent runtime, a catalog) leaves when it is switched off or fails to build, and the app's other capabilities keep theirs. What the app's modules register as they load stays until the app is switched off. No shipped app needs a change.**
+- **Incident mode asks why when it starts and keeps a history of every incident, with your notes.**
 
 ### Changed
 

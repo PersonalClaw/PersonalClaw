@@ -1272,38 +1272,99 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
 async def api_incident(request: web.Request) -> web.Response:
     """GET /api/incident — current state. POST /api/incident — activate.
 
-    POST body: ``{reason?: str}``. Activation is SEL-audited and suspends all
-    unattended work within one poll interval; interactive chat is untouched.
+    POST body: ``{reason: str}``, required, 1 to 200 characters: a start without one answers
+    ``400 incident_reason_required`` and changes nothing. Who started it is recorded: an app's
+    call (``request["app"]``, set by its token) as ``app`` with its name, else ``owner``.
+    Activation is SEL-audited and suspends all unattended work within one poll interval;
+    interactive chat is untouched. Both answer who started it and what it has held back
+    (``suppressed``, by counter); all three are empty while it is off.
     """
     from personalclaw.guardrails import incident as _incident
 
     if request.method == "GET":
         st = _incident.get_incident()
-        return web.json_response(
-            {"active": st.active, "reason": st.reason, "started_at": st.started_at}
-        )
-    # POST — activate.
-    body = await json_object_body(request)
-    reason = str(body.get("reason", "")) if isinstance(body, dict) else ""
-    st = _incident.activate(reason)
+    else:
+        body = await json_object_body(request)
+        reason = str(body.get("reason", "") or "") if isinstance(body, dict) else ""
+        app = str(request.get("app") or "")
+        try:
+            st = _incident.activate(reason, by="app" if app else "owner", app=app)
+        except _incident.IncidentReasonRequired as exc:
+            return json_error("incident_reason_required", message=str(exc), status=400)
     return web.json_response(
-        {"active": st.active, "reason": st.reason, "started_at": st.started_at}
+        {
+            "active": st.active,
+            "reason": st.reason,
+            "started_at": st.started_at,
+            "activated_by": st.activated_by,
+            "app": st.app,
+            "suppressed": st.suppressed,
+        }
     )
 
 
 async def api_incident_resume(request: web.Request) -> web.Response:
     """POST /api/incident/resume — turn incident mode OFF.
 
-    Resume is EXPLICIT: requires ``{confirm: true}`` so a stray request can't
-    silently re-enable unattended work. SEL-audited.
+    Resume is EXPLICIT: requires ``{confirm: true}`` so a stray request can't silently re-enable
+    unattended work. SEL-audited. It answers the incident's line in the history (``incident``,
+    null when none was active) and whether it was written (``recorded``, with ``why`` when not,
+    ``""`` when it was): a line that cannot be written never stops a Resume.
     """
     from personalclaw.guardrails import incident as _incident
 
     body = await json_object_body(request)
     if not confirm_granted(body):
         return web.json_response({"error": 'resume requires {"confirm": true}'}, status=400)
-    st = _incident.resume()
-    return web.json_response({"active": st.active})
+    done = _incident.resume(by="owner")
+    return web.json_response(
+        {
+            "active": done.state.active,
+            "incident": done.incident,
+            "recorded": done.recorded,
+            "why": done.why,
+        }
+    )
+
+
+async def api_incidents(request: web.Request) -> web.Response:
+    """GET /api/incidents — every incident in the history, newest first, 20 a page, each with its
+    newest note: ``{items, next_cursor}``, ``?cursor=`` the page after. Owner only."""
+    from personalclaw.guardrails import incident as _incident
+
+    items, cursor = _incident.history(str(request.query.get("cursor", "") or ""))
+    return web.json_response({"items": items, "next_cursor": cursor or None})
+
+
+async def api_incident_note(request: web.Request) -> web.Response:
+    """POST /api/incidents/{id}/note — the owner's note on a past incident: ``{note}``, 1 to 4,000
+    characters, kept as data and never handed to an agent. ``201`` with the note's line, ``404
+    incident_not_found`` for an id the history does not hold. Owner only; SEL-audited."""
+    from personalclaw.guardrails import incident as _incident
+
+    body = await json_object_body(request)
+    note = str(body.get("note", "") or "") if isinstance(body, dict) else ""
+    try:
+        line = _incident.add_note(request.match_info["id"], note)
+    except OSError as exc:
+        return json_error("incident_history_unwritten", message=str(exc), status=503)
+    except ValueError as exc:
+        return json_error("invalid_request", message=str(exc), status=400)
+    if line is None:
+        return json_error(
+            "incident_not_found", message="No incident in the history has that id.", status=404
+        )
+    return web.json_response(
+        {
+            "v": line["v"],
+            "type": line["type"],
+            "id": line["id"],
+            "incident": line["incident"],
+            "note": line["note"],
+            "at": line["at"],
+        },
+        status=201,
+    )
 
 
 async def api_project_trust(request: web.Request) -> web.Response:

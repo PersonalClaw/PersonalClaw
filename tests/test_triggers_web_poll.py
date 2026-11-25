@@ -547,12 +547,12 @@ def test_the_loop_checks_no_page_while_incident_mode_is_on(home, monkeypatch):
     )
 
     def turn_on() -> None:
-        incident.activate("a test of the web watch loop")
+        incident.activate("a test of the web watch loop", by="owner")
         pages["v"] = FEED_THREE
 
     # Run before each pass: pass 1 seeds the watch, incident mode is on for passes 2 and 3 (the
     # page gains an item as it goes on), and pass 4 runs with it off again.
-    before_pass = [lambda: None, turn_on, lambda: None, incident.resume]
+    before_pass = [lambda: None, turn_on, lambda: None, lambda: incident.resume(by="owner")]
     so_far: list[tuple[int, int]] = []
 
     async def sleep(_secs: float) -> None:

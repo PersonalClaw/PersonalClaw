@@ -1171,6 +1171,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "approval_not_found": (
         "No approval is waiting under this id: it was answered, it expired, or there never was one."
     ),
+    # ── incident mode (guardrails/incident.py, dashboard/handlers/core.py) ──
+    # A 400: a start with no reason, or one past 200 characters; nothing was switched on.
+    "incident_reason_required": "Stopping unattended work needs a reason; nothing was changed.",
+    # A 404: a note on an incident the history does not hold (never one, or trimmed away).
+    "incident_not_found": "No incident in the history has that id.",
+    # A 503: the incident history could not be written, so the note was not kept.
+    "incident_history_unwritten": (
+        "The incident history could not be written, so nothing was kept. Fix: check the disk, "
+        "then add the note again."
+    ),
     # A 409: the approval is still waiting, and this answer decided nothing (the work it belongs to
     # holds it in a way this door does not answer).
     "approval_not_answered": "This approval is still waiting, and nothing was decided here.",

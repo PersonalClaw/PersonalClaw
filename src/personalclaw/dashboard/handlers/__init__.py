@@ -100,7 +100,9 @@ from personalclaw.dashboard.handlers.companion import (  # noqa: E402, F401
 from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     _DIST_DIR,
     api_incident,
+    api_incident_note,
     api_incident_resume,
+    api_incidents,
     api_logout,
     api_models_health,
     api_personalclaw_config,

@@ -363,13 +363,13 @@ def test_an_incident_holds_an_otherwise_autonomous_action(_isolated_home):
     assert _fire_event_trigger().ran is True
     assert len(action.calls) == 1
 
-    activate("drill")
+    activate("drill", by="owner")
     try:
         outcome = _fire_event_trigger()
         # The rung layer holds it too, independently of the fire path's own incident gate.
         assert rg.route_provider_action("acme-do-thing").rung == au.RUNG_ONE_TAP
     finally:
-        resume()
+        resume(by="owner")
     # The incident gate at the top of the fire path refuses first; either way nothing ran.
     assert outcome.ran is False
     assert len(action.calls) == 1

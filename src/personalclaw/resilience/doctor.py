@@ -2360,6 +2360,25 @@ async def _probe_resource_limits(_ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_incident_history(ctx: DoctorContext) -> ProbeResult:
+    """Whether the last incident's line reached its history (`guardrails/incident.py`). A Resume
+    whose line could not be written still resumed; this says so until a line is written again."""
+    from personalclaw.guardrails import incident
+
+    unwritten = (await asyncio.to_thread(incident.get_incident)).history_unwritten
+    if not unwritten:
+        return ProbeResult(ok=True, detail="Every incident so far is in its history.")
+    return ProbeResult(
+        ok=False,
+        detail=f"{unwritten} The incident was resumed anyway.",
+        evidence={"history_unwritten": unwritten},
+        remedy=(
+            "There is no automatic fix: check that the home folder can be written. The next "
+            "incident line written clears this."
+        ),
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -2378,6 +2397,15 @@ def _register_builtin_probes() -> None:
             Tier.CHEAP_RPC,
             _probe_status_snapshot,
             "Status snapshot readable",
+        )
+    )
+    register_probe(
+        Probe(
+            "incident_history",
+            "security",
+            Tier.CAPABILITY,
+            _probe_incident_history,
+            "Every incident is kept in its history",
         )
     )
     register_probe(

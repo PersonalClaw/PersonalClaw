@@ -92,12 +92,12 @@ def test_incident_activate_resume_roundtrip(monkeypatch, tmp_path):
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     _incident.reset_incident_mirror()
     assert not _incident.incident_active()
-    st = _incident.activate("prod outage")
+    st = _incident.activate("prod outage", by="owner")
     assert st.active and st.reason == "prod outage" and st.started_at
     assert _incident.incident_active()
     # Persisted to incident.json.
     assert (tmp_path / "incident.json").exists()
-    _incident.resume()
+    _incident.resume(by="owner")
     assert not _incident.incident_active()
 
 

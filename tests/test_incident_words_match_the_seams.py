@@ -111,7 +111,7 @@ def test_a_refused_fire_says_it_is_dropped_not_suspended() -> None:
     from personalclaw.triggers import tools
     from personalclaw.triggers.firepath import FireContext, evaluate
 
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     gate = asyncio.run(
         evaluate(FireContext(trigger_id="clock:x", moment=datetime(2027, 1, 15, 12)))
     )
@@ -153,7 +153,7 @@ def test_a_scheduled_fire_during_an_incident_runs_at_its_next_time_not_at_resume
     """The fate the words give it: refused, and moved to its next time by the same tick, so
     Resume does not run it."""
     store = _store(tmp_path, {"kind": "interval", "interval_secs": EVERY})
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     refused = _tick(store, tmp_path)
     assert refused.fires == []
     row = next(r for r in refused.ledger_rows if r["trigger_id"] == "clock:nightly")
@@ -164,7 +164,7 @@ def test_a_scheduled_fire_during_an_incident_runs_at_its_next_time_not_at_resume
     next_at = datetime.fromisoformat(after.next_fire_at).timestamp()
     assert next_at > NOW, "the refused slot is still due"
 
-    incident.resume()
+    incident.resume(by="owner")
     assert _tick(store, tmp_path).fires == [], "Resume ran the slot the incident refused"
     assert [f.trigger.id for f in _tick(store, tmp_path, now=next_at + 1).fires] == [
         "clock:nightly"
@@ -176,10 +176,10 @@ def test_a_one_shot_whose_time_passes_during_an_incident_is_switched_off_and_kep
 ) -> None:
     """Its only slot is taken: it is switched off, and its row stays, to be run by hand."""
     store = _store(tmp_path, {"kind": "at", "at": NOW - 60}, tid="clock:pack-the-bag")
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     assert _tick(store, tmp_path).fires == []
     kept = store.get("clock:pack-the-bag")
     assert kept is not None, "the one-shot is gone"
     assert kept.trigger.enabled is False
-    incident.resume()
+    incident.resume(by="owner")
     assert _tick(store, tmp_path).fires == [], "Resume ran the one-shot on its own"

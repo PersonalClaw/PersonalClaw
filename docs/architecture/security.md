@@ -1267,6 +1267,30 @@ the ceiling did not bound.
   `$HOME`, owned by another uid and mode `0444` — which is what
   `PERSONALCLAW_CEILING_FILE` is for.
 
+## Incident mode and its history (`guardrails/incident.py`)
+
+Incident mode stops all unattended work at once, at each execution seam (the module docstring says
+what becomes of the work each seam skips). Interactive chat is untouched.
+
+- **A reason on every door.** `POST /api/incident {reason}`, an app's call to it, and
+  `personalclaw incident on --reason` each need a reason of 1 to 200 characters. Without one the
+  route answers `400 incident_reason_required` ("Stopping unattended work needs a reason; nothing
+  was changed.") and the command line exits 1. While it is active, `incident.json` records who
+  started it: `owner` (the dashboard), `cli`, or `app` with the app's name, from its token. A start
+  while one is active keeps the first one, and only the security log hears the second reason.
+- **One line per incident.** Resume (`POST /api/incident/resume {confirm: true}`,
+  `personalclaw incident off`) appends the incident to `incidents.jsonl` (durability entry
+  `incident_history`): `{type: "incident", id: "inc_…", started_at, ended_at, reason,
+  activated_by, app, resumed_by, suppressed}`, then switches off. It answers the line and whether
+  it was written (`recorded`). A line that cannot be written never stops Resume: the owner's
+  decision is honoured, the failure is logged, and the Doctor's `incident_history` row fails until a
+  line is written again.
+- **Notes.** `POST /api/incidents/{id}/note {note}` appends a note line (1 to 4,000 characters,
+  kept as data and never handed to an agent), and `GET /api/incidents` lists the incidents newest
+  first, 20 a page, each with its newest note. Both are the owner's alone (`OWNER_ONLY_API_PATHS`);
+  the stop itself stays one an app may be granted. Only `guardrails/incident.py` reads or writes the
+  history, which is trimmed by time (`bounded_log.trim_jsonl`) at twice 1,000 lines.
+
 ## Which approvals ask twice (`approval_confirms.py`)
 
 Most approvals decide on the first Allow or ⌘Enter. A call asks a second confirmation before it

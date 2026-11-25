@@ -1939,6 +1939,20 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_REPLACE_ONLY,
         help="incident mode: a human-set stop on all unattended work",
     ),
+    # The incident history (`guardrails/incident.py`): one line per incident at Resume (its
+    # reason, who started and ended it, what it held back) and the owner's notes on it. Captured,
+    # since it is the only record of what each stop was for; `append_dedup` by `id`, as every
+    # line has one; `machine_local`, since an incident is this machine's stop and one machine's
+    # history merged into another's would say it stopped work it never ran.
+    StateEntry(
+        id="incident_history",
+        kind=KIND_JSONL_APPEND,
+        path="incidents.jsonl",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_APPEND_DEDUP,
+        machine_local=True,
+        help="every incident: why it started, who started and ended it, and your notes",
+    ),
     StateEntry(
         id="browse_kill",
         kind=KIND_JSON_FILE,

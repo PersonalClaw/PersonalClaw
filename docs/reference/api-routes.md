@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **981 registrations** over **795 distinct paths** — 974 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **983 registrations** over **797 distinct paths** — 976 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -20,7 +20,7 @@ Read [the API overview](api-overview.md) first for the things every route shares
 
 ## Route families
 
-The 135 families the surface divides into, largest first.
+The 136 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
@@ -96,6 +96,7 @@ The 135 families the surface divides into, largest first.
 | `/api/computer-use` | 2 | 2 |
 | `/api/guardrails` | 2 | 1 |
 | `/api/heartbeat` | 2 | 2 |
+| `/api/incidents` | 2 | 2 |
 | `/api/listening` | 2 | 1 |
 | `/api/resilience` | 2 | 2 |
 | `/api/running` | 2 | 2 |
@@ -162,7 +163,7 @@ The 135 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 974 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 976 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -542,6 +543,8 @@ The 974 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/incident` | current state. |
 | `POST` | `/api/incident` | activate. |
 | `POST` | `/api/incident/resume` | turn incident mode OFF. |
+| `GET` | `/api/incidents` | every incident in the history, newest first, 20 a page, each with its |
+| `POST` | `/api/incidents/{id}/note` | the owner's note on a past incident: ``{note}``, 1 to 4,000 |
 | `POST` | `/api/investigate` | _(no summary)_ |
 | `DELETE` | `/api/knowledge/annotations/{id}` | drop one highlight. |
 | `POST` | `/api/knowledge/bulk` | apply one curation op to many items. |

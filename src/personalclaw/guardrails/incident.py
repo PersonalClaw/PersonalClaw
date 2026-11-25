@@ -21,6 +21,15 @@ skips is the seam's own: some is done once the switch is off, and some is not. S
 - File and page watches skip their polls, and catch up after Resume.
 - Inbox sorting, memory consolidation and background compression wait, and run after Resume.
 
+**Every incident is kept.** Starting it takes a reason (:data:`REASON_MAX` characters at most)
+and records who started it: the owner (Settings, the dashboard's own route), the command line, or
+an app, named. Resume records who ended it and appends the incident's one line to
+``incidents.jsonl`` (:func:`resume`); the owner's notes on it append there too
+(:func:`add_note`), and :func:`history` reads them back, newest first. Only this module reads or
+writes that file. A line that cannot be written never stops Resume: the owner's decision is
+honoured, the failure is logged, and the Doctor's ``incident_history`` row says so until a line
+is written again.
+
 **Interactive chat is untouched** — the user talking to their assistant during an
 incident is the point. Resume is EXPLICIT (``POST /api/incident/resume {confirm}``
 or ``personalclaw incident off``); activation/resume are SEL-audited.
@@ -37,15 +46,47 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
 
 _INCIDENT_FILENAME = "incident.json"
+_HISTORY_FILENAME = "incidents.jsonl"
+
+#: The most characters a reason may have, after trimming, and the most a note may have.
+REASON_MAX = 200
+NOTE_MAX = 4000
+#: How many lines the history keeps once it is trimmed (it is trimmed at twice this).
+HISTORY_KEEP = 1000
+#: How many incidents one page of :func:`history` holds.
+HISTORY_PAGE = 20
+#: Who may start an incident, and who may end one.
+STARTERS = ("owner", "cli", "app")
+ENDERS = ("owner", "cli")
+#: The counters an incident's ``suppressed`` holds (#4100 fills them).
+SUPPRESSED_COUNTERS = (
+    "runs_skipped",
+    "events_dropped",
+    "hooks_dropped",
+    "loop_cycles_skipped",
+    "spawns_refused",
+)
+REASON_REQUIRED = "Stopping unattended work needs a reason; nothing was changed."
+
+
+class IncidentReasonRequired(ValueError):
+    """An incident started with no reason, or one longer than :data:`REASON_MAX`."""
+
+
+def empty_suppressed() -> dict[str, dict[str, Any]]:
+    """Each of :data:`SUPPRESSED_COUNTERS` at nothing held back."""
+    return {name: {"count": 0, "refs": []} for name in SUPPRESSED_COUNTERS}
+
 
 #: How often :func:`watch` looks at the flag. One ``stat`` of one small file, so it is cheap to
 #: look often, and this is what bounds how late an open page follows ``personalclaw incident``.
@@ -57,6 +98,13 @@ class IncidentState:
     active: bool = False
     reason: str = ""
     started_at: str = ""
+    #: Who started it (one of :data:`STARTERS`), and the app's name when an app did.
+    activated_by: str = ""
+    app: str = ""
+    #: What it held back so far, by counter (:func:`empty_suppressed`).
+    suppressed: dict[str, Any] = field(default_factory=dict)
+    #: Why the last incident's line could not be written, while no line has been since.
+    history_unwritten: str = ""
 
 
 def _incident_path() -> Path:
@@ -78,10 +126,15 @@ def _read_file() -> IncidentState:
             data = json.load(fh)
         if not isinstance(data, dict):
             return IncidentState()
+        suppressed = data.get("suppressed")
         return IncidentState(
             active=bool(data.get("active", False)),
             reason=str(data.get("reason", "")),
             started_at=str(data.get("started_at", "")),
+            activated_by=str(data.get("activated_by", "")),
+            app=str(data.get("app", "")),
+            suppressed=suppressed if isinstance(suppressed, dict) else {},
+            history_unwritten=str(data.get("history_unwritten", "")),
         )
     except (OSError, ValueError):
         return IncidentState()
@@ -114,26 +167,204 @@ def incident_active() -> bool:
     return get_incident().active
 
 
-def activate(reason: str = "") -> IncidentState:
-    """Turn incident mode ON (SEL-audited). Idempotent — re-activating refreshes
-    the reason but keeps the original ``started_at``."""
+def activate(reason: str, *, by: str, app: str = "") -> IncidentState:
+    """Turn incident mode ON (SEL-audited), for *reason*, started *by* one of :data:`STARTERS`
+    (*app* naming the app when an app did).
+
+    Raises :class:`IncidentReasonRequired` for a reason that is empty, or longer than
+    :data:`REASON_MAX` once trimmed, and changes nothing then. A start while one is already active
+    keeps it as it is, its reason and who started it included, and the second reason goes to the
+    security log alone: the incident is the first one's until it is resumed.
+    """
+    text = str(reason or "").strip()
+    if not text or len(text) > REASON_MAX:
+        raise IncidentReasonRequired(REASON_REQUIRED)
+    if by not in STARTERS:
+        raise ValueError(f"{by!r} is not who starts an incident: one of {', '.join(STARTERS)}")
     current = get_incident()
-    started = current.started_at if current.active else datetime.now(timezone.utc).isoformat()
-    state = IncidentState(active=True, reason=reason or current.reason, started_at=started)
+    if current.active:
+        _audit("incident_activated", reason=text)
+        return current
+    state = IncidentState(
+        active=True,
+        reason=text,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        activated_by=by,
+        app=app if by == "app" else "",
+        suppressed=empty_suppressed(),
+        history_unwritten=current.history_unwritten,
+    )
     _write(state)
-    _audit("incident_activated", reason=reason)
-    logger.warning("INCIDENT MODE ACTIVATED: %s", reason or "(no reason given)")
+    _audit("incident_activated", reason=text)
+    logger.warning("INCIDENT MODE ACTIVATED: %s", text)
     return state
 
 
-def resume() -> IncidentState:
-    """Turn incident mode OFF (SEL-audited). The SEL keeps the transition; what the incident
-    dropped meanwhile stays dropped (the module docstring, seam by seam)."""
-    state = IncidentState(active=False, reason="", started_at="")
+@dataclass(frozen=True)
+class Resumed:
+    """What :func:`resume` did: the state now (off), the incident's line, whether the line was
+    written (``recorded``), and why not (``why``) when it was not."""
+
+    state: IncidentState
+    incident: dict[str, Any] | None
+    recorded: bool
+    why: str = ""
+
+
+def resume(*, by: str) -> Resumed:
+    """Turn incident mode OFF (SEL-audited), ended *by* one of :data:`ENDERS`, after appending the
+    incident's one line to the history. A line that cannot be written does not stop it: the
+    owner's decision is honoured, the failure is logged, and the state keeps why
+    (``history_unwritten``) for the Doctor until a line is written. What the incident dropped
+    meanwhile stays dropped (the module docstring, seam by seam)."""
+    if by not in ENDERS:
+        raise ValueError(f"{by!r} is not who ends an incident: one of {', '.join(ENDERS)}")
+    current = get_incident()
+    line: dict[str, Any] | None = None
+    recorded, why = True, ""
+    if current.active:
+        line = _incident_line(current, resumed_by=by)
+        why = _append(line)
+        recorded = not why
+    unwritten = why or ("" if line is not None else current.history_unwritten)
+    state = IncidentState(active=False, history_unwritten=unwritten)
     _write(state)
     _audit("incident_resumed")
     logger.warning("Incident mode resumed (unattended work re-enabled)")
-    return state
+    return Resumed(state=state, incident=line, recorded=recorded, why=why)
+
+
+def history(cursor: str = "") -> tuple[list[dict[str, Any]], str]:
+    """One page of the incidents, newest first, :data:`HISTORY_PAGE` at most, each with its newest
+    note as ``note`` ('' when it has none), and the cursor of the next page ('' at the end).
+    *cursor* is the id of the last incident the page before ended on."""
+    incidents, notes = _read_history()
+    newest = sorted(incidents.values(), key=lambda row: str(row.get("ended_at", "")), reverse=True)
+    start = 0
+    if cursor:
+        ids = [str(row.get("id", "")) for row in newest]
+        start = ids.index(cursor) + 1 if cursor in ids else len(ids)
+    page = newest[start : start + HISTORY_PAGE]
+    items = [{**row, "note": notes.get(str(row.get("id", "")), {}).get("note", "")} for row in page]
+    more = start + HISTORY_PAGE < len(newest)
+    return items, (str(page[-1].get("id", "")) if more and page else "")
+
+
+def add_note(incident_id: str, note: str) -> dict[str, Any] | None:
+    """Append the owner's *note* on the incident *incident_id* to the history, and return its line;
+    None when the history holds no such incident. Raises ``ValueError`` for a note that is empty
+    or longer than :data:`NOTE_MAX` characters once trimmed, and ``OSError`` when the line cannot
+    be written. A note is kept as data: nothing hands it to an agent."""
+    text = str(note or "").strip()
+    if not text or len(text) > NOTE_MAX:
+        raise ValueError(f"A note is 1 to {NOTE_MAX} characters.")
+    incidents, _notes = _read_history()
+    if incident_id not in incidents:
+        return None
+    from personalclaw.ids import new_id
+
+    line = {
+        "v": 1,
+        "type": "note",
+        "id": new_id("note"),
+        "incident": incident_id,
+        "note": text,
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+    why = _append(line)
+    if why:
+        raise OSError(why)
+    _audit("incident_reviewed", reason=incident_id)
+    return line
+
+
+def _incident_line(current: IncidentState, *, resumed_by: str) -> dict[str, Any]:
+    from personalclaw.ids import new_id
+
+    return {
+        "v": 1,
+        "type": "incident",
+        "id": new_id("inc"),
+        "started_at": current.started_at,
+        "ended_at": datetime.now(timezone.utc).isoformat(),
+        "reason": current.reason,
+        "activated_by": current.activated_by,
+        "app": current.app,
+        "resumed_by": resumed_by,
+        "suppressed": {**empty_suppressed(), **(current.suppressed or {})},
+    }
+
+
+def _history_path() -> Path:
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / _HISTORY_FILENAME
+
+
+def _append(line: dict[str, Any]) -> str:
+    """Append *line* to the history, then trim it to :data:`HISTORY_KEEP` by time. '' once it is
+    written, else why not; a trim that fails leaves the line written and is only logged. A
+    written line clears the Doctor's ``history_unwritten``."""
+    from personalclaw import bounded_log
+
+    path = _history_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with bounded_log.appending(path):
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        why = f"The incident history could not be written: {exc.strerror or exc}."
+        logger.warning("%s", why)
+        return why
+    try:
+        bounded_log.trim_jsonl(path, HISTORY_KEEP, at=_line_time)
+    except OSError:
+        logger.warning("the incident history could not be trimmed", exc_info=True)
+    current = get_incident()
+    if current.history_unwritten:
+        _write(
+            IncidentState(
+                active=current.active,
+                reason=current.reason,
+                started_at=current.started_at,
+                activated_by=current.activated_by,
+                app=current.app,
+                suppressed=current.suppressed,
+            )
+        )
+    return ""
+
+
+def _line_time(row: Any) -> Any:
+    """A history line's time: an incident's end, or a note's."""
+    if not isinstance(row, dict):
+        return ""
+    return row.get("ended_at") or row.get("at") or ""
+
+
+def _read_history() -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """The history's incidents by id, and each incident's newest note, by the incident's id."""
+    incidents: dict[str, dict[str, Any]] = {}
+    notes: dict[str, dict[str, Any]] = {}
+    try:
+        text = _history_path().read_text(encoding="utf-8")
+    except OSError:
+        return incidents, notes
+    for raw in text.splitlines():
+        try:
+            row = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if row.get("type") == "incident" and row.get("id"):
+            incidents[str(row["id"])] = row
+        elif row.get("type") == "note" and row.get("incident"):
+            key = str(row["incident"])
+            if str(row.get("at", "")) >= str(notes.get(key, {}).get("at", "")):
+                notes[key] = row
+    return incidents, notes
 
 
 async def watch(
@@ -166,7 +397,15 @@ def _write(state: IncidentState) -> None:
     atomic_write(
         path,
         json.dumps(
-            {"active": state.active, "reason": state.reason, "started_at": state.started_at}
+            {
+                "active": state.active,
+                "reason": state.reason,
+                "started_at": state.started_at,
+                "activated_by": state.activated_by,
+                "app": state.app,
+                "suppressed": state.suppressed,
+                "history_unwritten": state.history_unwritten,
+            }
         ),
     )
     _mirror = state
