@@ -11,7 +11,7 @@ import { ActionConfig, editedActionConfig, seedActionConfig } from './ActionConf
 import { GrantNote } from './ReviewNote'
 import { HeldBackNote } from './HeldBackNote'
 import { WorkflowVersionNote } from './WorkflowVersionNote'
-import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason } from './triggerMeta'
+import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason, hookRunTime } from './triggerMeta'
 import { accentChip } from '../../design/accent'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
@@ -238,6 +238,9 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
 
       <Section label="Stats">
         <span className="text-on-surface-var text-[0.8125rem]">Ran {hook.run_count}× · last {relPast(hook.last_run)}{hook.last_status ? ` · ${hook.last_status}` : ''} · timeout {hook.timeout}s</span>
+        {hookRunTime(hook) && (
+          <p className="text-on-surface-var text-[0.8125rem] mt-1">Last ran in {hookRunTime(hook)}</p>
+        )}
         {/* "Ran 0×" on a dormant event reads as "hasn't happened yet", so a user waits for something
             that cannot arrive. Only shown while the count is genuinely zero — once an event is wired
             and has fired, the stat speaks for itself. */}

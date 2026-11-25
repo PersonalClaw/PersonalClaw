@@ -5,6 +5,7 @@ import { api, type ScheduleJob, type HookItem, type HookEnforcement, type Lifecy
 import { dispatchedProvider } from '../../lib/rungs'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
+import { fmtRunTime } from '../../lib/duration'
 
 // ── Trigger kind: schedule (a tick fires), lifecycle (an agent-loop event fires),
 //    event (a data event — an inbox message, a memory write or an app event — fires), or store
@@ -497,6 +498,15 @@ export function callbackToTrigger(c: CallbackRow): Trigger {
 export function eventMatcherValue(spec: Record<string, unknown>, field: EventMatcherField): string {
   if (!field) return ''
   return String(spec[field] ?? '')
+}
+
+/** How long a hook's last run took (`120 ms`, `1.2 s`), or '' when it has never run here or its last
+ *  run was not timed: each run stamps its own time, 0 when untimed, so a newer untimed run shows
+ *  nothing rather than an older run's time, and a hook from a gateway before hooks kept one arrives
+ *  without it. The row and the detail say "last ran in" before it. */
+export function hookRunTime(h?: Pick<HookItem, 'run_count' | 'last_duration_ms'> | null): string {
+  if (!h || !(h.run_count > 0)) return ''
+  return fmtRunTime(h.last_duration_ms)
 }
 
 export function relPast(ts?: number | string | null): string {

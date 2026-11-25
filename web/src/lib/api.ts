@@ -3596,6 +3596,8 @@ export interface HookItem extends ListPlace {
   id: string; name: string; event: string; matcher: string; provider: string; provider_config: Record<string, unknown>
   timeout: number; enabled: boolean; last_run: number; last_status: string; run_count: number; used_by: string[]
   blocking?: boolean; enforcement?: HookEnforcement
+  // How long its last run took — see `Trigger.last_duration_ms`.
+  last_duration_ms?: number
   // The revision the edit form's save names — see `Trigger.revision`.
   revision?: string
   // What it is not allowed to use — see `Trigger`. A lifecycle trigger's fires are refused until
@@ -3787,6 +3789,9 @@ export interface Trigger extends ListPlace {
   // lifecycle fields (kind=lifecycle)
   event?: string; matcher?: string; timeout?: number; last_run?: number; run_count?: number; used_by?: string[]
   blocking?: boolean; enforcement?: HookEnforcement
+  // How long the hook's last run took, in whole ms: 0 when that run was not timed, absent from a
+  // gateway before hooks kept it.
+  last_duration_ms?: number
   // schedule + lifecycle rows: the revision a whole-form save of the row names in `If-Match`
   // (`lib/staleWrite.ts`) — a digest of what the edit form replaces, run state left out.
   revision?: string
@@ -3864,6 +3869,7 @@ function _triggerToHook(t: Trigger): HookItem {
     // leaves them undefined so the detail view renders NO enforcement claim, rather than a
     // confident "enforcing" chip over a hook nothing binds.
     blocking: t.blocking, enforcement: t.enforcement,
+    last_duration_ms: t.last_duration_ms,
     revision: t.revision,
     needs_grant: t.needs_grant,
     held_back: t.held_back,
