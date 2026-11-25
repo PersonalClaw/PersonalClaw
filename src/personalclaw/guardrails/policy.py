@@ -1,4 +1,4 @@
-"""Named safety profiles.
+"""The safety profiles a run resolves to.
 
 Modeled line-for-line on the egress template (``net/policy.py``: a frozen dataclass
 + named module-level profiles + an operator-layering function). A profile is the
@@ -18,9 +18,9 @@ and the sandbox tool gateway. Each seam states its posture as a tier through
 :func:`tool_grant_posture`, so the operator's ``tools`` ceiling scope narrows a live
 tool call instead of being a value nothing reads.
 
-Per-template graduated profiles (a template naming ``coding`` /
-``review-only`` / ``cleanup``) arrive when that engine lands and picks the tier per
-template; the tier vocabulary and its enforcement are already here.
+Two profiles exist, the two the product runs: ``INTERACTIVE`` for a session someone watches and
+``HEADLESS`` for one nobody does. Narrowing a run further is a tier on an axis (``tool_grants``,
+the ceiling's scopes), not another named profile.
 """
 
 from __future__ import annotations
