@@ -58,6 +58,7 @@ from personalclaw.subagent_admission import (  # noqa: F401 (the folder checks a
     admission,
     charge_child_and_check_budget,
     note_child_outcome,
+    note_refused,
     validate_cwd,
 )
 from personalclaw.subagent_ask import spawn_ask, spawn_refusal
@@ -1140,9 +1141,11 @@ class SubagentManager:
             _redacted_task, parent_session_key, agent, cwd, parent_run, capability_class
         )
         if refused:
-            return SubagentInfo(
+            info = SubagentInfo(
                 id=uuid.uuid4().hex[:8], task=_redacted_task, agent=agent, done=True, error=refused
             )
+            note_refused(refused, info.id)
+            return info
 
         # --- Build the addressable info up front: a queued spawn carries a
         # REAL id and its full parameter set (approval_mode/model/silent/dry_run/

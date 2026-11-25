@@ -11,15 +11,24 @@ skips is the seam's own: some is done once the switch is off, and some is not. S
 (`tests/test_incident_words_match_the_seams.py`):
 
 - A recurring automation whose time comes is refused, and runs at its next time: the tick moves
-  it on before the gate refuses it, so Resume does not run it.
-- A one-shot whose time passes is switched off and kept, to run by hand.
+  it on before the gate refuses it, so Resume does not run it. Counted as a run skipped.
+- A one-shot whose time passes is switched off and kept, to run by hand. Counted as a run skipped.
 - A lifecycle hook's action, a webhook, and an event automation (an Inbox message, a memory write)
-  that fire meanwhile are dropped: each leaves a history row saying so, and none runs later.
-- A background agent's start is refused, and the work that asked for it is told.
-- Idle automations and loop cycles are held due, and run on the first check after Resume.
+  that fire meanwhile are dropped: each leaves a history row saying so, and none runs later. A
+  hook's is counted as a hook dropped, the others' as events dropped.
+- A background agent's start is refused, and the work that asked for it is told. Counted as a
+  spawn refused.
+- Idle automations and loop cycles are held due, and run on the first check after Resume, once: a
+  loop whose cycle came due is counted as a loop cycle skipped, since the cycles it would have
+  made meanwhile are not made. An idle automation is not counted.
 - A running loop or workflow run is held where it is, and goes on after Resume.
 - File and page watches skip their polls, and catch up after Resume.
 - Inbox sorting, memory consolidation and background compression wait, and run after Resume.
+
+**What it held back is counted** (:func:`note_suppressed`) in the incident's ``suppressed``: a
+count and the first :data:`REFS_KEPT` work references for each of :data:`SUPPRESSED_COUNTERS`,
+which ``GET /api/incident`` serves while it is on and its line in the history keeps. The work
+that catches up is not counted, since none of it is lost.
 
 **Every incident is kept.** Starting it takes a reason (:data:`REASON_MAX` characters at most)
 and records who started it: the owner (Settings, the dashboard's own route), the command line, or
@@ -43,10 +52,11 @@ the switch moved, so no page has to poll it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -68,7 +78,7 @@ HISTORY_PAGE = 20
 #: Who may start an incident, and who may end one.
 STARTERS = ("owner", "cli", "app")
 ENDERS = ("owner", "cli")
-#: The counters an incident's ``suppressed`` holds (#4100 fills them).
+#: The counters an incident's ``suppressed`` holds (:func:`note_suppressed` fills them).
 SUPPRESSED_COUNTERS = (
     "runs_skipped",
     "events_dropped",
@@ -77,6 +87,8 @@ SUPPRESSED_COUNTERS = (
     "spawns_refused",
 )
 REASON_REQUIRED = "Stopping unattended work needs a reason; nothing was changed."
+#: How many work references each counter names; its count keeps counting past them.
+REFS_KEPT = 50
 
 
 class IncidentReasonRequired(ValueError):
@@ -181,21 +193,24 @@ def activate(reason: str, *, by: str, app: str = "") -> IncidentState:
         raise IncidentReasonRequired(REASON_REQUIRED)
     if by not in STARTERS:
         raise ValueError(f"{by!r} is not who starts an incident: one of {', '.join(STARTERS)}")
-    current = get_incident()
-    if current.active:
-        _audit("incident_activated", reason=text)
-        return current
-    state = IncidentState(
-        active=True,
-        reason=text,
-        started_at=datetime.now(timezone.utc).isoformat(),
-        activated_by=by,
-        app=app if by == "app" else "",
-        suppressed=empty_suppressed(),
-        history_unwritten=current.history_unwritten,
-    )
-    _write(state)
+    with _locked():
+        current = _read_file()
+        if current.active:
+            state = None
+        else:
+            state = IncidentState(
+                active=True,
+                reason=text,
+                started_at=datetime.now(timezone.utc).isoformat(),
+                activated_by=by,
+                app=app if by == "app" else "",
+                suppressed=empty_suppressed(),
+                history_unwritten=current.history_unwritten,
+            )
+            _write(state)
     _audit("incident_activated", reason=text)
+    if state is None:
+        return current
     logger.warning("INCIDENT MODE ACTIVATED: %s", text)
     return state
 
@@ -219,19 +234,87 @@ def resume(*, by: str) -> Resumed:
     meanwhile stays dropped (the module docstring, seam by seam)."""
     if by not in ENDERS:
         raise ValueError(f"{by!r} is not who ends an incident: one of {', '.join(ENDERS)}")
-    current = get_incident()
     line: dict[str, Any] | None = None
     recorded, why = True, ""
-    if current.active:
-        line = _incident_line(current, resumed_by=by)
-        why = _append(line)
-        recorded = not why
-    unwritten = why or ("" if line is not None else current.history_unwritten)
-    state = IncidentState(active=False, history_unwritten=unwritten)
-    _write(state)
+    # Under the incident's lock, read from the file: a count another process made a moment ago
+    # (:func:`note_suppressed`) is in the line, and none lands on the state after it.
+    with _locked():
+        current = _read_file()
+        if current.active:
+            line = _incident_line(current, resumed_by=by)
+            why = _append(line)
+            recorded = not why
+        unwritten = why or ("" if line is not None else current.history_unwritten)
+        state = IncidentState(active=False, history_unwritten=unwritten)
+        _write(state)
     _audit("incident_resumed")
     logger.warning("Incident mode resumed (unattended work re-enabled)")
     return Resumed(state=state, incident=line, recorded=recorded, why=why)
+
+
+#: Whether :func:`note_suppressed` has logged a failure yet: it logs the first, and only that.
+_note_failure_logged = False
+
+
+def note_suppressed(counter: str, ref: str = "", *, once: bool = False) -> None:
+    """Count one piece of work the active incident held back, at *counter* (one of
+    :data:`SUPPRESSED_COUNTERS`), named by the work reference *ref* (``workref.work_ref``).
+
+    It lands in the incident the caller saw active, under the incident's lock, and only while
+    the file still names that incident's start: a count that comes after Resume, or after the
+    next incident began, is not one of its own. Each counter names the first :data:`REFS_KEPT`
+    references it is given, each once, and its count keeps counting past them. With *once*, a
+    reference it already names is not counted again: a row held due across many checks is one
+    thing held back, not one for each check.
+
+    Never raises and never starts an incident: a count that cannot be made is logged, the first
+    time only, and the work's own skip goes on as it was.
+
+    The lock is a blocking ``flock``, taken on the caller's thread, the gateway's event loop
+    included: one lock and one rewrite of a small file per thing held back. That holds while every
+    section under the lock stays as short as it is here; one that waits on anything else would
+    stall the loop each time incident mode drops work.
+    """
+    global _note_failure_logged
+    try:
+        seen = get_incident()
+        if not seen.active:
+            return
+        if counter not in SUPPRESSED_COUNTERS:
+            raise ValueError(f"{counter!r} is not one of {', '.join(SUPPRESSED_COUNTERS)}")
+        with _locked():
+            current = _read_file()
+            if not current.active or current.started_at != seen.started_at:
+                return
+            suppressed = {**empty_suppressed(), **current.suppressed}
+            held = suppressed.get(counter)
+            held = held if isinstance(held, dict) else {}
+            named = held.get("refs")
+            refs = [str(r) for r in named if r] if isinstance(named, list) else []
+            if once and ref and ref in refs:
+                return
+            if ref and ref not in refs and len(refs) < REFS_KEPT:
+                refs.append(ref)
+            count = held.get("count")
+            suppressed[counter] = {
+                "count": (count if isinstance(count, int) else 0) + 1,
+                "refs": refs,
+            }
+            _write(replace(current, suppressed=suppressed))
+    except Exception:  # noqa: BLE001 - a count never stops the skip it counts
+        if not _note_failure_logged:
+            _note_failure_logged = True
+            logger.warning("could not count what the incident held back", exc_info=True)
+
+
+@contextlib.contextmanager
+def _locked() -> Iterator[None]:
+    """The incident file's lock (``.incident.lock``, ``record_files.locked``), held across each
+    read and write of it: a start, a Resume, a note's flag and a count."""
+    from personalclaw import record_files
+
+    with record_files.locked(_incident_path()):
+        yield
 
 
 def history(cursor: str = "") -> tuple[list[dict[str, Any]], str]:
@@ -274,6 +357,10 @@ def add_note(incident_id: str, note: str) -> dict[str, Any] | None:
     why = _append(line)
     if why:
         raise OSError(why)
+    with _locked():
+        current = _read_file()
+        if current.history_unwritten:
+            _write(replace(current, history_unwritten=""))
     _audit("incident_reviewed", reason=incident_id)
     return line
 
@@ -303,8 +390,9 @@ def _history_path() -> Path:
 
 def _append(line: dict[str, Any]) -> str:
     """Append *line* to the history, then trim it to :data:`HISTORY_KEEP` by time. '' once it is
-    written, else why not; a trim that fails leaves the line written and is only logged. A
-    written line clears the Doctor's ``history_unwritten``."""
+    written, else why not; a trim that fails leaves the line written and is only logged. The
+    caller clears the Doctor's ``history_unwritten`` once a line is written, under the
+    incident's lock."""
     from personalclaw import bounded_log
 
     path = _history_path()
@@ -321,18 +409,6 @@ def _append(line: dict[str, Any]) -> str:
         bounded_log.trim_jsonl(path, HISTORY_KEEP, at=_line_time)
     except OSError:
         logger.warning("the incident history could not be trimmed", exc_info=True)
-    current = get_incident()
-    if current.history_unwritten:
-        _write(
-            IncidentState(
-                active=current.active,
-                reason=current.reason,
-                started_at=current.started_at,
-                activated_by=current.activated_by,
-                app=current.app,
-                suppressed=current.suppressed,
-            )
-        )
     return ""
 
 

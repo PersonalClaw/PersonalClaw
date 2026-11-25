@@ -1285,6 +1285,18 @@ what becomes of the work each seam skips). Interactive chat is untouched.
   it was written (`recorded`). A line that cannot be written never stops Resume: the owner's
   decision is honoured, the failure is logged, and the Doctor's `incident_history` row fails until a
   line is written again.
+- **What it held back is counted.** While it is on, each seam that loses work adds to the
+  incident's `suppressed` in `incident.json` (`incident.note_suppressed`, under the file's lock, and
+  only into the incident it saw start): `runs_skipped` (a scheduled automation's fire refused, ref
+  `trigger:<trigger id>`; its refused row in the run history has a `run_…` id of its own),
+  `events_dropped` (any other automation's fire refused, the same ref), `hooks_dropped` (a hook's action skipped, ref `trigger:lifecycle:<hook id>`),
+  `loop_cycles_skipped` (a loop whose next cycle came due, once per incident, ref `loop:<id>`) and
+  `spawns_refused` (a helper's start refused, ref `subagent:<id>`, the id its caller was given).
+  Each is `{count, refs}`: the first 50 references, each named once, while `count` keeps counting.
+  `GET /api/incident` serves it while it is on, and its line keeps it. Work that catches up after
+  Resume is not counted: an idle automation held due, a running loop or workflow run held where it
+  is, file and page watches, Inbox sorting, memory consolidation and background compression. A count
+  never raises and never starts an incident.
 - **Notes.** `POST /api/incidents/{id}/note {note}` appends a note line (1 to 4,000 characters,
   kept as data and never handed to an agent), and `GET /api/incidents` lists the incidents newest
   first, 20 a page, each with its newest note. Both are the owner's alone (`OWNER_ONLY_API_PATHS`);

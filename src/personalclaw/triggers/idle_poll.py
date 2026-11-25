@@ -306,6 +306,32 @@ def _is_nudge(trigger: Any) -> bool:
     return bool(str(spec.get("message") or "").strip())
 
 
+#: The incident (by its start) whose held loops :func:`_note_held_cycles` has counted, and them.
+_held_counted: tuple[str, set[str]] = ("", set())
+
+
+def _note_held_cycles(fires: list[Any]) -> None:
+    """Count each loop whose cycle the incident holds, once for the incident
+    (``incident.note_suppressed``): the cycle runs on the first check after Resume, once, so the
+    cycles it would have made meanwhile are not made. A plain idle automation held here fires
+    after Resume as it would have, and is not counted. Once in this process, and once in the
+    incident while it names the loop among its first references, so a check every few seconds
+    does not count the same held cycle again."""
+    from personalclaw.guardrails.incident import get_incident, note_suppressed
+    from personalclaw.workref import work_ref
+
+    global _held_counted
+    started = get_incident().started_at
+    if _held_counted[0] != started:
+        _held_counted = (started, set())
+    for fire in fires:
+        loop_id = str(fire.trigger.id)
+        if not _is_nudge(fire.trigger) or loop_id in _held_counted[1]:
+            continue
+        _held_counted[1].add(loop_id)
+        note_suppressed("loop_cycles_skipped", work_ref("loop", loop_id), once=True)
+
+
 def fires_spent(trigger: Any) -> bool:
     """Whether an idle trigger that wakes has fired as many times as it may: its `max_fires`
     gate (``service.budget_spent``, the meter the clock's admission reads), or its spec's
@@ -453,6 +479,7 @@ async def poll(
 
     if incident_active():
         skipped.extend({"trigger_id": f.trigger.id, "reason": SKIP_INCIDENT} for f in fires)
+        _note_held_cycles(fires)
         return 0, skipped
 
     # ── Nudge rows ride the adapter, not the wake path. ──
