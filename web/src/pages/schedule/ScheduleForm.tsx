@@ -7,6 +7,7 @@ import { useAgentCatalog, useModelCatalog } from '../../lib/agents'
 import { Combobox, type ComboOption } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
 import { Field, TextInput, TextArea, Segmented, ChipInput, FieldError, useFieldHintId } from '../../ui/forms'
+import { NextRuns, previewBody } from './NextRuns'
 import { SoonTag } from '../tasks/taskMeta'
 import { localDateTimeInput, localDateTimeSeconds } from '../../lib/epoch'
 import {
@@ -311,8 +312,10 @@ export function draftProvider(d: ScheduleDraft, stored?: string): string {
  *  action catalog's `invokes_model`, read by the caller because the action may live outside this
  *  form (`triggerOnly`). It gates only the cadence-floor advisory, and defaults to TRUE: a caller
  *  that cannot say keeps the floor. */
-export function ScheduleForm({ draft, onChange, compact, triggerOnly, invokesModel = true }: { draft: ScheduleDraft; onChange: (d: ScheduleDraft) => void; compact?: boolean; triggerOnly?: boolean; invokesModel?: boolean }) {
+export function ScheduleForm({ draft, onChange, compact, triggerOnly, invokesModel = true, triggerId = '' }: { draft: ScheduleDraft; onChange: (d: ScheduleDraft) => void; compact?: boolean; triggerOnly?: boolean; invokesModel?: boolean; triggerId?: string }) {
   const set = <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) => onChange({ ...draft, [k]: v })
+  // The schedule in words, from the preview below the When controls: the cron field's description.
+  const [cadence, setCadence] = useState('')
   const { options: agentOptions } = useAgentCatalog()
   // The catalog's rejection is bound, not discarded: an unreachable `/api/models` used to render
   // this picker's "No models found" empty text, which tells a user with a bound provider that they
@@ -334,11 +337,15 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly, invokesMod
         <Segmented options={KINDS.map((k) => ({ key: k.key, label: k.label, tone: k.tone, icon: k.icon }))} value={draft.kind} onChange={(v) => set('kind', v as ScheduleKind)} />
       </Field>
       {draft.kind === 'every' && <IntervalField draft={draft} set={set} invokesModel={invokesModel} />}
-      {draft.kind === 'cron' && <CronField value={draft.cron} onChange={(v) => set('cron', v)} />}
+      {draft.kind === 'cron' && <CronField value={draft.cron} onChange={(v) => set('cron', v)} description={cadence} />}
       {draft.kind === 'at' && (
         <input type="datetime-local" value={draft.at} onChange={(e) => set('at', e.target.value)}
           name="run-at" aria-label="Run once at date and time"
           className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+      )}
+      {/* The next runs, as the clock will make them, under the When controls (`NextRuns`). */}
+      {(draft.kind === 'every' || draft.kind === 'cron' || draft.kind === 'at') && (
+        <NextRuns body={previewBody(draftToPayload(draft), triggerId)} cron={draft.kind === 'cron' ? draft.cron : undefined} onCadence={setCadence} />
       )}
 
       {/* ── WHAT (omitted in triggerOnly — action is configured separately) ── */}
@@ -605,9 +612,10 @@ function NativeSelect({ value, onChange, options, label, name, wide }: { value: 
   )
 }
 
-/** Cron field — the expression's text input, the quick presets, and, when the server would
- *  refuse the expression, the validator's reason under them. */
-function CronField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+/** Cron field — the expression's text input, the quick presets, the schedule it holds in words
+ *  (*description*, the preview's cadence, live as the expression changes) and, when the server
+ *  would refuse the expression, the validator's reason under them. */
+function CronField({ value, onChange, description = '' }: { value: string; onChange: (v: string) => void; description?: string }) {
   // 🔴 A REAL validator, not a token count. `value.trim().split(/\s+/).length === 5` was wrong in
   // BOTH directions — `'99 99 * * *'` has five tokens and the server refuses it, `'@daily'` has one
   // and the server accepts it — so this field reddened a working expression and cleared a broken
@@ -632,6 +640,7 @@ function CronField({ value, onChange }: { value: string; onChange: (v: string) =
           census never covered it. Rendering `{reason}` puts it in the family that rail owns, and a
           failure with no role announces to nobody; the four other `0.75rem` sites carry the role on
           the raw element for the same reason (`FieldError` is size-locked to `0.8125rem`). */}
+      {!reason && description && <p data-type="caption" className="text-on-surface-var">{description}</p>}
       {reason && <p role="alert" id="cron-expression-error" className="text-danger text-[0.75rem]">{reason}</p>}
     </div>
   )
