@@ -82,8 +82,8 @@ class ProbeResult:
     (:mod:`personalclaw.resilience.fixes`) when one repairs this failure. ``remedy`` is the
     failure's other half when no fix does: one plain sentence saying there is no automatic fix
     and what to do instead. The Doctor page promises "a failed probe's Fix"; a failure that has
-    none must say so rather than leave the row a dead end. Both ``detail`` and ``remedy`` (and
-    string ``evidence`` values) are redacted before return.
+    none must say so rather than leave the row a dead end. ``detail``, ``remedy`` and every string
+    in ``evidence``, however deep, are redacted before return (``_safe_run``).
     """
 
     ok: bool
@@ -158,6 +158,20 @@ def _mask(text: str) -> str:
     return redact_or_withhold(str(text))
 
 
+def _mask_evidence(value: Any) -> Any:
+    """*value* with every string in it masked (:func:`_mask`), however deep in dicts and lists:
+    evidence carries text an app or a provider wrote (a capability's reason, an error), and the
+    Doctor's result reaches the page, the CLI and ``investigate``. Numbers, flags and ``None``
+    pass as they are."""
+    if isinstance(value, str):
+        return _mask(value)
+    if isinstance(value, dict):
+        return {key: _mask_evidence(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_mask_evidence(item) for item in value]
+    return value
+
+
 #: The remedy for a check that could not run at all: its own exception, not a finding.
 _CHECK_CRASHED_REMEDY = (
     "No automatic fix — the check itself failed to run, which is a defect in PersonalClaw rather "
@@ -189,7 +203,7 @@ async def _safe_run(probe: Probe, ctx: DoctorContext) -> ProbeResult:
     return ProbeResult(
         ok=res.ok,
         detail=_mask(res.detail),
-        evidence=res.evidence,
+        evidence=_mask_evidence(res.evidence),
         fix_id=res.fix_id,
         remedy=_mask(res.remedy) if res.remedy else "",
     )
