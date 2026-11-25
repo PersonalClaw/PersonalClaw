@@ -22,7 +22,6 @@ This module imports nothing from PersonalClaw.
 
 from __future__ import annotations
 
-import re
 import string
 from dataclasses import dataclass, field
 
@@ -209,17 +208,52 @@ def _skip_heredoc(text: str, i: int, delimiter: str, *, strip: bool, quoted: boo
     return None
 
 
-#: A word spelled as an assignment so far, up to where a tilde would expand: `NAME=` or `NAME=…:`.
-_ASSIGNED_SO_FAR = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=(?:.*:)?")
+_NAME_START = frozenset(string.ascii_letters + "_")
+_NAME_REST = _NAME_START | frozenset(string.digits)
 
 
-def _plain(c: str, before: str, in_word: bool, glob_at: int, tilde: bool) -> tuple[int, bool]:
+class _SoFar(list[str]):
+    """A word's text so far, in the pieces the lexer takes it in, and what a character after it
+    asks of it: its length, its last character, and how much of it is an assignment's ``NAME=``.
+    Those are folded in only when asked (:meth:`fold`), from the pieces taken since the last ask,
+    so a word is read in time linear in its length however long it is (a 1 MB argument), and a
+    word that asks nothing costs nothing more than its pieces."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.length = 0
+        self.last = ""
+        #: The length of the word's ``NAME=``: -2 not yet known, -1 when it starts no assignment.
+        self.assigned = -2
+        self._folded = 0
+
+    def fold(self) -> _SoFar:
+        """Itself, with the pieces taken since the last fold read into what it says."""
+        for piece in self[self._folded :]:
+            start, self.length = self.length, self.length + len(piece)
+            self.last = piece[-1:] or self.last
+            for at, ch in enumerate(piece, start):
+                if self.assigned != -2:
+                    break
+                if ch == "=" and at > 0:
+                    self.assigned = at + 1
+                elif ch not in (_NAME_REST if at else _NAME_START):
+                    self.assigned = -1
+        self._folded = len(self)
+        return self
+
+
+def _plain(c: str, before: _SoFar, in_word: bool, glob_at: int, tilde: bool) -> tuple[int, bool]:
     """An unquoted character *c* after *before* (the word so far): where the word's first glob
     is, and whether a tilde the shell expands is in it (at the word's start, or after an
     assignment's ``=`` or a ``:`` in its value)."""
     if c in _GLOB_CHARS and glob_at < 0:
-        glob_at = len(before)
-    if c == "~" and (not in_word or _ASSIGNED_SO_FAR.fullmatch(before) is not None):
+        glob_at = before.fold().length
+    if c == "~" and (
+        not in_word
+        or (said := before.fold()).assigned >= 0
+        and (said.length == said.assigned or said.last == ":")
+    ):
         tilde = True
     return glob_at, tilde
 
@@ -233,7 +267,7 @@ def lex(  # noqa: C901 - one pass over a small grammar
     (:data:`SUBSTITUTION`, :data:`BACKGROUND`, …), the first one met, appended once.
     """
     tokens: list[Token] = []
-    buf: list[str] = []
+    buf = _SoFar()
     glob_at = -1
     in_word = False
     opaque = tilde = False
@@ -248,7 +282,7 @@ def lex(  # noqa: C901 - one pass over a small grammar
         if in_word:
             word = Word("".join(buf), glob_at, opaque, "" if opaque else leading, tilde)
             tokens.append(("word", word))
-        buf, glob_at, in_word, digits_only, opaque, leading = [], -1, False, True, False, ""
+        buf, glob_at, in_word, digits_only, opaque, leading = _SoFar(), -1, False, True, False, ""
         tilde = False
 
     def expansion(spelled: str, *, at_start: bool) -> None:
@@ -397,7 +431,7 @@ def lex(  # noqa: C901 - one pass over a small grammar
             tokens.append(("redir", Redirect(fd, op)))
             i += len(op)
         else:
-            glob_at, tilde = _plain(c, "".join(buf), in_word, glob_at, tilde)
+            glob_at, tilde = _plain(c, buf, in_word, glob_at, tilde)
             take(c, quoted=False)
             i += 1
     finish()
