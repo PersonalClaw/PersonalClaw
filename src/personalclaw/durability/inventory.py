@@ -820,7 +820,9 @@ INVENTORY: tuple[StateEntry, ...] = (
         edit_arrival=(
             "What you allowed the workflow's steps here — acting without asking, write access — "
             "stays only on the steps the other machine left as they were; a step it changed asks "
-            "you first."
+            "you first. A workflow that runs a command of its own, or hands another one, runs it "
+            "at a start that isn't yours, and hands it on as yours, once you save it here in its "
+            "editor."
         ),
         # The template nudges' counters and the session's candidate templates: this machine's
         # own account of its chats. And each workflow's version history (`workflows.versions`):

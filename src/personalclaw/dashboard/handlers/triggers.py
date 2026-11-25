@@ -1619,7 +1619,7 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     if kind == _LIFECYCLE:
         saved = _update_lifecycle(state, raw, body, saving, allowing=allowed)
     else:
-        saved = _update_schedule(state, raw, body, allowing=allowed)
+        saved = _update_schedule(state, raw, body, allowing=allowed, her_session=_hers(request))
     if grant is not None and saved.status == 200:
         # The save carried the owner's yes and the action it was asked about, so the save granted
         # exactly what the question named.
@@ -1748,8 +1748,16 @@ def _update_lifecycle(
     )
 
 
+def _hers(request: web.Request) -> bool:
+    """Whether *request* is her own session's, read from its sign-in, never from what it sends:
+    a save of hers writes the action as hers whether or not it needed her yes (`grants.wrote`)."""
+    from personalclaw.workflows.command_inputs import of_request
+
+    return of_request(request) == ""
+
+
 def _update_schedule(
-    state: DashboardState, raw: str, body: dict, *, allowing: Any = None
+    state: DashboardState, raw: str, body: dict, *, allowing: Any = None, her_session: bool = False
 ) -> web.Response:
     from zoneinfo import available_timezones
 
@@ -1895,14 +1903,14 @@ def _update_schedule(
 
         # `api_trigger_detail` asked for the grant this save needs (`trigger_consent.save_consent`),
         # so a body carrying `confirm: true` is the owner's yes, and the save gives it: for a
-        # workflow its action runs, the version the question showed, which the door held it to
-        # (*allowing*).
+        # workflow its action runs, the version the question showed (*allowing*).
         result = _tools.update(
             store,
             trigger_id=raw,
             patch=patch,
             owner_consented=confirm_granted(body),
             allowing=allowing,
+            her_edit=her_session,
         )
         if not result.ok:
             return web.json_response({"error": result.text}, status=400)

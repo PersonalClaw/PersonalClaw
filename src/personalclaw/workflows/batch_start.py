@@ -483,6 +483,8 @@ def _starter(
             supervisor=supervisor,
             origin_kind=OriginKind.SUBAGENT_TOOL,
             session_key=fields["session_key"],
+            # Its definition is the asker's own, held to its Allow (above), not to this rule.
+            started_by="",
             extra=app_work.stamp(
                 {CONSENT_KEY: consent, **({lasting_work.ASKED_BY: asked} if asked else {})}, work
             ),

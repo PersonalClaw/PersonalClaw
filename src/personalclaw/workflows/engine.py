@@ -42,6 +42,7 @@ from personalclaw.guardrails.wire import capture_wire_prompt
 from personalclaw.safety_flags import strict_bool, yes_or_no
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 from personalclaw.workflows import (
+    command_inputs,
     engine_support,
     incident_hold,
     input_secrets,
@@ -1108,6 +1109,9 @@ async def dispatch_subworkflow(
             f"cannot continue: {refused}",
             "name an earlier run of this workflow in `continue_from`, or leave it blank",
         )
+    # A run someone else started starts no workflow that is not hers and runs its own command.
+    if refused := command_inputs.child_refusal(spec, parent):
+        return _fail(FailureClass.USER, f"cannot start {name!r}: {refused}")
 
     from personalclaw.workflows import run_budget
 
@@ -1133,8 +1137,14 @@ async def dispatch_subworkflow(
             origin=RunOrigin(kind=OriginKind.SUBAGENT_TOOL, trigger_id=node.id),
             # The version it executes, a version from the history included.
             spec_version=int(spec.get("version", 1) or 1),
-            # Its parent's work: what a Temporary or Incognito origin's run keeps, it keeps.
-            extra={**(ownership.inherited_extra(parent) if parent else {}), **handed, **carried},
+            # Its parent's work: what a Temporary or Incognito origin's run keeps, it keeps, and of
+            # the values it is handed, those its parent holds as its owner's (`command_inputs`).
+            extra={
+                **(ownership.inherited_extra(parent) if parent else {}),
+                **handed,
+                **carried,
+                **command_inputs.handed_by(parent, child_inputs),
+            },
         )
     )
     store.write_spec(child.id, spec)

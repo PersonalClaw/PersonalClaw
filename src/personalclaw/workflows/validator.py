@@ -1770,6 +1770,7 @@ def validate_spec(spec: dict[str, Any], *, strict: bool = False) -> ValidationRe
         return res
 
     _validate_loop_intake(res, spec)
+    _validate_input_choices(res, spec)
     _validate_budget(res, spec)
     tree_res = validate_node_tree(root, strict=strict)
     res.issues.extend(tree_res.issues)
@@ -1804,6 +1805,57 @@ def _validate_budget(res: ValidationResult, spec: dict[str, Any]) -> None:
                 "max_tokens and max_cost",
                 "defaults.budget",
                 SEVERITY_WARNING,
+            )
+
+
+def _validate_input_choices(res: ValidationResult, spec: dict[str, Any]) -> None:
+    """Authoring-time validation of an input's `enum`, the values it may take: a list of at least
+    one value, each one its declared type takes as written, and its default (when it has one)
+    among them. A start is refused a value outside them, so an empty list or a default that is not
+    one would refuse every start that leaves the input out."""
+    from personalclaw.workflows.contracts import coerce_declared_inputs
+
+    declared = spec.get("inputs")
+    if not isinstance(declared, dict):
+        return
+    for name, meta in declared.items():
+        if not isinstance(meta, dict) or "enum" not in meta:
+            continue
+        choices = meta.get("enum")
+        if not isinstance(choices, list) or not choices:
+            _add(
+                res, "WF_INPUT_BAD_ENUM", f"the enum of input {name!r} must list a value", "inputs"
+            )
+            continue
+        declared_type = str(meta.get("type") or "string").strip().lower()
+        if declared_type not in ("string", "number", "integer", "boolean"):
+            _add(
+                res,
+                "WF_INPUT_BAD_ENUM",
+                f"input {name!r} names the values it may take, so it needs a type a value is "
+                f"written in (string, number, integer or boolean), not {declared_type!r}",
+                "inputs",
+            )
+            continue
+        # An input with no type is read as text, as a start's form reads it.
+        typed = {"inputs": {name: {**meta, "type": declared_type, "enum": []}}}
+        for choice in choices:
+            coerced, errors = coerce_declared_inputs(typed, {name: choice})
+            if errors or coerced.get(name) != choice:
+                _add(
+                    res,
+                    "WF_INPUT_BAD_ENUM",
+                    f"the enum of input {name!r} holds {choice!r}, which is no "
+                    f"{meta.get('type') or 'string'}",
+                    "inputs",
+                )
+        default = meta.get("default")
+        if default not in (None, "") and default not in choices:
+            _add(
+                res,
+                "WF_INPUT_BAD_ENUM",
+                f"the default {default!r} of input {name!r} is not one of its enum",
+                "inputs",
             )
 
 

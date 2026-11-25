@@ -480,6 +480,9 @@ class Runs:
     followed: bool = False
     newer: Current | None = None
     problem: str = ""
+    #: The version allowed is the workflow as it is, but a PersonalClaw default it runs with changed
+    #: since (`versions.DEFINITION_REVISION`): asked again, and said as that, not as a change of it.
+    revised: bool = False
 
 
 #: Who starts the workflow a refusal is about, as its words name them: the fire itself, a step of
@@ -499,14 +502,18 @@ def runs(allowed: Allowed | None, now: Current, *, by: str = _BY_THE_FIRE) -> Ru
     # The owner's own save since her Allow is her yes to it: the newest one is what runs.
     record = _owners_newest_since(now.name, allowed.version)
     followed = record is not None
-    wanted = _digest_of(record) if record is not None else allowed.digest
+    # An Allow recorded before digests were of the declared definition stands for its version's
+    # digest now (`versions.current_form`), so a release that changed the model voids none.
+    wanted = _digest_of(record) if record is not None else versions.current_form(allowed.digest)
     if now.digest == wanted:
         # The definition as it is now runs as the version it may run (a switch that changes no
         # step leaves it so), so it is what runs.
         return Runs(now.spec, now.version, now.saved_by, followed=followed)
     held = record or _recorded(now.name, allowed.version, allowed.digest)
     if held is None:
-        return Runs(None, allowed.version, "", newer=now, problem=_gone(allowed, now, by=by))
+        revised = _revised(allowed)
+        problem = _gone(allowed, now, by=by, revised=revised)
+        return Runs(None, allowed.version, "", newer=now, problem=problem, revised=revised)
     try:
         spec = versions.runnable(held.spec)
     except (ValueError, TypeError):
@@ -685,9 +692,19 @@ def saved_since(name: str, version: int, now: Current) -> list[tuple[int, str]]:
     return out
 
 
-def _gone(allowed: Allowed, now: Current, *, by: str) -> str:
+def _revised(allowed: Allowed) -> bool:
+    """Whether the version *allowed* was given for is still the workflow as it was then, and only a
+    PersonalClaw default it runs with changed since (`versions.revised_since`)."""
+    record = versions.get_version(allowed.workflow, allowed.version)
+    return record is not None and versions.revised_since(allowed.digest, record.spec)
+
+
+def _gone(allowed: Allowed, now: Current, *, by: str, revised: bool = False) -> str:
     """Why a fire, one of its steps or an agent working for its run (*by*) did not start the
-    workflow: the version it was allowed is not in the history any more."""
+    workflow: the version it was allowed is not in the history any more; or, *revised*, it is, but
+    a PersonalClaw default it runs with changed since, so it is asked about again."""
+    if revised:
+        return _asked_again(allowed, by=by)
     said = (
         f"“{now.name}” has changed since this automation was allowed to run it, and the version it "
         f"was allowed (v{allowed.version}) is no longer kept here, so "
@@ -706,6 +723,22 @@ def _gone(allowed: Allowed, now: Current, *, by: str) -> str:
         f"{said}it did not run. To run version {now.version}, open the automation on the Triggers "
         f"page and choose Use v{now.version}, which asks you first."
     )
+
+
+def _asked_again(allowed: Allowed, *, by: str) -> str:
+    """Why *by* did not start the workflow *allowed* names: it has not changed, but a PersonalClaw
+    default it runs with has (`versions.DEFINITION_REVISION`), so the Allow is asked for again.
+    Never "use v<the same version>": nothing newer is offered, the same version is allowed again."""
+    said = (
+        f"“{allowed.workflow}” has not changed since this automation was allowed to run it, but "
+        "a PersonalClaw update changed a default it runs with, so "
+    )
+    where = "open the automation on the Triggers page and choose Allow again, which asks you first"
+    if by == _BY_A_STEP:
+        return f"{said}this step did not start it. To run version {allowed.version}, {where}."
+    if by == _BY_ITS_AGENT:
+        return f"{said}its agent did not start it. To let its agent start it, {where}."
+    return f"{said}it did not run. To run version {allowed.version}, {where}."
 
 
 def _not_allowed(name: str, *, by: str) -> str:
@@ -736,7 +769,7 @@ def _recorded(name: str, version: int, digest: str) -> versions.VersionRecord | 
     """The recorded version of *name* that runs as *digest* does: the one numbered *version* when it
     does, else the newest that does (`versions.holding`), else None."""
     record = versions.get_version(name, version)
-    if record is not None and _digest_of(record) == digest:
+    if record is not None and versions.matches(digest, record.spec):
         return record
     return versions.holding(name, digest)
 

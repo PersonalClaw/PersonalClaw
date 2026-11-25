@@ -49,8 +49,16 @@ STUDY = StudyRegistration(
 
 
 def test_recorded_digests_still_match() -> None:
-    assert versions.digest(WORKFLOW) == (
+    # The digest an automation's Allow recorded before digests were of the declared definition:
+    # still computed byte for byte, since the start carries such an Allow over from it
+    # (`versions.remember_digests`, `tests/test_a_workflow_allow_survives_a_model_change.py`).
+    assert versions.round_trip_digest(WORKFLOW) == (
         "5c93ccf4f5344c48676e13ac74ccced4910b85b35aca946c4d0fc7e92c450ca5"
+    ), "an automation's Allow recorded for this version could not be carried over"
+    # And the digest an Allow records now: of what the definition declares, under the definition
+    # model's revision (`versions.DEFINITION_REVISION`).
+    assert versions.digest(WORKFLOW) == (
+        "145474e34d644b57d104d755ea4638382c41840f7a57f55187b10441b4a60996"
     ), "an automation's Allow recorded for this version no longer matches it"
     assert mcp_read_only_trust.digest(TOOL) == (
         "ec8502d2d23a2c99edce6f241f22ad3aed686f232b06e722362f0e91521edb77"

@@ -52,6 +52,7 @@ from personalclaw.uploads.content_scan import ContentRefused, scan_upload
 from personalclaw.uploads.policy import category_for
 from personalclaw.workflows import (
     chat_runs,
+    command_inputs,
     incident_hold,
     journal,
     restricted_calls,
@@ -863,6 +864,7 @@ async def api_def_refine(request: web.Request) -> web.Response:
         supervisor=_supervisor(request),
         origin_kind=_origin_of(request),
         session_key=approval_answer.work_of_request(request),
+        started_by=command_inputs.of_request(request),
     )
     _audit(request, "workflow_refine", "success" if result.get("ok") else "failure", name)
     return _reply(result, status=202 if result.get("ok") else 200)
@@ -993,6 +995,7 @@ async def api_run_start(request: web.Request) -> web.Response:
         supervisor=_supervisor(request),
         origin_kind=_origin_of(request),
         session_key=approval_answer.work_of_request(request),
+        started_by=command_inputs.of_request(request),
         project_id=str(body.get("project_id", "") or ""),
         idempotency_key=str(body.get("idempotency_key", "") or ""),
         blocking_timeout=float(body.get("blocking_timeout", 0) or 0),
@@ -1867,6 +1870,7 @@ async def api_run_start_draft(request: web.Request) -> web.Response:
     run_id = request.match_info.get("run_id", "")
     result = await service.start_draft_run(
         run_id,
+        started_by=command_inputs.of_request(request),
         supervisor=_supervisor(request),
         session_key=approval_answer.work_of_request(request),
     )

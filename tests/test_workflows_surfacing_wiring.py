@@ -24,7 +24,7 @@ import asyncio
 import pytest
 
 from personalclaw.workflows import defs as defs_mod
-from personalclaw.workflows import service
+from personalclaw.workflows import service, versions
 
 ROOT = {
     "kind": "sequence",
@@ -77,7 +77,9 @@ def provider():
 
 
 async def _author(name: str, metadata: dict) -> dict:
-    return await service.author_def(name=name, root=ROOT, metadata=metadata, strict=False)
+    return await service.author_def(
+        name=name, root=ROOT, metadata=metadata, strict=False, saved_by=versions.OWNER
+    )
 
 
 async def _rows(*, now: float = NOW) -> tuple[list[dict], dict]:
@@ -115,7 +117,12 @@ def test_the_write_path_COERCES_like_the_read_path(provider):
 
 def test_authoring_WITHOUT_metadata_still_works(provider):
     """The parameter is optional: a caller that never passed metadata must not now fail."""
-    assert asyncio.run(service.author_def(name="plain", root=ROOT, strict=False))["ok"] is True
+    assert (
+        asyncio.run(
+            service.author_def(name="plain", root=ROOT, strict=False, saved_by=versions.OWNER)
+        )["ok"]
+        is True
+    )
 
 
 def test_every_declared_field_survives_the_write(provider):

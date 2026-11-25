@@ -74,7 +74,10 @@ CONTROL_VERBS = [
     # Async, so it is driven through `asyncio.run` rather than called: it launches, which needs a
     # loop. Added here with the verb itself (#372) — a control verb that skips the existence check
     # is exactly what this table exists to catch, and `start` was the tenth verb on this noun.
-    ("start_draft_run", lambda s: asyncio.run(service.start_draft_run(MISSING, supervisor=s))),
+    (
+        "start_draft_run",
+        lambda s: asyncio.run(service.start_draft_run(MISSING, started_by="", supervisor=s)),
+    ),
     ("cancel_run", lambda s: service.cancel_run(MISSING, supervisor=s)),
     ("pause_run", lambda s: service.pause_run(MISSING, supervisor=s)),
     ("steer_run", lambda s: service.steer_run(MISSING, "go left")),

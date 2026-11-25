@@ -113,7 +113,11 @@ def _gate(**config: Any) -> dict[str, Any]:
 
 
 async def _run(
-    spec: dict[str, Any], *, held: dict[str, list[str]] | None = None, **inputs: Any
+    spec: dict[str, Any],
+    *,
+    held: dict[str, list[str]] | None = None,
+    cwd: str = "",
+    **inputs: Any,
 ) -> tuple[Any, _Model, _Checks, _Subagents]:
     """A run of *spec* with *inputs*, *held* naming the inputs it was handed a reference in, its
     judge's model, check runner and agents scripted."""
@@ -126,7 +130,9 @@ async def _run(
     store.write_spec(run.id, spec)
     model, checks, agents = _Model(), _Checks(), _Subagents()
     controller = RunController(
-        run, spec, services=EngineServices(completion=model, verify=checks, subagents=agents)
+        run,
+        spec,
+        services=EngineServices(completion=model, verify=checks, subagents=agents, cwd=cwd),
     )
     await controller.run_to_completion(timeout=20)
     return controller, model, checks, agents
@@ -246,6 +252,83 @@ async def test_a_verify_command_gate_is_handed_the_value(home):
 
     assert checks.blocks == [{"command": f"check {VALUE}"}]
     assert model.prompts == []
+
+
+async def _started(spec: dict[str, Any], started_by: str, **inputs: Any) -> tuple[Any, _Checks]:
+    """A run of *spec* with *inputs*, recorded as *started_by*'s start (``""`` the owner's), as
+    `service.start_run` records it (`command_inputs.stamped`)."""
+    from personalclaw.workflows import command_inputs, store
+    from personalclaw.workflows.controller import EngineServices, RunController
+    from personalclaw.workflows.models import WorkflowRun
+
+    extra = command_inputs.stamped({}, inputs, started_by)
+    run = store.create(WorkflowRun(id="", workflow_name=spec["name"], inputs=inputs, extra=extra))
+    store.write_spec(run.id, spec)
+    checks = _Checks()
+    controller = RunController(
+        run,
+        spec,
+        services=EngineServices(completion=_Model(), verify=checks, subagents=_Subagents()),
+    )
+    await controller.run_to_completion(timeout=20)
+    return controller, checks
+
+
+@pytest.mark.asyncio
+async def test_a_judges_own_check_naming_a_secret_runs_with_it_and_the_judge_reads_the_reference(
+    home, monkeypatch
+):
+    """🔴 Before: the check ran with the value and its command, resolved, went into the judge's
+    prompt with it, so the judge handed a value was refused and the model never asked. Now the
+    check is handed the value, the prompt holds the command as written and what it printed masked,
+    and the model is asked."""
+    from personalclaw.loop import gates
+
+    ran: list[str] = []
+
+    async def run_verify_command(command, cwd, *, report=None, **_kw):
+        ran.append(command)
+        if report is not None:
+            report.output = f"checked with {VALUE}\n"
+        return True
+
+    monkeypatch.setattr(gates, "run_verify_command", run_verify_command)
+    gate = _gate(
+        kind="judge", prompt="judge it", checks=[{"command": f"check --token {REFERENCE}"}]
+    )
+    _, model, _checks, _ = await _run(_spec(gate), cwd=str(home))
+    assert ran == [f"check --token {VALUE}"], ran
+    sent = _sent(model)
+    assert f"check --token {REFERENCE}" in sent and VALUE not in sent, sent
+    assert _holders(home) == [], "the value is nowhere but the credential store"
+
+
+#: A gate whose check runs what an input holds, of each kind that runs one.
+_READS_AN_INPUT = {
+    "verify-command": {"kind": "verify_command", "verify": {"command": "check {{inputs.k}}"}},
+    "judge": {"kind": "judge", "prompt": "judge it", "verify": {"command": "check {{inputs.k}}"}},
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", sorted(_READS_AN_INPUT))
+async def test_a_secret_reference_in_an_input_never_reaches_a_check_as_the_value(home, kind):
+    """A check may read the owner's secret only where her definition writes the reference itself.
+    One that reaches the check through a run's input is someone's text: refused at the start and
+    at the step when anyone but the owner gave it, and handed over as written, never filled, when
+    she typed it herself."""
+    from personalclaw.workflows import command_inputs
+
+    spec = _spec(_gate(**_READS_AN_INPUT[kind]))
+    for who in (command_inputs.A2A, command_inputs.AGENT, command_inputs.APP):
+        assert "`k`" in command_inputs.refusal(spec, {"k": REFERENCE}, who), who
+        controller, checks = await _started(spec, who, k=REFERENCE)
+        assert checks.blocks == [], (who, "a value nobody chose never runs")
+        assert not _secret_rows(controller.run.id), who
+    controller, checks = await _started(spec, "", k=REFERENCE)
+    assert checks.blocks == [{"command": f"check {REFERENCE}"}], "her own text, as written"
+    assert not _secret_rows(controller.run.id), "the reference is never filled"
+    assert _holders(home) == [], "the value is nowhere but the credential store"
 
 
 #: Each text a judge's model is sent, naming the secret.

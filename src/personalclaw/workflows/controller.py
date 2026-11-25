@@ -1181,7 +1181,7 @@ class RunController:
             return body
         refused = mid_flight.posture_refusal(
             self.run.workflow_name, before, result, owner_allowed=owner_allowed
-        )
+        ) or mid_flight.command_refusal(self, before, result, owner_allowed=owner_allowed)
         if refused is not None:
             return {**body, **refused}
         refused, reaches = mid_flight.skip_refusal(self, result)

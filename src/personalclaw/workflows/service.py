@@ -38,6 +38,7 @@ from personalclaw.workflows import (
     attention,
     automation_version,
     blocks,
+    command_inputs,
     declines,
     definition_check,
 )
@@ -434,7 +435,7 @@ async def author_def(
     if spec is None:
         return body
     if not save:
-        asks = await _loosenings(spec)
+        asks = await _loosenings(spec, saved_by=saved_by)
         if asks:
             body["needs_owner_allow"] = [step.to_dict() for step in asks]
         return _ok(saved=False, dry_run=True, **body)
@@ -462,20 +463,11 @@ async def author_def(
     )
 
 
-async def _loosenings(spec: dict[str, Any]) -> list[Any]:
-    """The steps of *spec* that would do more than the same steps of the stored definition do
-    (``automation_posture.workflow_loosenings``): what its save needs the owner's own yes for."""
-    from personalclaw.automation_posture import workflow_loosenings
+async def _loosenings(spec: dict[str, Any], *, saved_by: str = AGENT) -> list[Any]:
+    """What a save of *spec* by *saved_by* asks the owner's own yes for (`definition_ask`)."""
+    from personalclaw.workflows import definition_ask
 
-    name = str(spec.get("name") or "")
-    stored = await _raw_def(name) if valid_name(name) else None
-    current = stored if isinstance(stored, dict) or stored is None else stored.to_dict()
-    root = spec.get("root")
-    return workflow_loosenings(
-        name,
-        current_root=(current or {}).get("root"),
-        new_root=root if isinstance(root, dict) else {},
-    )
+    return await definition_ask.loosenings(spec, saved_by=saved_by)
 
 
 def _workspace_name_refusal(spec: dict[str, Any]) -> str:
@@ -494,7 +486,9 @@ def _workspace_name_refusal(spec: dict[str, Any]) -> str:
 
 #: What a definition's writer sets, never the spec it is handed: who saved the version and the ops
 #: it records (the provider's hints), and the label of who saved it the definition carries.
-_SET_BY_THE_WRITER: frozenset[str] = frozenset({"_saved_by", "_version_ops", "provenance"})
+_SET_BY_THE_WRITER: frozenset[str] = frozenset(
+    {"_saved_by", "_version_ops", "_owner_allowed", "provenance"}
+)
 
 
 async def _write_definition(
@@ -529,7 +523,7 @@ async def _write_definition(
         # Every door's write, refused where its writer reads the answer, an agent's included: a
         # run of it would be refused at its start, after the save had said nothing.
         return {}, _service_failure("WF_DEF_WORKSPACE_REFUSED", refused, repromptable=True)
-    loosened = await _loosenings(spec)
+    loosened = await _loosenings(spec, saved_by=saved_by)
     if loosened and not owner_allowed:
         name = str(spec.get("name") or "")
         said = "; ".join(f"“{s.label}” {', and '.join(s.may)}" for s in loosened)
@@ -562,8 +556,12 @@ async def _write_definition(
         )
     fields = {k: v for k, v in spec.items() if k not in _SET_BY_THE_WRITER}
     try:
+        # `_owner_allowed`: her yes covered what this save asked her (`versions.hers`).
         saved = await writable[0].save_def(
-            **fields, _saved_by=saved_by, _version_ops=list(ops or [])
+            **fields,
+            _saved_by=saved_by,
+            _version_ops=list(ops or []),
+            _owner_allowed=bool(loosened),
         )
     except Exception as exc:
         return {}, _service_failure("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
@@ -645,6 +643,42 @@ async def delete_def(name: str) -> dict[str, Any]:
 # ── runs ─────────────────────────────────────────────────────────────────────
 
 
+def _admitted_inputs(
+    spec: dict[str, Any],
+    given: dict[str, Any] | None,
+    *,
+    name: str,
+    started_by: str,
+    document: str = "",
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The inputs a start *given*, coerced to their declared types, and the start's refusal when it
+    is refused for them (else None).
+
+    Declared TYPES are enforced, for the same reason and at the same door as the derived check
+    before them: a mistyped input caught here costs nothing, and caught at node 7 has already paid
+    for six nodes — or worse, has quietly run with a value the caller never chose. Coerced rather
+    than merely rejected, because a string is what an HTML form, a shell and a chat planner all
+    produce for a number; only a value that cannot BE its declared type is refused.
+
+    And what the starter gave, before the defaults: the owner's saved definition decides what a run
+    runs and where, so a start by anyone else (*started_by*) that gives a value to an input a step
+    runs as a command or uses as a folder is refused, before any run exists (`command_inputs`),
+    and so is one whose *document* a step's command reads.
+    """
+    from personalclaw.workflows import contracts as contracts_mod
+
+    inputs, type_errors = contracts_mod.coerce_declared_inputs(spec, dict(given or {}))
+    if type_errors:
+        return inputs, _service_failure(
+            "WF_RUN_INPUT_TYPE",
+            "input(s) do not match their declared type: " + "; ".join(type_errors),
+            input_errors=type_errors,
+        )
+    if refused := command_inputs.at_start(spec, command_inputs.given(inputs, document), started_by):
+        return inputs, _service_failure("WF_RUN_COMMAND_INPUT", f"{name}: {refused}")
+    return inputs, None
+
+
 async def start_run(
     *,
     name: str,
@@ -666,8 +700,11 @@ async def start_run(
     held_to_its_work: bool = True,
     definition: dict[str, Any] | None = None,
     durable_key: bool = False,
+    started_by: str = "",
 ) -> dict[str, Any]:
     """Instantiate a def and start driving it.
+
+    *started_by* is who asked, when not the owner (`command_inputs`, :func:`_admitted_inputs`).
 
     A caller idempotency key returns the EXISTING run rather than minting a second one — a
     retried tool call is a retry, not a new request (:class:`_CallerKey`, and *durable_key* for
@@ -750,18 +787,12 @@ async def start_run(
             f"missing required input(s): {', '.join(extraction.missing)}",
             **extraction.to_dict(),
         )
-    # Declared TYPES are enforced, for the same reason and at the same door as the derived check
-    # above: a mistyped input caught here costs nothing, and caught at node 7 has already paid for
-    # six nodes — or worse, has quietly run with a value the caller never chose. Coerced rather
-    # than merely rejected, because a string is what an HTML form, a shell and a chat planner all
-    # produce for a number; only a value that cannot BE its declared type is refused.
-    inputs, type_errors = contracts_mod.coerce_declared_inputs(spec, dict(inputs or {}))
-    if type_errors:
-        return _service_failure(
-            "WF_RUN_INPUT_TYPE",
-            "input(s) do not match their declared type: " + "; ".join(type_errors),
-            input_errors=type_errors,
-        )
+    inputs, not_admitted = _admitted_inputs(
+        spec, inputs, name=name, started_by=started_by, document=document
+    )
+    if not_admitted is not None:
+        return not_admitted
+    given = command_inputs.given(inputs, document)
     # Declared defaults are APPLIED, not merely documented. Before this they were validated and
     # then ignored: a template declaring `acceptance` with a default and a run that omitted it
     # failed on `binding failed: unresolved reference at 'acceptance'` — so every optional input
@@ -824,7 +855,7 @@ async def start_run(
     # NORMAL is left UNSTAMPED: `run_mode` reads an absent key as normal, so stamping it would add a
     # redundant string to every unrestricted run's record for no behavioural gain. Only a restricted
     # inheritance is a fact worth recording.
-    run_extra: dict[str, Any] = dict(extra or {})
+    run_extra: dict[str, Any] = command_inputs.stamped(extra, given, started_by)
     from personalclaw.apps import app_work
 
     if app_work.RUN_KEY not in run_extra:
@@ -2278,7 +2309,7 @@ def fork_run(
 
 
 async def start_draft_run(
-    run_id: str, *, supervisor: Any = None, session_key: str = ""
+    run_id: str, *, started_by: str, supervisor: Any = None, session_key: str = ""
 ) -> dict[str, Any]:
     """Start a run that already EXISTS as a draft — the caller-driven launch
     `mid_flight._apply_fork` promises.
@@ -2323,6 +2354,8 @@ async def start_draft_run(
     spec = store.read_spec(run_id)
     if spec is None:
         return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
+    if refused := command_inputs.as_started_by(run, spec, started_by):
+        return _service_failure("WF_RUN_COMMAND_INPUT", f"{run.workflow_name}: {refused}")
     if supervisor is None:
         return _service_failure(
             "WF_NO_SUPERVISOR", "the workflow supervisor is unavailable, so the run cannot start"

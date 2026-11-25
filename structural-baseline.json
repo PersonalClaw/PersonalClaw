@@ -322,6 +322,11 @@
         "release": "0.4.0",
         "startup_units": 73,
         "units": 276
+      },
+      {
+        "release": "0.4.1",
+        "startup_units": 73,
+        "units": 276
       }
     ],
     "releases_rationale": "The biggest import cycle may only shrink, release by release (v0.4.0 B2, #5813). Its size can't be held per pull request (see the rationale above), so each release's size is recorded once, by the bump that sets the release's version: a render of a tree whose version has no record adds one, with the size the tree has, and every record already here is carried as it is. A release whose cycle holds more units than the release before is the red: cut its edges before the release, never regenerate to bless it. A record, once on main, is never changed (the rail compares them with the base's)."

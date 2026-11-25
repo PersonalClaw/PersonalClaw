@@ -159,6 +159,22 @@ describe('a newer version of the workflow an automation runs', () => {
     expect(screen.getByRole('button', { name: /Use v2/ })).toBeTruthy()
   })
 
+  it('says a PersonalClaw default changed, and offers Allow again rather than Use v1 for v1', () => {
+    // A release that changed what a default does asks every Allow it covers again: the workflow is
+    // as it was allowed, so nothing newer is offered, the same version is allowed again.
+    const revised: AutomationWorkflowVersion = {
+      ...NEWER, runs: 0, newer: 1, since: [], revised: true, use: { version: 1, steps: {} },
+      problem: '“weekly-report” has not changed since this automation was allowed to run it, but a ' +
+        'PersonalClaw update changed a default it runs with, so it did not run.',
+    }
+    render(<WorkflowVersionNote triggerId="store:manual:weekly-report" version={revised} onChanged={() => {}} />)
+    const note = screen.getByRole('note').textContent ?? ''
+    expect(note).toContain('A PersonalClaw update changed a default “weekly-report” runs with')
+    expect(note).not.toContain('has a newer version')
+    expect(screen.getByRole('button', { name: /Allow again/ })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Use v1/ })).toBeNull()
+  })
+
   it('shows nothing for an automation that runs the newest version', () => {
     const current = { ...NEWER, runs: 2, allowed: 2, newer: 0, since: [], use: null }
     const { container } = render(

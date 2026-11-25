@@ -38,6 +38,7 @@ from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.schedule_history import ScheduleRunStore
+from personalclaw.triggers import grants
 from personalclaw.triggers import tools as Tools
 from personalclaw.triggers.boot_migrate import migrate_and_arm
 from personalclaw.triggers.models import Trigger
@@ -479,7 +480,9 @@ def test_the_chat_editing_an_action_saves_it_switched_off_and_grants_nothing(hom
     trigger = _row(home, "nightly")
     assert trigger.enabled is False
     assert trigger.next_fire_at == ""
-    assert trigger.capabilities == {}
+    # It grants nothing: what it keeps is only who wrote its action, a door that did not ask her
+    # (`grants.wrote`), so its fires are no start of hers until she saves it in its editor.
+    assert trigger.capabilities == {"action_by": grants.UNASKED}
 
 
 def test_the_chat_cannot_switch_an_ungranted_trigger_on(home):

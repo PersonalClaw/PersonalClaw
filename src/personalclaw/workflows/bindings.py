@@ -177,6 +177,9 @@ class BindingContext:
     #: none, where the field is absent. The engine hands it to each stage and judge gate
     #: (`step_dispatch._with_owner_guidance`).
     run_guidance: str = ""
+    #: What `{{run.checks}}` reads: what the checks a judge declares printed when the engine ran
+    #: them just before it (`judge_checks.measured`). "" for every other step.
+    run_checks: str = ""
     #: What `{{run.dropped}}` reads: the files dropped into the run, each screened and fenced
     #: with its name (`filedrop.dropped_for_steps`). None for a run whose workflow accepts no
     #: files, and for a step that does not bind it, where the field is absent.
@@ -284,6 +287,8 @@ class BindingContext:
             run["dropped"] = self.run_dropped
         if self.run_guidance:
             run["guidance"] = self.run_guidance
+        if self.run_checks:
+            run["checks"] = self.run_checks
         if run:
             root["run"] = run
         if self.brief is not None:
@@ -852,6 +857,7 @@ _RUN_HOLDS = {
     "dropped": "the files dropped into a run, for a run whose workflow declares `file_drop`",
     "guidance": "the owner's standing guidance for a run's project, for a run in a project whose"
     " instructions say something",
+    "checks": "what a judge's checks printed, for a judge whose step or run declares checks",
 }
 
 

@@ -68,6 +68,8 @@ def _req(method: str, path: str, *, match_info=None, body=None, headers=None):
     req = make_mocked_request(
         method, path, app=app, match_info=match_info or {}, headers=headers or {}
     )
+    # The owner's editor: a request the auth middleware admitted with her (`approval_answer`).
+    req["user"] = "owner"
     if body is not None:
 
         async def _json():

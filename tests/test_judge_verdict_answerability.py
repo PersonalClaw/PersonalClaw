@@ -83,15 +83,17 @@ def test_grounding_normalizes_whitespace_and_case() -> None:
     assert v.unanswerable_refs == []
 
 
-def test_declared_observation_commands_are_sanctioned_citations() -> None:
-    """The judge is TOLD to run proof_command / hidden_validation_commands itself and cite
-    their output — those citations are legitimately outside the slice."""
+def test_naming_a_declared_check_is_not_grounding_without_its_recorded_output() -> None:
+    """🔴 Before: a citation naming `proof_command` counted as grounded, because the judge was
+    told to re-run it. A judge cannot run a command, so that was output it made up. Now only what
+    the engine recorded of the check grounds a citation (`judge_checks.measured`)."""
     hints = JudgeHints(proof_command="pytest tests/test_retry.py -q")
-    v = validate_verdict(
-        _raw_pass(["ran pytest tests/test_retry.py -q: 14 passed"]),
-        hints,
-        evidence_text=EVIDENCE,
-    )
+    made_up = "ran pytest tests/test_retry.py -q: 14 passed"
+    v = validate_verdict(_raw_pass([made_up]), hints, evidence_text=EVIDENCE)
+    assert v.unanswerable_refs == [made_up]
+    recorded = f"{EVIDENCE}\n`pytest tests/test_retry.py -q` in /work: passed (exit 0)."
+    quoted = "`pytest tests/test_retry.py -q` in /work: passed (exit 0)."
+    v = validate_verdict(_raw_pass([quoted]), hints, evidence_text=recorded)
     assert v.unanswerable_refs == [] and v.verdict is Verdict.PASS
 
 
@@ -104,7 +106,7 @@ def test_partially_grounded_pass_is_flagged_not_rejected() -> None:
 
 def test_short_fragments_are_never_flagged() -> None:
     # "passed" grounds against almost anything; flagging it would be noise.
-    assert ungrounded_refs(["passed"], "unrelated", None) == []
+    assert ungrounded_refs(["passed"], "unrelated") == []
 
 
 def test_non_pass_verdicts_are_flagged_but_never_answerability_rejected() -> None:

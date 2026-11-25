@@ -29,8 +29,8 @@ import logging
 import uuid
 from typing import Any
 
-from personalclaw.workflows import owner_allow, service
-from personalclaw.workflows.versions import AGENT
+from personalclaw.workflows import command_inputs, owner_allow, service
+from personalclaw.workflows.versions import AGENT, OWNER, PUBLISH, SHIPPED
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +91,9 @@ async def save(state: Any, *, session_key: str, fields: dict[str, Any]) -> dict[
         return service._service_failure(
             "WF_DEF_NOBODY_TO_ASK",
             f"{name!r} was not saved: it would let its steps {'; '.join(_labels(steps))} approve "
-            "their own tool calls or change things, not only read, and a save like that is made "
-            f"only on your owner's own Allow, which {why}. Save it without that, or ask from a "
-            "chat.",
+            "their own tool calls, change things where they only read, or run a command your "
+            "owner did not write, and a save like that is made only on your owner's own Allow, "
+            f"which {why}. Save it without that, or ask from a chat.",
         )
     _supersede(state, name)
     ask_id = f"{owner_allow.SAVE_PREFIX}{name}:{uuid.uuid4().hex[:8]}"
@@ -208,3 +208,33 @@ def _note_unsaved(state: Any, name: str, ask_id: str, why: str) -> None:
         logger.warning(
             "workflow %s: could not tell the Inbox it was not saved", name, exc_info=True
         )
+
+
+async def loosenings(spec: dict[str, Any], *, saved_by: str = AGENT) -> list[Any]:
+    """The steps of *spec* that would do more than the same steps of the stored definition do
+    (``automation_posture.workflow_loosenings``): what its save needs the owner's own yes for.
+
+    And, for a save through any door but her own (*saved_by*: an agent's, an app's, a refiner's
+    or an import's), each command a step would run, or folder it would run it in, that the stored
+    definition does not write (`command_inputs.written_commands`): the engine runs a check's
+    command with nobody asked, outside the saving agent's own approval, so only she writes one."""
+    from personalclaw.automation_posture import workflow_loosenings
+
+    name = str(spec.get("name") or "")
+    stored = await service._raw_def(name) if service.valid_name(name) else None
+    current = stored if isinstance(stored, dict) or stored is None else stored.to_dict()
+    root = spec.get("root")
+    steps = workflow_loosenings(
+        name,
+        current_root=(current or {}).get("root"),
+        new_root=root if isinstance(root, dict) else {},
+    )
+    if saved_by in WRITES_ITS_OWN_COMMANDS:
+        return steps
+    return [*steps, *command_inputs.written_commands(current, spec)]
+
+
+#: The doors whose save writes a command the owner wrote, or one PersonalClaw ships: her editor,
+#: which shows her every step she saves; a template as the installed release has it; and the
+#: publish switch, which writes the steps of the version before it.
+WRITES_ITS_OWN_COMMANDS = frozenset({OWNER, SHIPPED, PUBLISH})

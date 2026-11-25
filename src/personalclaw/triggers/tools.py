@@ -1347,6 +1347,7 @@ def update(
     owner_consented: bool = False,
     chat_channels: Any = None,
     allowing: Any = None,
+    her_edit: bool = False,
 ) -> AutomationToolResult:
     """`automation_update` — patch an existing automation through the allowlist.
 
@@ -1533,7 +1534,7 @@ def update(
         _expiry_after_its_time(trigger)
     # What the edit changed keeps no grant (`grants.narrow`), so `missing` below asks about it the
     # way it asks about a provider the trigger was never allowed.
-    changed = grants.narrow(trigger, before) if "workflow" in applied else []
+    changed = grants.edited(trigger, before, applied, owner_consented, her_edit)
     missing = grants.missing(trigger)
     granted: list[str] = []
     note = ""

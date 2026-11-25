@@ -98,7 +98,7 @@ def _draft(**kw) -> WorkflowRun:
 async def test_a_DRAFT_run_can_be_started() -> None:
     run = _draft()
     sup = _RecordingSupervisor()
-    body = await service.start_draft_run(run.id, supervisor=sup)
+    body = await service.start_draft_run(run.id, started_by="", supervisor=sup)
     assert body["ok"] is True
     assert body["started"] is True
     assert body["status"] == RunStatus.RUNNING.value
@@ -123,7 +123,7 @@ async def test_a_FORKED_run_is_the_case_this_exists_for() -> None:
     assert store.get(child_id).status is RunStatus.DRAFT
 
     sup = _RecordingSupervisor()
-    body = await service.start_draft_run(child_id, supervisor=sup)
+    body = await service.start_draft_run(child_id, started_by="", supervisor=sup)
     assert body["ok"] is True
     assert [rid for rid, _ in sup.launched] == [child_id]
 
@@ -136,7 +136,9 @@ async def test_starting_a_run_that_ALREADY_LAUNCHED_is_refused_with_the_verb_tha
     for status in (RunStatus.RUNNING, RunStatus.COMPLETE, RunStatus.CANCELLED):
         run = store.create(WorkflowRun(id="", workflow_name="wf", status=status))
         store.write_spec(run.id, SPEC)
-        body = await service.start_draft_run(run.id, supervisor=_RecordingSupervisor())
+        body = await service.start_draft_run(
+            run.id, started_by="", supervisor=_RecordingSupervisor()
+        )
         assert body["ok"] is False
         assert body["code"] == "WF_RUN_NOT_PRELAUNCH"
         assert status.value in body["message"]
@@ -144,7 +146,9 @@ async def test_starting_a_run_that_ALREADY_LAUNCHED_is_refused_with_the_verb_tha
 
 
 async def test_starting_a_run_that_does_not_exist_is_NOT_FOUND() -> None:
-    body = await service.start_draft_run("no-such-run", supervisor=_RecordingSupervisor())
+    body = await service.start_draft_run(
+        "no-such-run", started_by="", supervisor=_RecordingSupervisor()
+    )
     assert body["ok"] is False
     assert body["code"] == "WF_RUN_NOT_FOUND"
 
@@ -153,7 +157,7 @@ async def test_a_MISSING_SUPERVISOR_is_reported_rather_than_silently_skipped() -
     """The run stays startable. Reporting `WF_NO_SUPERVISOR` is what `start_run` already does, and
     a 200 with nothing launched would be the same false success this issue is about."""
     run = _draft()
-    body = await service.start_draft_run(run.id, supervisor=None)
+    body = await service.start_draft_run(run.id, started_by="", supervisor=None)
     assert body["ok"] is False
     assert body["code"] == "WF_NO_SUPERVISOR"
     assert store.get(run.id).status is RunStatus.DRAFT

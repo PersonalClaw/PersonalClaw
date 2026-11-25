@@ -419,7 +419,9 @@ async def test_the_failures_that_open_the_breaker_say_when_a_retry_can_run(monke
         refused_before = fake.refused
         forked = service.fork_run(run_id, note="retry inside the window")
         child = str(forked["child_run_id"])
-        assert (await service.start_draft_run(child, supervisor=supervisor)).get("ok")
+        assert (await service.start_draft_run(child, started_by="", supervisor=supervisor)).get(
+            "ok"
+        )
         assert await _terminal(supervisor, child) is RunStatus.FAILED
         assert fake.refused == refused_before, "the breaker let a call through"
         child_failure = _failure(child, "sample")
@@ -447,7 +449,7 @@ async def test_a_fork_of_the_failed_run_retries_once_the_provider_is_back(monkey
             p: i.state for p, i in child_state.items()
         }
 
-        started = await service.start_draft_run(child, supervisor=supervisor)
+        started = await service.start_draft_run(child, started_by="", supervisor=supervisor)
         assert started.get("ok"), started
         assert await _terminal(supervisor, child) is RunStatus.COMPLETE
         assert len(fake.sample_requests()) == 2, "the retry did not call the provider"

@@ -1128,6 +1128,17 @@
       ]
     },
     {
+      "id": "workflow-definition-defaults-fixture",
+      "source": "Project-authored workflow definitions for tests/test_a_workflow_allow_survives_a_model_change.py",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/workflow_definition_defaults.json"
+      ]
+    },
+    {
       "id": "chat-transcript-corpus",
       "source": "Project-authored chat transcripts of every row shape a chat keeps, for tests/test_turn_rows.py",
       "version": "repository-revision",
