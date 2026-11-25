@@ -119,7 +119,12 @@ describe('a stop is headed by its cause, and offers what its cause needs', () =>
 
   it('🔴 a judge gate that refused the work: its verdict, fix the work, no workflow change', async () => {
     const panel = await panelFor(run('not_retried', 'judge_refused', REFUSED_DETAIL, REFUSED_REMEDY))
-    expect(panel.textContent).toMatch(/the judge did not accept the work/i)
+    // Headed by its cause: the headline's own line, not the remedy, which opens with the same words.
+    const headline = within(panel).getAllByText(
+      (_, el) => el?.tagName === 'P' && /^The judge did not accept the work( at .*)?\.$/.test(el.textContent ?? ''),
+    )
+    expect(headline).toHaveLength(1)
+    expect(panel.textContent).not.toMatch(/failed on its only attempt/)
     expect(panel.textContent).toContain(REFUSED_REMEDY)
     expect(within(panel).queryByRole('link', { name: /Change the workflow/ })).toBeNull()
     expect(panel.textContent).not.toMatch(/fails the same way|spent its iterations failing|change the step/)
