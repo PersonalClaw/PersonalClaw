@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from personalclaw.apps.app_crons import schedules
+from personalclaw.apps.capability_switches import starts_on
 from personalclaw.apps.manifest import PROGRAM_YOU_NAME, AppManifest
 
 logger = logging.getLogger(__name__)
@@ -173,7 +174,8 @@ def _crons(m: AppManifest) -> list[dict[str, Any]]:
                     "agent": c.agent,
                     "message": c.message,
                     "tier": m.permissions.agent_tier,
-                    "scheduled": schedules(m, c),
+                    # Turned on by the install: a job of a capability that starts off is not.
+                    "scheduled": schedules(m, c) and starts_on(m, c.capability),
                 }
             )
     except Exception:  # noqa: BLE001 — best-effort, see `describe`

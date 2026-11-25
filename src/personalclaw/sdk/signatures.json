@@ -6160,7 +6160,8 @@
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "agent_sequence"},
     {"annotation": "dict[str, str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "env"},
     {"annotation": "bool", "default": "True", "kind": "positional_or_keyword", "name": "persistent_session"},
-    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "silent"}
+    {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "silent"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "capability"}
    ],
    "returns": "None"
   },
