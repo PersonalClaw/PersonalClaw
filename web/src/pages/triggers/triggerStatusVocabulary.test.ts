@@ -44,7 +44,7 @@ const isDefault = (m: { label: string; tone: string }) =>
 
 /** The hook `last_status` vocabulary, read from the single choke point that closes it. */
 const hookStatuses = (): string[] => {
-  const record = pyMethod(HOOKS, '    def _record(status: str) -> None:')
+  const record = pyMethod(HOOKS, '    def _record(status: str, duration_ms: int = 0) -> None:')
   const tuple = record.split('hook.last_status = (')[1]?.split(')')[0] ?? ''
   return [...tuple.matchAll(/"([a-z_]+)"/g)].map((m) => m[1])
 }
