@@ -691,6 +691,29 @@ def write_spec_history(run_id: str, version: int, record: dict[str, Any]) -> Pat
     return path
 
 
+#: In the record of a run's first edit (:func:`write_spec_history`): whether the spec the run
+#: started from ran as a version of its owner's (`versions.hers`), read just before the edit.
+STARTED_YOURS = "started_as_yours"
+
+
+def first_edit(run_id: str) -> dict[str, Any] | None:
+    """The record of the first edit of the run *run_id* after it started, or None when nothing
+    edited it: each edit's commit keeps one (:func:`write_spec_history`), and the run's spec is
+    then no longer the one it started from. A record that cannot be read reads as ``{}``: an edit,
+    of a start nothing can tell."""
+    try:
+        kept = sorted((run_dir(run_id) / "spec_history").glob("v*.json"))
+    except OSError:
+        return None
+    if not kept:
+        return None
+    try:
+        record = json.loads(kept[0].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
 def write_state(run_id: str, instances: dict[str, NodeInstance]) -> Path:
     path = run_dir(run_id) / "state.json"
     path.parent.mkdir(parents=True, exist_ok=True)

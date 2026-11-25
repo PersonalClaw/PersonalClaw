@@ -71,6 +71,13 @@ CHANGED_AUTOMATION_KEY = "automation_changed_unasked"
 #: is not the owner's (`versions.hers`): what it hands on is then no value she chose, and a refusal
 #: says where she can make it hers.
 HANDED_BY_KEY = "inputs_handed_by"
+#: Beside :data:`HANDED_BY_KEY`, when that workflow's run was edited after it started
+#: (`store.first_edit`): :data:`EDITED_FROM_YOURS` when it started as a version of hers, so only
+#: starting it again helps, else :data:`EDITED_FROM_ANOTHERS` (or a start nothing can tell), so
+#: she saves it in its editor and then starts it again.
+HANDED_BY_AN_EDIT_KEY = "inputs_handed_by_an_edited_run"
+EDITED_FROM_YOURS = "yours"
+EDITED_FROM_ANOTHERS = "not yours"
 
 #: The input every workflow's steps read as a folder beside their own, whether or not the
 #: definition declares it or a step names it (`provisioning.step_reads`).
@@ -436,18 +443,22 @@ def handed(
     spec: Mapping[str, Any],
     extra: Mapping[str, Any] | None,
     definition_is_hers: bool = False,
+    edit: str = "",
 ) -> dict[str, Any]:
     """The record a run a step starts begins with: those of the values it is handed (*given*) that
     the run whose step it is (of *spec*, its record *extra*) holds as its owner's. Hers are a value
     she chose for an input of that run, and, when its definition is hers (*definition_is_hers*,
     `versions.hers`), a default of that definition and text it writes itself. A value a step
     produced, one someone else gave that run, and what a definition another door wrote with
-    nothing asked of her says, are not."""
+    nothing asked of her says, are not. *edit*: that run was edited after it started
+    (:data:`HANDED_BY_AN_EDIT_KEY`), which a refusal of what it hands on then says."""
     hers = {hashed for digests in _held(extra).values() for hashed in digests}
     if definition_is_hers:
         hers |= {digest(value) for value in _defaults(spec).values() if value not in (None, "")}
         hers |= {digest(text) for text in _handed_texts(spec)}
     parent = {} if definition_is_hers else {HANDED_BY_KEY: str(spec.get("name") or "")}
+    if parent and edit:
+        parent[HANDED_BY_AN_EDIT_KEY] = edit
     return (
         parent
         | {STARTED_BY_KEY: starter(extra)}
@@ -476,9 +487,12 @@ def handed_by(parent: Any, given: Mapping[str, Any] | None) -> dict[str, Any]:
 
     spec = store.read_spec(parent.id) or {}
     name = str(getattr(parent, "workflow_name", "") or "")
-    return handed(
-        given, spec=spec, extra=parent.extra, definition_is_hers=versions.hers(name, spec)
-    )
+    hers = versions.hers(name, spec)
+    first = None if hers else store.first_edit(parent.id)
+    edit = ""
+    if first is not None:
+        edit = EDITED_FROM_YOURS if first.get(store.STARTED_YOURS) is True else EDITED_FROM_ANOTHERS
+    return handed(given, spec=spec, extra=parent.extra, definition_is_hers=hers, edit=edit)
 
 
 @dataclass(frozen=True)
@@ -501,6 +515,9 @@ class Chosen:
     #: The workflow whose step started this run, when its definition is not the owner's
     #: (:data:`HANDED_BY_KEY`), or "".
     handed_by: str = ""
+    #: Whether that workflow's run was edited after it started, and from what
+    #: (:data:`HANDED_BY_AN_EDIT_KEY`), or "".
+    handed_by_an_edit: str = ""
     #: The automation that started the run, when an edit that did not ask her wrote its action
     #: (:data:`CHANGED_AUTOMATION_KEY`), or "".
     changed_automation: str = ""
@@ -525,6 +542,7 @@ class Chosen:
             recorded=isinstance((extra or {}).get(VOUCHED_KEY), dict),
             choices=_choices(spec),
             handed_by=str((extra or {}).get(HANDED_BY_KEY) or ""),
+            handed_by_an_edit=str((extra or {}).get(HANDED_BY_AN_EDIT_KEY) or ""),
             changed_automation=str((extra or {}).get(CHANGED_AUTOMATION_KEY) or ""),
         )
 
@@ -548,6 +566,23 @@ class Chosen:
                 continue
             shown = "its document" if name == DOCUMENT else f"`{name}`"
             workflow = f"“{self.name}”" if self.name else "the workflow"
+            if self.handed_by and self.handed_by_an_edit == EDITED_FROM_YOURS:
+                return (
+                    f"{where} reads {shown}, which the run of “{self.handed_by}” that started this "
+                    "run handed it, and that run was edited after it started, so it no longer runs "
+                    "a version you saved and what it hands on is no value you chose. Saving the "
+                    f"workflow changes nothing for that run: start “{self.handed_by}” again, or "
+                    f"start {workflow} yourself and give {shown} the value there."
+                )
+            if self.handed_by and self.handed_by_an_edit:
+                return (
+                    f"{where} reads {shown}, which the run of “{self.handed_by}” that started this "
+                    "run handed it. That run was edited after it started, and the definition it "
+                    "started from is not one you saved or said yes to here, so what it hands on is "
+                    f"no value you chose. Open “{self.handed_by}” in Workflows, save it in its "
+                    f"editor, and start it again, or start {workflow} yourself and give {shown} "
+                    "the value there."
+                )
             if self.handed_by:
                 return (
                     f"{where} reads {shown}, which the workflow “{self.handed_by}” that started "

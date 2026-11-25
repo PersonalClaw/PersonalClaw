@@ -266,23 +266,25 @@ def commit_mutation(ctl: RunController, result: mutations.BatchResult, actor: st
     """Swap in the candidate spec, apply state effects, journal the batch."""
     if result.spec is None:
         return
+    first = store.first_edit(ctl.run.id) is None
+    started_yours = first and _runs_as_yours(ctl)
     ctl.spec = result.spec
     ctl.run.spec_version += 1
     ctl.root = Node.from_dict(ctl.spec.get("root") or {"kind": "sequence"})
     store.write_spec(ctl.run.id, ctl.spec)
-    store.write_spec_history(
-        ctl.run.id,
-        ctl.run.spec_version,
-        mutations.history_record(
-            result.ops,
-            actor=actor,
-            version=ctl.run.spec_version,
-            spec=ctl.spec,
-            preview=result.preview,
-            owner_username=ctl.run.owner_username,
-            origin_harness=ctl.run.origin_harness,
-        ),
+    record = mutations.history_record(
+        result.ops,
+        actor=actor,
+        version=ctl.run.spec_version,
+        spec=ctl.spec,
+        preview=result.preview,
+        owner_username=ctl.run.owner_username,
+        origin_harness=ctl.run.origin_harness,
     )
+    if first:
+        # What a run this one starts is told of the edit (`command_inputs.handed_by`).
+        record[store.STARTED_YOURS] = started_yours
+    store.write_spec_history(ctl.run.id, ctl.run.spec_version, record)
     ctl.journal.user_edited_mid_flight([o.to_dict() for o in result.ops])
 
     for op in result.ops:
@@ -308,6 +310,18 @@ def commit_mutation(ctl: RunController, result: mutations.BatchResult, actor: st
             "preview": result.preview.to_dict(),
         },
     )
+
+
+def _runs_as_yours(ctl: RunController) -> bool:
+    """Whether the run's spec, before its first edit, ran as a version of its owner's
+    (`versions.hers`); False when that cannot be read."""
+    from personalclaw.workflows import versions
+
+    try:
+        return versions.hers(ctl.run.workflow_name, ctl.spec)
+    except Exception:  # noqa: BLE001 - one it cannot tell is read as not hers
+        logger.debug("run %s: could not read its start's version", ctl.run.id, exc_info=True)
+        return False
 
 
 def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.CascadePreview) -> None:
