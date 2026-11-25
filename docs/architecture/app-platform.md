@@ -1001,6 +1001,29 @@ no value is read to tell. A `multiInstance` capability's list is checked against
 schema but not enforced yet: each instance runs under its own account once each account runs its
 own (#3843), and an app should not count on it before then.
 
+**Each capability has its own switch** (#3843, `apps/capability_switches.py`). The app's
+`enabled` is the master switch: an app that is off runs nothing, and an app that is on runs the
+capabilities switched on in its installed record, `capabilities: {"<id>": {"on": true|false}}`.
+Install switches each one as its provider's `startsOn` says. Until the app panel can switch a
+capability on, one whose manifest says nothing starts on, as every capability did before the
+switches; a capability that listens, polls or acts on its own clock should declare
+`"startsOn": false`. After that the switch is the owner's: an update keeps it, a capability it
+renames keeps the old id's, one it drops leaves the record, and one it adds starts off. A record
+written before the switches has none, and its app runs every capability until the first switch or
+update writes them down. A capability that is off is not built, so it reads no settings and
+starts nothing; `POST /api/apps/{name}/capabilities/{id}/on` and `…/off` (owner only) write the
+switch, build or tear down that capability alone while the app runs, and answer its status. A
+native app's capabilities are always on. A settings save retries a capability that failed only
+while it is switched on.
+
+What a capability is doing is read in one place, `capability_status`: its switch (`on`) beside
+its effective state, `off` (it or its app is switched off), `needs_setup` (an account field it
+requires is empty), `starting`, `running`, `failed` (with the sentence its build failed with) or
+`unavailable` (the availability check's reason, as last measured: a status read starts no check).
+Each `/api/apps` row's `capabilities` carry `on`, `status` and `reason`, and the row's
+`capabilitySummary` is the app's one line about them ("2 of 3 capabilities running · Mail in your
+Inbox failed: the token was refused"); the switch routes answer with the same reading.
+
 A capability may declare its own check of the settings a form saves for it (`settingsCheck`,
 `module.path:function`, resolved as `implementation` is; core feature `settings-check`). Every
 route that saves the app's settings asks it before it writes, with the settings that capability

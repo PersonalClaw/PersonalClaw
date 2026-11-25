@@ -933,6 +933,12 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "switching an app on — its backend and MCP servers start, as you"
     ),
     "POST /api/apps/{name}/disable": OwnerOnly("switching your apps off"),
+    "POST /api/apps/{name}/capabilities/{capability}/on": OwnerOnly(
+        "switching one capability of an app on — it starts, as you"
+    ),
+    "POST /api/apps/{name}/capabilities/{capability}/off": OwnerOnly(
+        "switching one capability of your apps off"
+    ),
     "POST /api/apps/{name}/update": OwnerOnly("replacing an app's code"),
     "DELETE /api/apps/{name}": OwnerOnly("uninstalling your apps"),
     "POST /api/apps/{name}/token": OwnerOnly("minting an app's token — only you mint one"),

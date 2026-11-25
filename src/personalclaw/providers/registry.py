@@ -42,6 +42,9 @@ class RegisteredProvider:
     #: the app's, as it always was, unless the app declares this type more than once, then the
     #: record's key. So a name a setting or an automation already uses stays as it was.
     registry_name: str = ""
+    #: Whether its last enable was held because an account field it requires is empty (#3842):
+    #: ``error`` then says which, and its status reads ``needs_setup``, not ``failed``.
+    needs_setup: bool = False
 
     def __post_init__(self) -> None:
         if not self.capability:
@@ -151,6 +154,7 @@ class ProviderRegistry:
         """Enable a single capability's record."""
         if ext.enabled:
             return True
+        ext.needs_setup = False
         handler = self._type_handlers.get(ext.provider_config.type)
         if not handler:
             ext.error = f"No type handler for provider type: {ext.provider_config.type}"
@@ -158,6 +162,7 @@ class ProviderRegistry:
             return False
         missing = _needs_setup(ext)
         if missing:
+            ext.needs_setup = True
             ext.error = missing
             logger.info("Not enabling %s: %s", ext.key, missing)
             return False

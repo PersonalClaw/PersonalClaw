@@ -9,11 +9,12 @@ Each provider an app declares is a capability, kept under ``<app>/<id>``
   update names each one.
 * **Renamed.** An update declares a capability's earlier id in ``renamedFrom``. Whatever is kept
   under ``<app>/<old>`` moves to ``<app>/<new>``, once: each store that keys by capability
-  registers a mover (:func:`register_mover`; per-capability settings, secrets and switches add
-  theirs, #3842 and #3843), and the installed record keeps the move, so running it again moves
-  nothing. The move is kept pending on every mover before any runs, and each that finishes is
-  struck off, so one a mover failed, or that a stop cut short, names the movers left, and the
-  gateway's next start runs those again (:func:`retry_pending_moves`) until none is left.
+  registers a mover (:func:`register_mover`; per-capability settings and secrets add theirs,
+  #3842; the switches are in the installed record itself, ``capability_switches``), and the
+  installed record keeps the move, so running it again moves nothing. The move is kept pending
+  on every mover before any runs, and each that finishes is struck off, so one a mover failed,
+  or that a stop cut short, names the movers left, and the gateway's next start runs those
+  again (:func:`retry_pending_moves`) until none is left.
 * **Retired.** An id an update drops stays behind in the installed record as a tombstone with its
   last label, the version that dropped it and whether the author declared it in
   ``retiredCapabilities``, and a read of it says what it was and when it went
@@ -162,7 +163,8 @@ def after_update(
     """Record on *meta* what the update from *old* to *new* did to the app's capabilities: each
     rename moved (once, or pending with the movers that failed), each dropped id kept as a
     tombstone, and each id dropped without saying so that is back cleared. Each id the app
-    declares retired has what the stores keep for it deleted (:func:`register_remover`).
+    declares retired has what the stores keep for it deleted (:func:`register_remover`). The
+    owner's switches carry across (``capability_switches.after_update``).
 
     Each new move is recorded pending on every registered mover, and *save* (the installed
     record's writer) puts that on disk, before any mover runs: a stop part way through one, the
@@ -187,7 +189,9 @@ def after_update(
                 meta.capabilityMoves[was]["pending"] = names
                 started.append(was)
     _keep_tombstones(meta, new, before, after, moved)
-    from personalclaw.apps import account_health
+    from personalclaw.apps import account_health, capability_switches
+
+    capability_switches.after_update(meta, list(before) if old is not None else None, new)
 
     for gone in set(before) - set(after):
         account_health.forget(new.name, gone)

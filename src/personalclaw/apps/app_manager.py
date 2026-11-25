@@ -48,7 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.apps import app_runtime, capability_lifecycle
+from personalclaw.apps import app_runtime, capability_lifecycle, capability_switches
 from personalclaw.apps import disclosure as app_disclosure
 from personalclaw.apps import staging as app_staging
 from personalclaw.apps import update_recovery
@@ -1163,6 +1163,7 @@ def install(
             # every later provenance surface (the Tools badge, #2627) reads the SAME
             # value the install dialog just disclosed, rather than re-deriving one.
             tier=report.tier.value,
+            capabilities=capability_switches.initial(manifest),
         )
         _write_installed(name, meta)
         # Start what the app runs — its providers, prompts, skills (through the supply-chain

@@ -181,10 +181,18 @@ def record(manifest: AppManifest) -> None:
 
 def _load_in_process(manifest: AppManifest) -> None:
     """What of an app a process holds itself: its providers (enabling them imports its code),
-    prompts, skills and proposal kinds — registered before anything the app runs can use them."""
+    prompts, skills and proposal kinds — registered before anything the app runs can use them.
+
+    Every capability is listed, and only those switched on are built
+    (``capability_switches``): one that is off reads no settings and starts nothing."""
+    from personalclaw.apps.capability_switches import switched_on
+
     if manifest.all_providers():
         try:
-            _provider_registry().register(manifest, enabled=True)
+            registry = _provider_registry()
+            registry.register(manifest)
+            for capability in switched_on(manifest):
+                registry.enable(manifest.name, capability)
         except Exception:  # noqa: BLE001 — the rest of the app still starts
             logger.exception("app %s: provider registration failed", manifest.name)
     _seed_prompts(manifest)
