@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from personalclaw.config import loader as config_loader
+from personalclaw.resilience.app_probes import app_probes
 from personalclaw.resilience.core_server import probe_core_server
 from personalclaw.resilience.store_files import store_file_probes
 from personalclaw.security import redact_or_withhold
@@ -754,89 +755,6 @@ async def _probe_local_models(ctx: DoctorContext) -> ProbeResult:
             "on none. Settings → Models & Providers → Providers says why: an instance that is not "
             "answering (start it, or check its address), or a runtime that is not installed."
             if bound_down and not phantom
-            else ""
-        ),
-    )
-
-
-async def _probe_apps(ctx: DoctorContext) -> ProbeResult:
-    """apps — per enabled backend app: subprocess alive (watchdog) + leftover
-    ``.{name}.rollback`` dirs from interrupted updates.
-
-    Read-only: consults the backend supervisor's live table (``get(name)`` returns
-    None for a dead entry) and globs the apps dir for rollback leftovers (does NOT
-    call ``recover_interrupted_updates`` — that mutates).
-
-    Scope note: installed-copy-vs-repo manifest drift has no stored hash to diff
-    — it waits for a manifest checksum; this
-    pack probes liveness + rollback leftovers, the real signals available today.
-    """
-    from personalclaw.apps.backend_runtime import get_backend_supervisor
-    from personalclaw.apps.manager import apps_dir, list_apps
-
-    def _read() -> dict[str, Any]:
-        sup = get_backend_supervisor()
-        backends: dict[str, Any] = {}
-        for app in list_apps():
-            if not app.get("enabled", False):
-                continue
-            manifest = app.get("manifest", {}) or {}
-            if not (manifest.get("backend", {}) or {}).get("entryPoint"):
-                continue
-            name = app.get("name", "")
-            rb = sup.get(name)
-            # How a backend that is down last ended, and the last lines it printed.
-            backends[name] = {
-                "alive": rb is not None,
-                "exit": None if rb is not None else sup.last_exit(name),
-            }
-        rollbacks: list[str] = []
-        ad = apps_dir()
-        if ad.exists():
-            for child in ad.iterdir():
-                if (
-                    child.is_dir()
-                    and child.name.startswith(".")
-                    and child.name.endswith(".rollback")
-                ):
-                    rollbacks.append(child.name)
-        return {"backends": backends, "rollback_leftovers": rollbacks}
-
-    ev = await asyncio.to_thread(_read)
-    dead = [n for n, v in ev["backends"].items() if not v["alive"]]
-    problems = []
-    if dead:
-        ended = [
-            f"{n} {x['ended']}" + (f": {x['cause']}" if x["cause"] else "")
-            for n in dead
-            if (x := ev["backends"][n]["exit"])
-        ]
-        problems.append(
-            f"{len(dead)} backend{'s' if len(dead) != 1 else ''} not running"
-            + (f" ({'; '.join(ended)})" if ended else "")
-        )
-    if ev["rollback_leftovers"]:
-        problems.append(
-            f"{len(ev['rollback_leftovers'])} interrupted "
-            f"update{'s' if len(ev['rollback_leftovers']) != 1 else ''}"
-        )
-    return ProbeResult(
-        ok=not problems,
-        detail=(
-            "; ".join(problems)
-            if problems
-            else f"{len(ev['backends'])} app backend{'s' if len(ev['backends']) != 1 else ''} ok"
-        ),
-        evidence=ev,
-        # An interrupted update's leftover is what the orphan prune reconciles (restore or drop,
-        # decided by the apps reconciler) — a working Fix for that half.
-        fix_id="serving-fs.orphan-prune" if ev["rollback_leftovers"] else None,
-        remedy=(
-            "No automatic fix for a backend that is down: the app watchdog already relaunches one "
-            "every 30 seconds, so a backend that stays down is failing to start — the app's panel "
-            "under Apps shows the last lines it printed, as does Settings → Health → Diagnostics → "
-            "Live logs. Disable the app under Settings → Apps & Packs → Apps to stop the retries."
-            if dead
             else ""
         ),
     )
@@ -2511,15 +2429,8 @@ def _register_builtin_probes() -> None:
             "Local model providers + bindings",
         )
     )
-    register_probe(
-        Probe(
-            "apps.backends",
-            "apps",
-            Tier.CAPABILITY,
-            _probe_apps,
-            "App backends + interrupted updates",
-        )
-    )
+    for probe in app_probes():
+        register_probe(probe)
     register_probe(
         Probe(
             "serving-fs.dist",
