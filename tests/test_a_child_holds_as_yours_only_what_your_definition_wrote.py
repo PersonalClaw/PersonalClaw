@@ -383,6 +383,77 @@ def test_a_childs_refusal_names_the_parent_to_save_again():
     assert command_inputs.HANDED_BY_KEY not in mine
 
 
+def _edit(run: WorkflowRun, expr: str) -> None:
+    """Edit the running *run*'s transform to *expr* through an edit's own commit
+    (`mid_flight.commit_mutation`), as a live run's edit lands."""
+    from personalclaw.workflows import mid_flight, mutations
+    from personalclaw.workflows.controller import EngineServices, RunController
+
+    run = store.get(run.id) or run
+    ctl = RunController(run, store.read_spec(run.id) or {}, services=EngineServices())
+    ops = [mutations.Op.from_dict({"op": "update_node", "node_id": "t", "fields": {"expr": expr}})]
+    candidate, issues = mutations.apply_batch(ops, ctl.spec, {})
+    assert not issues, issues
+    mid_flight.commit_mutation(ctl, mutations.BatchResult(ok=True, ops=ops, spec=candidate), "chat")
+    assert (store.read_spec(run.id) or {})["root"]["children"][0]["config"]["expr"] == expr
+
+
+def _childs_refusal(run: WorkflowRun, value: str) -> str:
+    vouched = command_inputs.handed_by(store.get(run.id) or run, {"guard_command": value})
+    child = {"name": "code-project", "inputs": {"guard_command": {"type": "string"}}}
+    chosen = command_inputs.Chosen.of(child, {"guard_command": value}, vouched)
+    return chosen.refusal("{{inputs.guard_command}}", "the guard command")
+
+
+def test_a_childs_refusal_says_to_start_a_parent_edited_since_its_start_again():
+    """🔴 N1. A parent run edited after it started is no version she saved, so the child refuses
+    what it hands on. Before, the refusal said to save the parent in its editor, which changes
+    nothing for that run. Now it says the run was edited, and to start it again."""
+    v1 = versions.record_version("made-it", {**_made_it("ok"), "version": 1}, saved_by=OWNER)
+    run = _a_run_of("made-it", versions.runnable({**_made_it("ok"), "version": 1}), v1)
+    assert _childs_refusal(run, "ok") == "", "the control: her unedited run hands hers on"
+    _edit(run, ITS_OWN)
+
+    said = _childs_refusal(run, ITS_OWN)
+
+    assert "“made-it”" in said and "was edited after it started" in said, said
+    assert "start “made-it” again" in said, said
+    assert "save it in its editor" not in said, said
+
+
+@pytest.mark.parametrize("start", ["an agent's save", "an edit before this release"])
+def test_an_edited_parent_that_did_not_start_as_yours_says_to_save_it_and_start_it_again(start):
+    """CORE's nit on N1: a run that started from a definition not hers, then was edited, needs
+    both, since starting it again from the same definition would hand on no more. So does one
+    whose first edit's record says nothing of its start, as an edit before this release's."""
+    saved_by = AGENT if start == "an agent's save" else OWNER
+    v = versions.record_version("made-it", {**_made_it("ok"), "version": 1}, saved_by=saved_by)
+    run = _a_run_of("made-it", versions.runnable({**_made_it("ok"), "version": 1}), v)
+    _edit(run, ITS_OWN)
+    if start == "an edit before this release":
+        [kept] = (store.run_dir(run.id) / "spec_history").glob("v*.json")
+        record = json.loads(kept.read_text())
+        record.pop(store.STARTED_YOURS)
+        kept.write_text(json.dumps(record))
+
+    said = _childs_refusal(run, ITS_OWN)
+
+    assert "was edited after it started" in said, said
+    assert "save it in its editor, and start it again" in said, said
+
+
+def test_a_parent_whose_definition_is_not_yours_still_says_to_save_it():
+    """The other wording stands: an unedited run of a definition an agent saved says to save it in
+    its editor, which is what makes it hers."""
+    v = versions.record_version("made-it", {**_made_it(ITS_OWN), "version": 1}, saved_by=AGENT)
+    run = _a_run_of("made-it", versions.runnable({**_made_it(ITS_OWN), "version": 1}), v)
+
+    said = _childs_refusal(run, ITS_OWN)
+
+    assert "“made-it”" in said and "save it in its editor" in said, said
+    assert "edited after it started" not in said, said
+
+
 def _kid(command: str) -> int:
     """Save, as yours, the workflow `kid` whose verify gate runs *command*."""
     gate = {
