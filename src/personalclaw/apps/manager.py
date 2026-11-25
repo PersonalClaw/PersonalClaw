@@ -279,6 +279,11 @@ class InstalledApp:
     #: Each capability an update renamed, ``{old: {"to": new, "in": version}}``: moved once. While
     #: a mover has failed it, the move also lists those movers' names under ``pending``.
     capabilityMoves: dict[str, dict[str, Any]] = field(default_factory=dict)  # noqa: N815
+    #: Each capability's own switch, ``{id: {"on": true|false}}`` (#3843): the owner's, written at
+    #: install from each provider's ``startsOn`` and kept by every update
+    #: (``apps.capability_switches``). Empty in a record written before the switches, whose app
+    #: runs every capability it declares.
+    capabilities: dict[str, dict[str, bool]] = field(default_factory=dict)
     schemaVersion: int = 2  # noqa: N815  — schema version for future migrations
 
     def validate_fields(self) -> list[str]:
@@ -318,6 +323,7 @@ class InstalledApp:
             tier=str(data.get("tier", "")),
             retiredCapabilities=_capability_marks(data.get("retiredCapabilities")),
             capabilityMoves=_capability_marks(data.get("capabilityMoves")),
+            capabilities=_capability_switches(data.get("capabilities")),
             schemaVersion=int(data.get("schemaVersion", 1)),
         )
         errors = inst.validate_fields()
@@ -347,6 +353,20 @@ def _capability_marks(raw: Any) -> dict[str, dict[str, Any]]:
         return {}
     return {
         str(cid): {str(k): _mark_value(v) for k, v in mark.items()}
+        for cid, mark in raw.items()
+        if isinstance(mark, dict)
+    }
+
+
+def _capability_switches(raw: Any) -> dict[str, dict[str, bool]]:
+    """An installed record's capability switches. A switch that reads as neither yes nor no is
+    off, since a capability runs code, as the app's own ``enabled`` is read."""
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(cid): {
+            "on": strict_bool(mark.get("on"), field=f"capability {cid} switch", default=False)
+        }
         for cid, mark in raw.items()
         if isinstance(mark, dict)
     }

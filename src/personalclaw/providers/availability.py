@@ -165,6 +165,11 @@ class AvailabilityBoard:
             self._schedule([name])
         return answer
 
+    def peek(self, name: str, implementation: str) -> Availability | None:
+        """The last answer measured for one provider record, or ``None`` when none was: a read
+        that schedules no measurement, for a status that only reports what is known."""
+        return self._answers.get((name, implementation)) or self._whole_app.get(name)
+
     def _is_stale(self, key: _Key) -> bool:
         measured = self._measured_at.get(key)
         return measured is None or time.monotonic() - measured >= self._ttl

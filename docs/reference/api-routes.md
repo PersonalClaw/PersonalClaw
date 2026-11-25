@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **979 registrations** over **793 distinct paths** — 972 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **981 registrations** over **795 distinct paths** — 974 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -29,7 +29,7 @@ The 135 families the surface divides into, largest first.
 | `/api/memory` | 53 | 44 |
 | `/api/workflows` | 51 | 46 |
 | `/api/models` | 38 | 30 |
-| `/api/apps` | 32 | 20 |
+| `/api/apps` | 34 | 22 |
 | `/api/loops` | 30 | 24 |
 | `/api/artifacts` | 26 | 17 |
 | `/api/inbox` | 24 | 23 |
@@ -162,7 +162,7 @@ The 135 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 972 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 974 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -229,6 +229,8 @@ The 972 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/apps/{name}/agent-run/{run_id}` | poll a background agent task. |
 | `GET` | `/api/apps/{name}/capabilities/{capability}/config` | One capability's own settings, its credentials masked. |
 | `PUT` | `/api/apps/{name}/capabilities/{capability}/config` | Save one capability's own settings, and apply them to that capability alone. |
+| `POST` | `/api/apps/{name}/capabilities/{capability}/off` | Switch one capability of an app off: torn down now, the app's others left running. |
+| `POST` | `/api/apps/{name}/capabilities/{capability}/on` | Switch one capability of an app on: built now while the app runs. |
 | `GET` | `/api/apps/{name}/config` | an app's settings, with its credentials masked. |
 | `PUT` | `/api/apps/{name}/config` | save an app's settings, and apply them to its providers. |
 | `POST` | `/api/apps/{name}/disable` | _(no summary)_ |
