@@ -254,16 +254,16 @@ def _guard(request: web.Request, operation: str, *, run_id: str = "") -> web.Res
     )
 
 
-def _saved_by(request: web.Request, *, owners: str = versions.OWNER) -> str:
+def _saved_by(request: web.Request) -> str:
     """Who a definition saved through *request* is saved by (``versions.SAVERS``): what the request
     proved (``approval_answer.of_request``), never what its body says. The owner's own session is
-    *owners* — the editor's save is hers, the publish switch's its own (``versions.PUBLISH``); an
+    the owner (the publish switch, which only she presses, saves as ``versions.PUBLISH``); an
     app's token is an app; anything else — the gateway's internal credential, which an agent's tools
     present — is an agent. An automation of the workflow follows only the owner's editor save
     (`workflows.automation_version`)."""
     by = approval_answer.of_request(request)
     if by == approval_answer.YOU:
-        return owners
+        return versions.OWNER
     if by.kind == approval_answer.APP:
         return versions.APP
     return versions.AGENT
@@ -503,23 +503,38 @@ async def api_def_a2a_publish(request: web.Request) -> web.Response:
     Its own route rather than a field on the def save: one bool must not
     re-validate and re-save the whole definition (see `service.set_a2a_published`). Guarded as a
     def SAVE because that is what it is — a write to the stored template — and because
-    publishing a workflow to an external protocol is not a read.
+    publishing a workflow to an external protocol is not a read. And only her own session presses
+    it (:func:`_not_hers_to_publish`): publishing changes who can start the workflow.
     """
-    denied = _guard(request, "workflow_def_save")
+    name = request.match_info.get("name", "")
+    denied = _guard(request, "workflow_def_save") or _not_hers_to_publish(request, name)
     if denied is not None:
         return denied
     body = await json_object_body(request)
-    name = request.match_info.get("name", "")
     # Under the definition save lock like every write to a stored definition here, so it never
     # lands between a save's revision check and that save's write.
     async with _get_def_save_lock():
         result = await service.set_a2a_published(
-            name,
-            bool_field(body, "published", default=False),
-            saved_by=_saved_by(request, owners=versions.PUBLISH),
+            name, bool_field(body, "published", default=False), saved_by=versions.PUBLISH
         )
     _audit(request, "workflow_def_a2a_publish", "success" if result.get("ok") else "failure", name)
     return _reply(result)
+
+
+def _not_hers_to_publish(request: web.Request, name: str) -> web.Response | None:
+    """The 403 for a publish switch pressed by anyone but the owner's own session, or ``None``.
+
+    An app's token is refused before the handler runs (the route is the owner's,
+    `apps.permissions.ROUTE_AUTHZ`); this also refuses the gateway's internal credential, which an
+    agent's tools present, in the same words. It writes nothing: no version, no flag."""
+    if approval_answer.of_request(request) == approval_answer.YOU:
+        return None
+    from personalclaw.apps.permissions import owner_only_refusal, route_authz
+
+    owned = route_authz("POST", "/api/workflows/{name}/a2a-publish")
+    what = getattr(owned, "capability", "") or "publishing a workflow to outside A2A clients"
+    _audit(request, "workflow_def_a2a_publish", "denied", name)
+    return json_error("owner_only", message=owner_only_refusal(what), status=403)
 
 
 async def api_def_delete(request: web.Request) -> web.Response:

@@ -1380,7 +1380,8 @@ Every version records who saved it (`saved_by`), set by the door the save came
 through and never by what that door was handed (`service._write_definition`
 drops a spec's own `provenance`): the owner in the editor (`owner`, from her
 signed-in session — the internal credential an agent's tools present saves as
-`agent` at the same route), the publish switch (`publish`), an agent's
+`agent` at the same route), the publish switch (`publish`; only her own session
+presses it, and a pack's template arrives unpublished), an agent's
 `workflow_author` or a chat's batch (`agent`), a proposed template you accepted
 in Learning (`agent` too, since its steps are an agent's words:
 `learning.template_install` saves it under its `name:` tag, and refuses a name a
