@@ -101,6 +101,18 @@ describe("versions, in the order PersonalClaw ships them", () => {
     assert.equal(isPrerelease("v0.3.8-rc.1"), true);
     assert.equal(isPrerelease("0.3.8"), false);
   });
+
+  // The one table the gateway's comparator (personalclaw.versions) and the web's (web/src/lib/versions.ts)
+  // read in their own tests, so the three order every row alike.
+  const table = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "tests", "fixtures", "version_order.json"), "utf8"));
+  it("orders every row of the shared table as it says, from either side", () => {
+    assert.ok(table.rows.length >= 15);
+    for (const [a, b, order] of table.rows) {
+      assert.equal(compareVersions(a, b), order, `${a} vs ${b}`);
+      assert.equal(compareVersions(b, a), order === 0 ? 0 : -order, `${b} vs ${a}`);
+    }
+    for (const text of table.unreadable) assert.equal(compareVersions(text, "0.3.8"), null, JSON.stringify(text));
+  });
 });
 
 describe("chooseRelease: what this copy is offered", () => {

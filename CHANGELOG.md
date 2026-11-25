@@ -98,6 +98,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow's model tiers offer only the use cases its steps run on, and say what a stage runs on.**
 - **A run page's Document panel shows the note a step keeps as soon as the step settles, without a reload, and a run that ended without its document says so instead of "The worker has not written it yet."**
 - **The buddy playground's Running now list wraps each line in its column at 200% text zoom. A line cut short ran into Focused work beside it.**
+- **A desktop app from 0.3.7 on a gateway newer than itself checks for its own update at once, instead of at its next daily check.**
 
 ### Security
 
