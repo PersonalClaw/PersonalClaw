@@ -739,7 +739,11 @@ lifecycle transition (install/enable/disable/uninstall). A job is registered
 only for an app that holds the `cron` permission and an agent tier
 (`app_crons.schedules`, the predicate install consent reads), named by its app
 (`<display name>: <job>`), with delivery `none`: it has no conversation to post
-to, and nothing reads a job's `silent` or `persistent_session` field.
+to, and nothing reads a job's `silent` or `persistent_session` field. A job may name the
+capability it belongs to (`capability`, one of the app's ids, refused at install otherwise):
+it is registered only while that capability is switched on, and a switch reconciles the jobs
+at once. A job that names none is the app's own, registered while the app is on. Install
+consent counts a job of a capability that starts off among those the install does not turn on.
 
 Each fire runs the job's agent at the agent tier the app holds then, as the
 app's work (`app_crons.start_job`): `text` hands its model the job's message

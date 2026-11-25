@@ -26,6 +26,7 @@ def _sel_log(*args: Any, **kwargs: Any) -> None:
 
 async def _switch(request: web.Request, on: bool) -> web.Response:
     from personalclaw.apps import capability_switches
+    from personalclaw.dashboard.handlers.apps import _reconcile_app_crons
     from personalclaw.providers.routes import settle_provider_change
 
     name, capability = request.match_info["name"], request.match_info["capability"]
@@ -45,6 +46,8 @@ async def _switch(request: web.Request, on: bool) -> web.Response:
         return web.json_response({"error": str(exc)}, status=exc.status)
     await sel_log_async(_sel_log, op, "ok", f"{name}/{capability}", request)
     await settle_provider_change()
+    # A job of the capability joins or leaves the trigger store now, not at the next start.
+    _reconcile_app_crons(request)
     return web.json_response(
         {"ok": True, "name": name, "capability": capability, **status.to_wire()}
     )

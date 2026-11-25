@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat reply that says work happened which its own turn did not do now gets a short note after it. A reply saying a helper completed its work, from a turn that ran no helper, or that a file is staged when the repository has not staged it, ends with one line naming what the answer says and what the turn's record or the repository shows; a reply whose claims match gets none. `personalclaw run` also prints the check-work offer for a turn that earns it.**
 - **Each capability of an app has its own switch and its own status. `POST /api/apps/{name}/capabilities/{id}/on` and `…/off` switch one capability without the others, a capability that is off is not built, and one that fails no longer stops the rest: `GET /api/apps` says which run, and why one does not.**
 - **For apps, `personalclaw.sdk.manifest.ProviderConfig` has `startsOn` (default `true`): `"startsOn": false` installs that capability switched off. No shipped app needs a change.**
+- **For apps, `personalclaw.sdk.manifest.CronEntry` has `capability`: a scheduled job that names one of the app's capability ids runs only while that capability is switched on, and switching it off takes the job out at once. A job that names none is the app's own, as before. No shipped app needs a change.**
 
 ### Changed
 

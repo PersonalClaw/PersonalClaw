@@ -85,6 +85,12 @@ def initial(manifest: AppManifest) -> dict[str, dict[str, bool]]:
     }
 
 
+def starts_on(manifest: AppManifest, capability: str) -> bool:
+    """Whether *capability* is on once *manifest*'s app is installed, as :func:`initial` writes
+    it. ``""`` names the app's own: on with the app."""
+    return not capability or initial(manifest).get(capability, {}).get("on") is True
+
+
 def is_on(meta: InstalledApp | None, capability: str) -> bool:
     """Whether *capability*'s switch is on in *meta*. A record with no switches (written before
     them) runs every capability; one with switches runs only those it switches on, so a map that
