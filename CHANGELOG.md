@@ -19,6 +19,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Switching off an agent CLI app's capability withdraws its runtime: what a capability's code registers as it is built (an `acp:<cli>` agent runtime, a catalog) leaves when it is switched off or fails to build, and the app's other capabilities keep theirs. What the app's modules register as they load stays until the app is switched off. No shipped app needs a change.**
 - **Incident mode asks why when it starts and keeps a history of every incident, with your notes.**
 - **Incident mode counts what it skipped, dropped or refused, and Resume says so: scheduled runs skipped, event and hook fires dropped, loop cycles held and helper starts refused, each with the first 50 by name. Work that catches up after Resume is not counted.**
+- **In Settings › Guardrails, turning incident mode on asks why, and turning it off first shows what it held back and takes a note. Once it is off, each dropped hook or event fire can be run again, and Past incidents lists every incident with its reason, who started and ended it, its counts and its notes.**
 
 ### Changed
 

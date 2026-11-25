@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
-import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type CallerHealth, type ProviderHealth } from '../../lib/api'
+import { useEffect, useId, useMemo, useState } from 'react'
+import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type CallerHealth, type IncidentHeld, type IncidentResumed, type IncidentState, type ProviderHealth } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { ConsentDeclined } from '../../lib/securityConsent'
 import { PanelHeader, Section, RowGroup, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
-import { NumberField } from '../../ui/forms'
+import { NumberField, TextArea } from '../../ui/forms'
 import { Button } from '../../ui/Button'
+import { BUSY_REASON } from '../../ui/unavailable'
 import { RungChip } from '../../ui/RungChip'
 import { rungMeta } from '../../lib/rungs'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { confirm } from '../../ui/dialog'
 import { AGENT_CLI_CAP } from './agentCliSpend'
+import { INCIDENTS_KEY, IncidentHistory } from './IncidentHistory'
+import { NOTE_MAX, REFS_KEPT, askWhyAndStop, droppedFires, droppedListIsCut, heldSentence, whoSaid, type DroppedFire } from './incidentWords'
 
 /** Guardrails — the personal safety floor. Six groups:
  *  the incident kill switch, the browse kill switch, daily spend budgets, the outbound secret/PII scan mode,
@@ -296,8 +299,15 @@ export function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChang
 }
 
 // ── Incident kill switch ────────────────────────────────────────────────────
+const INCIDENT_HINT = 'Stops cron jobs, triggers, hooks, loops and subagent starts at once. Interactive chat keeps working. Recurring scheduled work runs at its next time, and a one-shot waits for you to run it; a hook or event fire that happens while it is on is dropped, and listed when you resume.'
+
+const said = (e: unknown) => String((e as Error)?.message || e)
+
+/** Turning it on asks why first (`askWhyAndStop`). Turning it off shows what it held back and takes
+ *  a "What happened?" note before it resumes; once it has, each dropped hook or event fire can be run
+ *  now, and Resume's own answer says when the incident could not be recorded. */
 export function IncidentSection() {
-  const [state, setState] = useState<{ active: boolean; reason: string; started_at: string } | null>(null)
+  const [state, setState] = useState<IncidentState | null>(null)
   const [busy, setBusy] = useState(false)
   // 🔴 A failed read used to substitute `{ active: false }`, i.e. it FABRICATED "no incident is
   // active" — a claim about a safety control. Measured with `/api/incident` at 500: this row rendered
@@ -305,32 +315,137 @@ export function IncidentSection() {
   // way, and nothing said anywhere. Now the state stays `null` (unknown), which already disables the
   // toggle via `!state`, and the hint says what happened instead of guessing.
   const [loadErr, setLoadErr] = useState<unknown>(null)
+  const [reviewing, setReviewing] = useState(false)
+  const [note, setNote] = useState('')
+  const [resumed, setResumed] = useState<{ done: IncidentResumed; noteErr: string } | null>(null)
   const load = () => api.incident().then((s) => { setState(s); setLoadErr(null) }).catch(setLoadErr)
   useEffect(() => { load() }, [])
 
   const toggle = async (on: boolean) => {
+    if (!on) { setResumed(null); setReviewing(true); return }
     setBusy(true)
     try {
-      if (on) setState(await api.incidentOn('Activated from Settings'))
-      else { await api.incidentResume(); setState({ active: false, reason: '', started_at: '' }) }
+      const started = await askWhyAndStop()
+      if (started) { setState(started); setResumed(null); invalidateKeys('settings:incident') }
     } catch (e) {
-      notify(`Couldn't ${on ? 'activate' : 'resume'} incident mode: ${String((e as Error)?.message || e)}`, 'error')
+      notify(`Couldn't start incident mode: ${said(e)}`, 'error')
     } finally { setBusy(false) }
   }
 
+  const resume = async () => {
+    setBusy(true)
+    try {
+      const done = await api.incidentResume()
+      let noteErr = ''
+      const text = note.trim()
+      if (text && done.incident) {
+        try { await api.incidentNote(done.incident.id, text) } catch (e) { noteErr = said(e) }
+      }
+      setState({ active: false, reason: '', started_at: '' })
+      setReviewing(false); setNote(''); setResumed({ done, noteErr })
+      invalidateKeys('settings:incident'); invalidateKeys(INCIDENTS_KEY)
+    } catch (e) {
+      notify(`Couldn't resume incident mode: ${said(e)}`, 'error')
+    } finally { setBusy(false) }
+  }
+
+  const startedBy = state?.activated_by ? ` Started by ${whoSaid(state.activated_by, state.app)}.` : ''
   return (
-    <Section title="Incident kill switch" hint="Stops cron jobs, triggers, hooks, loops and subagent starts at once. Interactive chat keeps working. Recurring scheduled work runs at its next time, and a one-shot waits for you to run it; a hook or event fire that happens while it is on is dropped. Resume is explicit.">
-      <div className={`rounded-lg px-4 py-1 ${state?.active ? 'bg-error/10 ring-1 ring-error/40' : 'bg-surface-container'}`}>
-        <Row label={state?.active ? 'Incident mode is ACTIVE' : 'Incident mode'}
-          hint={loadErr
-            ? `Couldn't check whether incident mode is active: ${String((loadErr as Error)?.message || loadErr)}`
-            : state?.active ? `Unattended work suspended${state.reason ? ` — ${state.reason}` : ''}. Turn off to resume.`
-            : state ? 'Off — automation runs normally.'
-            : 'Checking…'}>
-          <Toggle on={Boolean(state?.active)} disabled={busy || !state} onChange={toggle} label="Incident mode" />
-        </Row>
+    <>
+      <Section title="Incident kill switch" hint={INCIDENT_HINT}>
+        <div className={`rounded-lg px-4 py-1 ${state?.active ? 'bg-error/10 ring-1 ring-error/40' : 'bg-surface-container'}`}>
+          <Row label={state?.active ? 'Incident mode is ACTIVE' : 'Incident mode'}
+            hint={loadErr
+              ? `Couldn't check whether incident mode is active: ${said(loadErr)}`
+              : state?.active ? `Unattended work suspended${state.reason ? ` — ${state.reason}` : ''}.${startedBy} Turn off to resume.`
+              : state ? 'Off — automation runs normally.'
+              : 'Checking…'}>
+            <Toggle on={Boolean(state?.active)} disabled={busy || !state || reviewing} onChange={toggle} label="Incident mode" />
+          </Row>
+        </div>
+        {reviewing && state?.active ? (
+          <ResumeReview held={state.suppressed} note={note} setNote={setNote} busy={busy}
+            onResume={resume} onKeep={() => { setReviewing(false); setNote('') }} />
+        ) : null}
+        {resumed ? <ResumedSummary {...resumed} onDone={() => setResumed(null)} /> : null}
+      </Section>
+      <IncidentHistory />
+    </>
+  )
+}
+
+function ResumeReview({ held, note, setNote, busy, onResume, onKeep }: {
+  held: IncidentHeld | undefined
+  note: string
+  setNote: (v: string) => void
+  busy: boolean
+  onResume: () => void
+  onKeep: () => void
+}) {
+  const titleId = useId()
+  return (
+    <section aria-labelledby={titleId} className="mt-3 flex flex-col gap-2 rounded-lg bg-surface-container px-4 py-3">
+      <h3 id={titleId} data-type="title-s" className="text-on-surface">Before you resume</h3>
+      <p data-type="body-s" className="text-on-surface">
+        {heldSentence(held) || 'Nothing was held back during this incident.'}
+      </p>
+      <label data-type="body-s" className="flex flex-col gap-1 text-on-surface-var">
+        What happened? (kept with this incident)
+        <TextArea value={note} onChange={setNote} rows={3} maxLength={NOTE_MAX} ariaLabel="What happened?"
+          placeholder="Optional: what you found, and what you did about it" />
+      </label>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" size="sm" loading={busy} onClick={onResume}>Resume unattended work</Button>
+        <Button variant="ghost" size="sm" disabled={busy} disabledReason={BUSY_REASON} onClick={onKeep}>Keep it on</Button>
       </div>
-    </Section>
+    </section>
+  )
+}
+
+function ResumedSummary({ done, noteErr, onDone }: { done: IncidentResumed; noteErr: string; onDone: () => void }) {
+  const titleId = useId()
+  const held = done.incident?.suppressed
+  const fires = droppedFires(held)
+  const sentence = heldSentence(held)
+  return (
+    <section aria-labelledby={titleId} className="mt-3 flex flex-col gap-2 rounded-lg bg-surface-container px-4 py-3">
+      <h3 id={titleId} data-type="title-s" className="text-on-surface">Unattended work runs again</h3>
+      <p role="status" data-type="body-s" className={done.recorded ? 'text-on-surface' : 'text-error'}>
+        {done.recorded
+          ? 'Resumed. This incident is kept under Past incidents.'
+          : `PersonalClaw resumed, but could not record this incident: ${done.why || 'no reason was given'}`}
+      </p>
+      {sentence ? <p data-type="body-s" className="text-on-surface">{sentence}</p> : null}
+      {noteErr ? <p role="alert" data-type="body-s" className="text-error">Your note was not kept: {noteErr}</p> : null}
+      {fires.length ? (
+        <ul aria-label="Dropped fires" className="flex flex-col gap-2">
+          {fires.map((fire) => <DroppedFireRow key={fire.ref} fire={fire} />)}
+        </ul>
+      ) : null}
+      {droppedListIsCut(held) ? (
+        <p data-type="body-s" className="text-on-surface-var">The first {REFS_KEPT} of each kind are listed.</p>
+      ) : null}
+      <div><Button variant="ghost" size="xs" onClick={onDone}>Done</Button></div>
+    </section>
+  )
+}
+
+function DroppedFireRow({ fire }: { fire: DroppedFire }) {
+  const [answer, setAnswer] = useState('')
+  const [running, setRunning] = useState(false)
+  const run = async () => {
+    setRunning(true)
+    try { setAnswer(await fire.run()) } catch (e) { setAnswer(`Couldn't run it: ${said(e)}`) } finally { setRunning(false) }
+  }
+  return (
+    <li className="flex flex-wrap items-center gap-2">
+      <span data-type="body-s" className="break-all text-on-surface">{fire.label}</span>
+      <Button variant="ghost-accent" size="xs" loading={running} onClick={run}
+        ariaLabel={`Run ${fire.label} now, without the event that was dropped`}>
+        Run now (without the event that was dropped)
+      </Button>
+      {answer ? <span role="status" data-type="body-s" className="text-on-surface-var">{answer}</span> : null}
+    </li>
   )
 }
 

@@ -3921,6 +3921,46 @@ export interface TriggerVariables { schedule: string[]; lifecycle: LifecycleEven
 // guardrail/config outcome is not a malformed request (#395: this used to answer `ok: true` with the
 // failure as prose, so a silent no-op was indistinguishable from a completed run). `refused` carries
 // the kill-switch reason when incident mode suspended the fire.
+/** What incident mode held back, by counter (`guardrails/incident.py` `SUPPRESSED_COUNTERS`): a
+ *  count, and the first 50 work references (`<kind>:<id>`), each named once. */
+export type IncidentCounter =
+  'runs_skipped' | 'events_dropped' | 'hooks_dropped' | 'loop_cycles_skipped' | 'spawns_refused'
+export type IncidentHeld = Partial<Record<IncidentCounter, { count: number; refs: string[] }>>
+/** The incident switch (`GET /api/incident`): who started it and what it has held back so far,
+ *  all empty while it is off. A gateway from before the history answers the first three alone. */
+export interface IncidentState {
+  active: boolean
+  reason: string
+  started_at: string
+  /** `owner`, `cli` or `app` (then `app` names it). */
+  activated_by?: string
+  app?: string
+  suppressed?: IncidentHeld
+}
+/** One incident in the history, as Resume wrote it. */
+export interface IncidentLine {
+  id: string
+  started_at: string
+  ended_at: string
+  reason: string
+  activated_by: string
+  app: string
+  /** `owner` or `cli`. */
+  resumed_by: string
+  suppressed: IncidentHeld
+  /** Its newest note, '' when it has none (the history list only). */
+  note?: string
+}
+/** Resume's answer: the incident's line (null when none was active) and whether it was written;
+ *  `why` says why not when it was not. Resume happens either way. */
+export interface IncidentResumed {
+  active: boolean
+  incident: IncidentLine | null
+  recorded: boolean
+  why?: string
+}
+export interface IncidentNote { id: string; incident: string; note: string; at: string }
+
 export interface TriggerRunResult {
   ok: boolean; name?: string; result?: unknown; refused?: string; running?: boolean
   /** The status the run recorded, as its history row reads it (`waiting`, `launched`, `success`, …),
@@ -8962,10 +9002,17 @@ export const api = {
     ),
 
   // ── Guardrails: incident kill switch + derived provider health ──
-  incident: () => get<{ active: boolean; reason: string; started_at: string }>('/api/incident'),
-  incidentOn: (reason: string) =>
-    post<{ active: boolean; reason: string; started_at: string }>('/api/incident', { reason }),
-  incidentResume: () => post<{ active: boolean }>('/api/incident/resume', { confirm: true }),
+  incident: () => get<IncidentState>('/api/incident'),
+  /** Start it, for *reason* (1 to 200 characters): an empty one answers 400 and changes nothing. */
+  incidentOn: (reason: string) => post<IncidentState>('/api/incident', { reason }),
+  incidentResume: () => post<IncidentResumed>('/api/incident/resume', { confirm: true }),
+  /** Past incidents, newest first, a page at a time (`next_cursor` the page after, null at the end). */
+  incidents: (cursor?: string) =>
+    get<{ items: IncidentLine[]; next_cursor: string | null }>(
+      `/api/incidents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+  /** The owner's note on a past incident (1 to 4,000 characters); 404 for an id the history lacks. */
+  incidentNote: (id: string, note: string) =>
+    post<IncidentNote>(`/api/incidents/${encodeURIComponent(id)}/note`, { note }),
 
   // ── Browse mirror + kill switch ──
   // The mirror's read model (kill state + expired sites) and the one-click stop. `browseKill` needs

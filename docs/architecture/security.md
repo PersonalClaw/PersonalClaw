@@ -1300,6 +1300,13 @@ what becomes of the work each seam skips). Interactive chat is untouched.
   Resume is not counted: an idle automation held due, a running loop or workflow run held where it
   is, file and page watches, Inbox sorting, memory consolidation and background compression. A count
   never raises and never starts an incident.
+- **In Settings › Guardrails.** Turning the switch on asks "Why are you stopping unattended work?"
+  and starts it only with an answer (the overview card's switch asks the same, through the same
+  writer). Turning it off first shows what was held back and a "What happened?" field, and resumes
+  only on "Resume unattended work"; "Keep it on" leaves it as it was. Once resumed, each dropped hook
+  fire can be run again by its own test run and each dropped event by its automation's own run by
+  hand, neither with the event that was dropped, and a Resume whose line was not written says so.
+  "Past incidents" lists the history with its counts and newest note, and adds a note to any of them.
 - **Notes.** `POST /api/incidents/{id}/note {note}` appends a note line (1 to 4,000 characters,
   kept as data and never handed to an agent), and `GET /api/incidents` lists the incidents newest
   first, 20 a page, each with its newest note. Both are the owner's alone (`OWNER_ONLY_API_PATHS`);

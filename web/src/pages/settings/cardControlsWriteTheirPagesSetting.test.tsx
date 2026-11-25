@@ -99,7 +99,7 @@ beforeEach(() => {
       if (known === undefined && hangUnknown) return new Promise<Response>(() => {})
       return ok(known ?? {})
     }
-    if (url === '/api/incident') return ok({ active: true, reason: 'Activated from Settings', started_at: '2026-11-02T08:00:00Z' })
+    if (url === '/api/incident') return ok({ active: true, reason: REASON, started_at: '2026-11-02T08:00:00Z' })
     if (url.startsWith('/api/models/use-cases/')) return ok({ ok: true, settings: init?.body ? JSON.parse(String(init.body)) : {}, revision: 'r2' })
     if (url === '/api/notifications/settings') return ok({ settings: init?.body ? JSON.parse(String(init.body)) : {} })
     return ok({ ok: true })
@@ -107,10 +107,24 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+/** What the owner answers a control that asks first (the incident switch asks why). */
+const REASON = 'A run sent mail it should not have'
+
+/** Answer every prompt a click opens with {@link REASON}, as the owner would, through the dialog
+ *  store this render imports (modules are reset per render, so the store is read afresh). */
+async function answerPrompts(): Promise<() => void> {
+  const { closeDialog, subscribeDialogs } = await import('../../ui/dialog/dialogStore')
+  return subscribeDialogs((open) => {
+    for (const d of open) if (d.kind === 'prompt') setTimeout(() => closeDialog(d.id, { value: REASON }), 0)
+  })
+}
+
 /** Every request a click on `control` sent: the writes, with the reads it set off left out. */
 async function writesOf(control: HTMLElement): Promise<Call[]> {
   const before = calls.length
+  const stop = await answerPrompts()
   await act(async () => { fireEvent.click(control); await flush() })
+  stop()
   return calls.slice(before).filter((c) => c.method !== 'GET')
 }
 
@@ -178,7 +192,7 @@ const CONTROLS: { id: string; card: string; page: string; sends: Call }[] = [
     sends: { method: 'PATCH', url: '/api/config/personalclaw', body: { path: 'companion.discovery_enabled', value: false } } },
   // Pausing unattended work is the incident switch turned ON: that is the direction that stops things.
   { id: 'guardrails', card: 'Pause unattended work', page: 'Incident mode',
-    sends: { method: 'POST', url: '/api/incident', body: { reason: 'Activated from Settings' } } },
+    sends: { method: 'POST', url: '/api/incident', body: { reason: REASON } } },
 ]
 
 describe('each card control writes what its page\'s control writes', () => {
@@ -305,7 +319,7 @@ describe('a card only cuts off: what widens is done on the page', () => {
   })
 
   it('guardrails › Pause unattended work, once paused, cannot be resumed from the card', async () => {
-    routes = home({ '/api/incident': { active: true, reason: 'Activated from Settings', started_at: '2026-11-02T08:00:00Z' } })
+    routes = home({ '/api/incident': { active: true, reason: REASON, started_at: '2026-11-02T08:00:00Z' } })
     await card('guardrails')
     const control = await screen.findByRole('switch', { name: 'Pause unattended work' })
     await waitFor(() => expect(control.getAttribute('aria-checked')).toBe('true'))

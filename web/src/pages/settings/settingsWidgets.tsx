@@ -37,6 +37,7 @@ import { setAgentYolo } from './agentYolo'
 import { APPROVAL_MODES } from './approvalModes'
 import { hasSearchTool, SEARCH_TOOL, SEARCH_TOOL_APP } from './searchTool'
 import { updateVerdict, updateVerdictLabel, type UpdateVerdict } from './updateVerdict'
+import { askWhyAndStop } from './incidentWords'
 
 /** A settings widget: surfaces its subpage's most essential info on a bento card,
  *  deep-links into the subpage on click, contributes its data to the search index
@@ -1323,7 +1324,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
               : <StatusPill label="Normal operation" tone="ok" />}
             <KVList rows={[{ k: 'Pause unattended work', control: true,
               v: <OneWaySwitch on={i.active} allow="on" label="Pause unattended work" reason="Resume unattended work from Security › Guardrails"
-                onToggle={() => mutate(() => api.incidentOn('Activated from Settings'), 'settings:incident')} /> }]} />
+                onToggle={() => mutate(() => askWhyAndStop(), 'settings:incident')} /> }]} />
             {i.active
               ? i.reason && <div data-type="caption" className="mt-1.5 truncate text-on-surface-low">{i.reason}</div>
               : <div data-type="caption" className="mt-1.5 text-on-surface-low">Kill switch · budgets · outbound scan</div>}

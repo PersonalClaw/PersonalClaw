@@ -51,7 +51,7 @@ const ENVELOPES: Record<string, unknown> = {
   devicesRevokeOthers: { ok: true, revoked: 1 },
   deviceRevoke: { ok: true, revoked: 1 },
   rotateSigningKey: { ok: true, signed_out: 2, notice: null },
-  incidentOn: { active: true, reason: 'Activated from Settings', started_at: '2026-10-02T08:00:00Z' },
+  incidentOn: { active: true, reason: 'A run sent mail it should not have', started_at: '2026-10-02T08:00:00Z' },
   securityStats: {
     denied_commands: 1, suspicious_patterns: 1, tool_schemas: 1, redaction_paths: 1,
     child_ceilings: { contained: true, note: '' },
@@ -222,11 +222,17 @@ describe('…and the switch that stops the agent', () => {
     // Enabled only once the switch's state has been read; a guessed state is never offered.
     await waitFor(() => expect(toggle).not.toBeDisabled())
     fireEvent.click(toggle)
+    // It asks why first, and starts with the owner's answer.
+    const ask = await screen.findByRole('dialog', { name: 'Why are you stopping unattended work?' })
+    await new Promise((r) => setTimeout(r, 0))
+    fireEvent.change(within(ask).getByRole('textbox'), { target: { value: 'A run sent mail it should not have' } })
+    fireEvent.click(within(ask).getByRole('button', { name: 'Stop unattended work' }))
     await waitFor(() => expect(called('incidentOn')).toHaveLength(1))
+    expect(called('incidentOn')[0]).toEqual(['A run sent mail it should not have'])
   })
 
   it('an active incident is said on every one of these pages, with its Resume', async () => {
-    incident = { active: true, reason: 'Activated from Settings', started_at: '2026-10-02T08:00:00Z' }
+    incident = { active: true, reason: 'A run sent mail it should not have', started_at: '2026-10-02T08:00:00Z' }
     openAt('#/settings/devices')
     // Found among the page's live regions by what it says: the toast host's region is one too.
     const banner = await waitFor(() => {
