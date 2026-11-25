@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 
+from personalclaw.workflows import journal as J
 from personalclaw.workflows import store
 from personalclaw.workflows.bundled_defs import read_template
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -144,12 +145,17 @@ def test_a_judge_that_would_not_decide_stops_the_loop_after_its_round(judge, sai
 
 
 def test_on_the_round_its_budget_ends_the_judges_stop_is_why_it_stopped():
-    """A budget that ran out beside a judge that would not decide is not the reason."""
+    """A budget that ran out beside a judge that would not decide is not the reason, and the
+    run's timeline does not say the budget tripped either: a ``breaker:`` row there is what a
+    reader sees as why the loop stopped (`run_cockpit`)."""
     controller, fake = _drive(_judge("ESCALATE"), cycles=1)
     assert fake.rounds() == 1
     attention = controller.run.attention or {}
     assert attention.get("reason") == "judge_escalated", attention
     assert attention.get("cause") == "judge", attention
+    rows = J.journal_records(controller.run.id, kinds={"iteration"})
+    tripped = [r.get("outcome") for r in rows if str(r.get("outcome") or "").startswith("breaker:")]
+    assert tripped == [], f"the timeline says the budget ended the loop: {tripped}"
 
 
 def test_the_control_a_judge_that_rejected_keeps_the_loop_going():
