@@ -1010,7 +1010,9 @@ switches; a capability that listens, polls or acts on its own clock should decla
 `"startsOn": false`. After that the switch is the owner's: an update keeps it, a capability it
 renames keeps the old id's, one it drops leaves the record, and one it adds starts off. A record
 written before the switches has none, and its app runs every capability until the first switch or
-update writes them down. A capability that is off is not built, so it reads no settings and
+update writes them down. A record whose switches are there but can't be read (not a map, or a mark
+that is no yes or no) runs none of those capabilities, and each says the app's switches couldn't be
+read; switching one writes only that one, so the rest keep saying so. A capability that is off is not built, so it reads no settings and
 starts nothing; `POST /api/apps/{name}/capabilities/{id}/on` and `…/off` (owner only) write the
 switch, build or tear down that capability alone while the app runs, and answer its status. A
 native app's capabilities are always on. A settings save retries a capability that failed only

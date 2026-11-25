@@ -132,13 +132,16 @@ def _retry_pending_moves() -> None:
     """Each installed app's pending capability moves, run again
     (``capability_lifecycle.retry_pending_moves``), its record written when one changed."""
     from personalclaw.apps.capability_lifecycle import retry_pending_moves
-    from personalclaw.apps.manager import _read_installed, _write_installed, list_apps
+    from personalclaw.apps.manager import _read_installed, _write_installed, list_apps, record_lock
 
     for info in list_apps():
         name = str(info.get("name") or "")
-        meta = _read_installed(name) if name else None
-        if meta is not None and retry_pending_moves(meta):
-            _write_installed(name, meta)
+        if not name:
+            continue
+        with record_lock(name):
+            meta = _read_installed(name)
+            if meta is not None and retry_pending_moves(meta):
+                _write_installed(name, meta)
 
 
 def load(*manifests: AppManifest) -> None:
