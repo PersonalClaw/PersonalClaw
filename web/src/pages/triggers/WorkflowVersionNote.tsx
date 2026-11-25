@@ -24,10 +24,19 @@ function stepLine(step: AutomationWorkflowStep): string {
 }
 
 function heading(version: AutomationWorkflowVersion, waiting: AutomationWorkflowStep[]): string {
+  // Asked again: the workflow is as it was allowed, and a PersonalClaw default it runs with changed.
+  if (version.revised) return `A PersonalClaw update changed a default “${version.workflow}” runs with`
   if (version.newer) return `“${version.workflow}” has a newer version, v${version.newer}`
   if (version.problem) return `“${version.workflow}” cannot run`
   if (waiting.length === 1) return `“${waiting[0].workflow}”, which it runs as a step, has a newer version`
   return 'Workflows it runs as steps have newer versions'
+}
+
+/** The row's button: "Allow again" when the version allowed is the one it would use (a PersonalClaw
+ *  default changed, not the workflow), never "Use v3" to replace v3. */
+function useLabel(version: AutomationWorkflowVersion, to: number): string {
+  if (version.revised && to === version.allowed) return 'Allow again'
+  return version.newer || version.problem ? `Use v${to}` : 'Use the newest versions'
 }
 
 /** Which version of its workflow a "Run workflow" automation runs, when it is not the workflow's
@@ -91,7 +100,7 @@ export function WorkflowVersionNote({ triggerId, version, onChanged, readOnly = 
         {use && !readOnly && (
           <div>
             <Button variant="secondary" size="sm" onClick={onUse} loading={using} disabled={busy} disabledReason={BUSY_REASON}>
-              {version.newer || version.problem ? `Use v${use.version}` : 'Use the newest versions'}
+              {useLabel(version, use.version)}
             </Button>
           </div>
         )}

@@ -38,6 +38,7 @@ from personalclaw.evals import optimize
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
+from personalclaw.workflows import command_inputs
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import store
 from personalclaw.workflows.bundled_defs import read_template
@@ -300,8 +301,15 @@ async def _run(
     template = read_template("optimize-harness")
     assert template is not None
     spec = template.to_dict()
+    # Started as its owner starts it, so it holds her values as hers (`command_inputs.stamped`).
     run = store.create(
-        WorkflowRun(id="", workflow_name=spec["name"], mode="background", inputs=inputs)
+        WorkflowRun(
+            id="",
+            workflow_name=spec["name"],
+            mode="background",
+            inputs=inputs,
+            extra=command_inputs.stamped({}, inputs, ""),
+        )
     )
     store.write_spec(run.id, spec)
     proposer = _Proposer(answers)

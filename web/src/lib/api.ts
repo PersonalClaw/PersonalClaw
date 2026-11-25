@@ -3622,6 +3622,9 @@ export interface AutomationWorkflowVersion {
   newer: number
   since: Array<{ version: number; saved_by: string }>
   problem: string
+  /** The version allowed is the workflow as it is, but a PersonalClaw default it runs with changed
+   *  since, so its Allow is asked for again: `use` allows that same version ("Allow again"). */
+  revised?: boolean
   steps: AutomationWorkflowStep[]
   use: { version: number; steps: Record<string, number> } | null
 }
@@ -3635,6 +3638,7 @@ export interface AutomationWorkflowStep {
   newer: number
   since: Array<{ version: number; saved_by: string }>
   problem: string
+  revised?: boolean
 }
 /** One automation that runs a workflow, as the workflow's page lists it
  *  (`GET /api/workflows/{name}/automations`): `id` opens it on the Triggers page; `via` is the

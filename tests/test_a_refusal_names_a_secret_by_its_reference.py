@@ -301,7 +301,7 @@ def _a_workflow_step_through_an_input(
     handed that reference as one (`workflows.input_secrets`); *beside* another argument that a
     numeric pipe reads through a run input holding a reference, which resolves filled and not with
     the reference kept."""
-    from personalclaw.workflows import input_secrets, store
+    from personalclaw.workflows import command_inputs, input_secrets, store
     from personalclaw.workflows.controller import EngineServices, RunController
     from personalclaw.workflows.models import OriginKind, RunOrigin, WorkflowRun
 
@@ -326,7 +326,8 @@ def _a_workflow_step_through_an_input(
             workflow_name=spec["name"],
             origin=RunOrigin(kind=OriginKind.MANUAL),
             inputs=inputs,
-            extra=input_secrets.stamp({}, inputs, [NAME, WAIT]),
+            # Started as its owner starts it: her values are hers (`command_inputs.stamped`).
+            extra=command_inputs.stamped(input_secrets.stamp({}, inputs, [NAME, WAIT]), inputs, ""),
         )
     )
     store.write_spec(run.id, spec)

@@ -309,7 +309,8 @@ def coerce_declared_inputs(
     * an **undeclared** key — a template whose tree reads `inputs.x` while its declaration block
       omits `x` is real (`resolve_unfilled_inputs` exists for exactly that drift), so a key with
       no declaration has no declared type to check;
-    * a declared type outside :data:`DECLARED_TYPES` — see its note;
+    * a declared type outside :data:`DECLARED_TYPES` — see its note; its `enum`, when it names
+      one, still holds;
     * ``None`` and ``""`` — this system's own "declared but unset" marker, written by
       `service.with_declared_defaults` for every optional input with no default. Whether a blank
       value is acceptable is `apply_extraction`'s question, not this one; asking it twice is how
@@ -325,15 +326,21 @@ def coerce_declared_inputs(
             continue
         declared_type = str(meta.get("type", "") or "").strip().lower()
         coerce = _COERCERS.get(declared_type)
-        if coerce is None:
-            continue
         if value is None or (isinstance(value, str) and value.strip() == ""):
             continue
-        result, ok = coerce(value)
-        if ok:
+        result = value
+        if coerce is not None:
+            result, ok = coerce(value)
+            if not ok:
+                errors.append(f"{key}: expected {declared_type}, got {_describe(value)}")
+                continue
             coerced[key] = result
-        else:
-            errors.append(f"{key}: expected {declared_type}, got {_describe(value)}")
+        # The values it may take hold whatever its type, a type with no coercer included: an
+        # input that names them is one a start may give only one of.
+        choices = meta.get("enum")
+        if isinstance(choices, list) and choices and result not in choices:
+            listed = ", ".join(repr(choice) for choice in choices)
+            errors.append(f"{key}: must be one of {listed}, got {_describe(value)}")
     return coerced, sorted(errors)
 
 

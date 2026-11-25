@@ -20,7 +20,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from personalclaw import record_files
-from personalclaw.workflows import attention
+from personalclaw.workflows import attention, command_inputs
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import mutations, store, supervisor_policy
 from personalclaw.workflows.bindings import node_deps
@@ -115,6 +115,63 @@ def posture_refusal(
         "change": loosened[0].change,
         "caution": loosened[0].caution,
         "steps": [step.to_dict() for step in loosened],
+        "issues": [{"code": "WF_MUT_NEEDS_OWNER_YES", "message": message, "node_id": ""}],
+    }
+
+
+def command_refusal(
+    ctl: RunController,
+    before: dict[str, Any],
+    result: mutations.BatchResult,
+    *,
+    owner_allowed: bool,
+) -> dict[str, Any] | None:
+    """The refusal of the edit *result* of the running workflow *ctl*, whose spec it was prepared
+    against is *before*, when it chooses a command a step runs or a folder it runs in and
+    *owner_allowed* does not say she made it: when it gives a value to an input a step runs as a
+    command or uses as a folder (`command_inputs.readers`), or adds or changes a command or a
+    folder a step runs. ``None`` otherwise, and her own edit records each value it gives an input
+    as one she chose (`command_inputs.vouch`), on the run the batch's apply saves: a restart in
+    between loses only that record, and a step then asks her again rather than run unasked.
+
+    Whoever submits it: an agent's ``workflow_edit``, an app, the owner's own edit without her
+    ``confirm``. The engine runs a check's command with nobody asked, so only she chooses one, at
+    her start or here, where she is asked as she is for a step's posture. Nothing is queued."""
+    if result.spec is None:
+        return None
+    given = {
+        str(name): value
+        for op in result.ops
+        if op.kind == mutations.OpKind.SET_INPUT
+        for name, value in (op.overrides or {}).items()
+    }
+    if owner_allowed:
+        if given:
+            ctl.run.extra = command_inputs.vouch(ctl.run.extra, given)
+        return None
+    named = {**command_inputs.readers(before), **command_inputs.readers(result.spec)}
+    taken = sorted(name for name in given if name in named)
+    added = sorted(command_inputs.commands(result.spec) - command_inputs.commands(before))
+    if not taken and not added:
+        return None
+    if taken:
+        what = f"gives `{taken[0]}` a value, which {named[taken[0]]} reads"
+    else:
+        what = f"writes {added[0][0]}"
+    message = (
+        f"this edit {what}: a step runs a command, or works in a folder, only as your owner chose "
+        "it, so it is made only on their own yes, given where they are shown it. Save the change "
+        "into the workflow's definition, or ask them to make it"
+    )
+    return {
+        "ok": False,
+        "code": "WF_MUT_NEEDS_OWNER_YES",
+        "message": message,
+        "field": f"inputs.{taken[0]}" if taken else "workflow.command",
+        "consent": (
+            "This edit chooses a command a step of this running workflow runs, or the folder it "
+            "runs in, and the engine runs it with nobody asked."
+        ),
         "issues": [{"code": "WF_MUT_NEEDS_OWNER_YES", "message": message, "node_id": ""}],
     }
 

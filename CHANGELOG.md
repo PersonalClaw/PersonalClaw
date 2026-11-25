@@ -8,6 +8,31 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-11-25
+
+This release holds a workflow to the commands its owner chose: a run another door starts cannot name a command or a folder, and a command an agent writes into a workflow waits for the owner's yes. After upgrading, review once the workflows an agent saved and the automations an agent made or changed.
+
+### Added
+
+- **A workflow input can name the values it may take: a start must give one of them, the launch form offers them as a choice, and a run an agent, an app or an A2A client starts may choose one, even for an input a step runs as a command.**
+
+### Changed
+
+- **A workflow automation's Allow stands through an update that adds or removes a field of the workflow definition with its default: what it is bound to is what the workflow declares, not the defaults the update filled in. An update that changes what a default does still asks every Allow it covers again, and the automation says a PersonalClaw default changed, not the workflow, and offers Allow again rather than "Use v3" for v3.**
+
+### Fixed
+
+- **A workflow's judge reads the checks the engine ran for it, and is never told to run one.**
+
+### Security
+
+- **A workflow step runs a command, or works in a folder, an input names only with the definition's default or a value you chose, whatever door the value came through.**
+- **A workflow run started before this release runs no command an input names until you start it again with the value.**
+- **After upgrading, review once the workflows an agent saved and the automations an agent made or changed. An agent's change to an automation is marked from this release on, and one made before it is not.**
+- **A workflow another door saved holds as yours only what you chose. A workflow an agent or an app saves asks you before it can hand a workflow it starts a command of its own, or pass on an input whose default it wrote, and a start by anyone else may not give such an input a value. A workflow it starts runs as yours only a value you gave, or one a definition of yours wrote: your own save, one your yes covered, or a release's. A workflow with a command of its own that an agent built before this release, or that a sync brought in, needs one save in its editor before an agent, an app or an A2A client can start it again, or an automation an agent or an app made can run it. An automation of yours whose action an agent changed gives its workflow nothing as yours until you save the action in its editor; you can start the workflow yourself as before.**
+- **A command an agent or an app writes into a workflow it saves, or a run it starts from one, runs only after you allow it.**
+- **A workflow run started by an agent, an app or an A2A client cannot name a command or a folder the workflow's steps run.**
+
 ## [0.4.0] — 2026-11-24
 
 An automation client, a script or a runner, can be paired into a sign-in that reaches only what its scope allows. The chat's agent orb is redrawn as a halftone sphere that shows what the agent is doing, and a tool step says whether its call reads, edits or runs a command. A turn waiting on your answer is kept through a gateway restart, an automation keeps its claim while the computer sleeps, and a reload no longer waits on the gateway reading its settings, its apps or a long chat.

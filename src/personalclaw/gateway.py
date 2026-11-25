@@ -3202,6 +3202,19 @@ class GatewayOrchestrator:
         except Exception:  # noqa: BLE001 — a missing probe degrades, it does not fail startup
             logger.warning("graph-maintenance in-flight probe not installed", exc_info=True)
 
+    @staticmethod
+    def _workflow_records_at_start() -> None:
+        """Bring the home's workflow records up to this build, before any run is driven.
+
+        A record a run kept a stored secret's value in, from before a run was handed the reference,
+        holds the reference now (`input_secrets.redact_home`). An Allow given before digests were
+        of the declared definition still matches its version (`versions.remember_digests`)."""
+        from personalclaw.workflows.input_secrets import redact_home
+        from personalclaw.workflows.versions import remember_digests_at_start
+
+        remember_digests_at_start()
+        redact_home()
+
     async def _init_autonudge(self) -> None:
         """Initialize and start the auto-nudge service (feature-flagged)."""
         if not autonudge_enabled():
@@ -3540,11 +3553,9 @@ class GatewayOrchestrator:
             # package — no boot-time copy into the user's home, so an upgrade ships new
             # templates with no "did the user edit it?" reconciliation.
             register_bundled_provider()
-            # A record a run kept a stored secret's value in, from before a run was handed the
-            # reference, holds the reference now: done before the supervisor drives any run.
-            from personalclaw.workflows.input_secrets import redact_home
-
-            redact_home()
+            # The home's workflow records, brought up to this build before the supervisor drives
+            # any run or a fire binds an Allow.
+            self._workflow_records_at_start()
 
             wf_cfg = self._cfg.workflows
             # The run-end learner writes through a MemoryService over

@@ -781,6 +781,7 @@ async def _start_task(
 ) -> tuple[dict[str, Any] | None, web.Response | None]:
     """Start one run for an A2A task, on the gateway's workflow supervisor.
     ``(started_status, refusal)``."""
+    from personalclaw.workflows import command_inputs
     from personalclaw.workflows.models import OriginKind
     from personalclaw.workflows.service import start_run
 
@@ -815,6 +816,8 @@ async def _start_task(
         session_key=session_key_for(client_id),
         idempotency_key=_caller_key_of(body, client_id=client_id),
         durable_key=True,
+        # A remote party: its inputs name no command and no folder (`command_inputs`).
+        started_by=command_inputs.A2A,
         supervisor=getattr(request.app.get("state"), "workflows", None),
     )
     if started.get("code") == "WF_IDEMPOTENCY_KEY_REUSED":

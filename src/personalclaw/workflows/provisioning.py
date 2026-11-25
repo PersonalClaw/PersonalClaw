@@ -902,7 +902,8 @@ def step_reads(parent_run: str) -> list[str]:
     input, ``mcp_subagents._run_compiled_batch``), which counts only where a spawn may work
     (``subagent.validate_cwd``). Both are read from the run's record, never from the request. Read
     only (``file_scope.READS``): a step in an isolated copy cannot change the original through
-    them, and what it may do in its own folder stays its tier's.
+    them, and what it may do in its own folder stays its tier's. The ``cwd`` counts only as the
+    run's owner chose it (:func:`_chose_its_folder`).
     """
     from personalclaw.workflows.ownership import OWNED_PREFIX
 
@@ -926,11 +927,21 @@ def step_reads(parent_run: str) -> list[str]:
     if tree and os.path.isdir(tree):
         reads.append(os.path.realpath(tree))
     started_in = str((run.inputs or {}).get("cwd") or "").strip()
-    if started_in:
+    if started_in and _chose_its_folder(run):
         resolved, refused = validate_cwd(started_in, allowed_roots, run_workdir=run_workdir(run_id))
         if resolved and not refused:
             reads.append(resolved)
     return list(dict.fromkeys(reads))
+
+
+def _chose_its_folder(run: Any) -> bool:
+    """Whether *run*'s ``cwd`` input is a folder its owner chose (`command_inputs.Chosen`): one
+    given by a start or an edit she did not make, or an automation she did not, is no folder its
+    steps read."""
+    from personalclaw.workflows import command_inputs, store
+
+    spec = store.read_spec(run.id) or {}
+    return command_inputs.Chosen.of(spec, run.inputs, run.extra).chose(command_inputs.CWD_INPUT)
 
 
 def step_documents(parent_run: str) -> list[str]:

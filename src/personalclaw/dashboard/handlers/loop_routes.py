@@ -548,6 +548,8 @@ async def _create_ported_kind_as_run(
     cycles = validation._as_int(body.get("max_cycles"))
     if cycles is not None:
         overrides["max_cycles"] = cycles
+    from personalclaw.workflows import command_inputs
+
     result = await workflows.start_kind_run(
         kind,
         task=task,
@@ -578,6 +580,9 @@ async def _create_ported_kind_as_run(
         # work the request's sign-in proves (`work_of_request`), never one a header alone names.
         session_key=approval_answer.work_of_request(request),
         project_id=str(body.get("project_id", "") or ""),
+        # An app's or an agent's loop names no command and no folder (`command_inputs`): its
+        # success criteria become a verifiable template's verify command.
+        started_by=command_inputs.of_request(request),
     )
     # Audited under the operation that GUARDED it, so a denial and a failure land in the same
     # SEL series as the sibling route's — an audit split across two operation names would make
@@ -720,7 +725,11 @@ async def _run_backed_action(request: web.Request, run: Any, action: str) -> web
     elif action == "stop":
         result = workflows.cancel_run(run.id, supervisor=supervisor)
     else:
-        result = await workflows.start_draft_run(run.id, supervisor=supervisor)
+        from personalclaw.workflows import command_inputs
+
+        result = await workflows.start_draft_run(
+            run.id, started_by=command_inputs.of_request(request), supervisor=supervisor
+        )
     _audit(request, operation, "success" if result.get("ok") else "failure", run.id)
     if not result.get("ok"):
         return _reply(result)

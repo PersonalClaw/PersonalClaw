@@ -415,14 +415,18 @@ def test_a_search_under_another_folder_is_ordered_against_a_change_there(home):
 
 def _batch_run(home, *, project_id: str = "") -> str:
     """A run started as a batch is: its folder named in its inputs, as `subagent_run` names it."""
-    from personalclaw.workflows import store
+    from personalclaw.workflows import command_inputs, store
     from personalclaw.workflows.models import WorkflowRun
 
+    inputs = {"cwd": str(home.repo)}
     run = WorkflowRun(
         id=store.new_run_id(),
         workflow_name="subagent-batch-1",
-        inputs={"cwd": str(home.repo)},
+        inputs=inputs,
         project_id=project_id,
+        # As `batch_start` records it: a batch is its asker's own, held to her Allow, so the
+        # folder it names is one she chose (`command_inputs.stamped`).
+        extra=command_inputs.stamped({}, inputs, ""),
     )
     store.create(run)
     return run.id

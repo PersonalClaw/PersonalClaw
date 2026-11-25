@@ -643,16 +643,19 @@ class TestTheInstructionStatesWhatIsEnforced:
         for member in Verdict:
             assert f'"{member.value}"' in text, member
 
-    def test_the_forbidden_modes_and_hidden_checks_are_rendered(self):
+    def test_the_forbidden_modes_are_rendered_and_no_check_is_left_to_the_judge(self):
+        """🔴 Before: "Run these checks yourself" and "Re-run this yourself", to a judge with no
+        tools. The engine runs them and the judge reads their output
+        (`test_a_judge_reads_the_checks_the_engine_ran`)."""
         hints = JudgeHints(
             forbidden_success_modes=["test deleted or skipped"],
             hidden_validation_commands=["pytest -q tests/test_secret.py"],
+            proof_command="make test",
         )
         text = judge_instruction("judge it", hints)
         assert "test deleted or skipped" in text
-        # Rendered ONLY into judge prompts: a worker that can read the hidden checks satisfies
-        # them specifically, which is the same as not having them.
-        assert "pytest -q tests/test_secret.py" in text
+        assert "yourself" not in text and "the command you ran" not in text, text
+        assert "pytest -q tests/test_secret.py" not in text and "make test" not in text
 
 
 class TestAggregationAbsorbedTheGateRules:

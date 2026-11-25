@@ -285,6 +285,8 @@ export interface DeclaredParam {
   required?: boolean
   default?: unknown
   help?: string
+  /** The values it may take, when the definition names them: offered as a choice. */
+  enum?: unknown[]
 }
 
 /** A flat declared-parameter map, as the JSON Schema this module's renderer speaks.
@@ -305,6 +307,7 @@ export function declaredInputsSchema(declared: Record<string, DeclaredParam> | u
     properties[name] = {
       type: meta.type || 'string',
       default: meta.default ?? undefined,
+      ...(Array.isArray(meta.enum) && meta.enum.length ? { enum: meta.enum } : {}),
       ...(meta.help ? { 'x-meta': { help: meta.help } } : {}),
     }
     if (meta.required) required.push(name)

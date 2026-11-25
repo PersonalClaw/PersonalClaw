@@ -303,6 +303,11 @@ WF_ERROR_CODES: dict[str, str] = {
     "WF_INPUT_DUPLICATE_LOOP_FIELD": (
         "Two input declarations claim the same `loop_field`, and only one input can receive it."
     ),
+    "WF_INPUT_BAD_ENUM": (
+        "An input declaration's `enum` (the values it may take) lists no value, holds one its "
+        "declared type does not take as written, or does not hold its default; a start is refused "
+        "a value outside it, so the declaration would refuse every start that leaves it out."
+    ),
     # ── workflows/service.py — definition authoring + run lifecycle ────────
     # Emitted by `_service_failure(code, message, **detail)`; the codes handlers.py's
     # `_STATUS_MAP` translates into the wire vocabulary.
@@ -369,6 +374,10 @@ WF_ERROR_CODES: dict[str, str] = {
     ),
     "WF_RUN_MISSING_INPUTS": "The run request omits inputs the definition declares as required.",
     "WF_RUN_INPUT_TYPE": "One or more supplied inputs do not match their declared type.",
+    "WF_RUN_COMMAND_INPUT": (
+        "A start by someone other than the owner (an agent, an app, an A2A client) gives a value "
+        "to an input the workflow runs as a command or uses as a folder."
+    ),
     "WF_RUN_CONTINUATION_INVALID": (
         "The run says it continues another (its `continue_from` input) and cannot: no such run, a "
         "run of another workflow, a workflow that keeps no document, or a run that kept none."

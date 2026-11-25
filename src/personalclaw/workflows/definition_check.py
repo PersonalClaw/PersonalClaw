@@ -51,7 +51,7 @@ async def run_once_def(
     )
     if spec is None:
         return body
-    loosened = await service._loosenings(spec)
+    loosened = await service._loosenings(spec, saved_by=versions.AGENT)
     if loosened and not owner_allowed:
         said = "; ".join(f"“{s.label}” {', and '.join(s.may)}" for s in loosened)
         return service._service_failure(

@@ -76,6 +76,12 @@ _ALLOWED_WORKFLOW = "workflow"
 #: secret went when she gave it (`held_secrets.origins`): read beside a masked value, it is how a
 #: later question names the host an edit moved it from. Kept when an edit takes the grant away.
 _ALLOWED_HOSTS = "hosts"
+#: In it, that its action was last written by a door that did not ask her (an agent's
+#: `automation_update`, the CLI without `--yes`): its fires are then no start of hers
+#: (`run_workflow_provider._made_by_you`) until she saves the action with her yes (:func:`wrote`).
+_ACTION_BY = "action_by"
+#: The value it holds: who wrote the action, as a start that is not hers is named.
+UNASKED = "a door that did not ask you"
 #: What a version's saver is called where the owner reads it (`versions.SAVERS`).
 _SAVED_BY_WORDS = {
     "owner": "you, in the workflow's editor",
@@ -306,6 +312,12 @@ def asking(
     moved = moved_origins(_action_of(trigger)[1], allowed)
     if moved:
         sentence = f"{sentence} {moved}"
+    if action_by(trigger):
+        sentence = (
+            f"{sentence} Its action was changed since you last saved it, by {UNASKED}: what it "
+            "gives its workflow, and a command that workflow writes, run as yours only once you "
+            "save the action in its editor."
+        )
     heading = title(trigger, providers, creating=creating, saving=saving, changed=changed)
     return Question(providers, sentence, heading, shown)
 
@@ -751,6 +763,42 @@ def _allow(trigger: Any, now: "Current", *, calls: Any = None) -> None:
     trigger.capabilities = block
 
 
+def edited(
+    trigger: Any, before: Any, applied: dict[str, Any], consented: bool, hers: bool
+) -> list[str]:
+    """An edit of `trigger` from `before` that set *applied*: when it set the action, what that
+    changed keeps no grant (:func:`narrow`), and who wrote it is recorded (:func:`wrote`): her, when
+    the save carried her yes (*consented*) or is her own session's (*hers*, `tools.update`'s
+    *her_edit*, which the Triggers page's route sets from the request's sign-in and the chat's
+    tool never sets). ``[]`` for an edit that left the action alone."""
+    if "workflow" not in applied:
+        return []
+    changed = narrow(trigger, before)
+    wrote(trigger, asked=consented or hers)
+    return changed
+
+
+def wrote(trigger: Any, *, asked: bool) -> None:
+    """Record in `trigger`'s grant who wrote the action an edit just changed, in place: nobody to
+    keep when the save asked her (*asked*, her yes in the editor or the CLI's `--yes`), else a door
+    that did not ask her (:data:`UNASKED`). Her switch-on later asks about the version it runs,
+    not the values it gives, so it keeps the mark; only her save of the action clears it."""
+    current = getattr(trigger, "capabilities", None)
+    block = dict(current) if isinstance(current, dict) else {}
+    if asked:
+        block.pop(_ACTION_BY, None)
+    else:
+        block[_ACTION_BY] = UNASKED
+    trigger.capabilities = block
+
+
+def action_by(trigger: Any) -> str:
+    """Who wrote `trigger`'s action without asking her (:func:`wrote`), or "" for her."""
+    block = getattr(trigger, "capabilities", None)
+    value = block.get(_ACTION_BY) if isinstance(block, dict) else None
+    return value if isinstance(value, str) else ""
+
+
 def made_by_personalclaw(trigger: Any) -> bool:
     """Whether `trigger` is one of the automations PersonalClaw's own code makes and grants (an
     app's job, a settings-driven singleton, a logged decision's review card): it runs a template
@@ -930,7 +978,15 @@ def use_version_question(trigger: Any) -> Question | None:
     own = [m for m in moves if m.workflow == name]
     steps = [m for m in moves if m.workflow != name]
     said: list[str] = []
-    if own:
+    again = _allowed_again(described, own)
+    if again:
+        said.append(
+            f"“{who}” was allowed to run version {again} of “{name}”. “{name}” has not changed "
+            "since, but a PersonalClaw update changed a default it runs with. Allowing this lets "
+            f"it run version {again} again, with the new default, when it runs, unattended "
+            "included."
+        )
+    elif own:
         runs = own[0].was
         if runs:
             head = f"“{who}” runs version {runs} of “{name}”."
@@ -961,13 +1017,24 @@ def use_version_question(trigger: Any) -> Question | None:
                 f"Its steps start “{move.workflow}” at version {move.to}, which they do not start "
                 f"now. Saved: {_since(move.since)}."
             )
-    if own:
+    if again:
+        title = f"Allow version {again} of “{name}” again?"
+    elif own:
         title = f"Run version {own[0].to} of “{name}”?"
     elif len(steps) == 1:
         title = f"Run the newest version of “{steps[0].workflow}”?"
     else:
         title = f"Run the newest versions of what “{name}” runs?"
     return Question([RUNS_A_WORKFLOW], " ".join(said), title)
+
+
+def _allowed_again(described: dict[str, Any], own: list[_Move]) -> int:
+    """The version "Use vN" allows again when it moves the automation's own workflow to the version
+    it was already allowed, a PersonalClaw default it runs with having changed since (the row's
+    ``revised``); 0 for any other move."""
+    if own and described.get("revised") and own[0].to == described.get("allowed"):
+        return int(own[0].to)
+    return 0
 
 
 def use_version_change(trigger: Any) -> str:
@@ -978,8 +1045,12 @@ def use_version_change(trigger: Any) -> str:
         return ""
     described, now = read
     lines = []
-    for move in _moves(described, now):
-        if move.workflow == described["workflow"]:
+    moves = _moves(described, now)
+    again = _allowed_again(described, [m for m in moves if m.workflow == described["workflow"]])
+    for move in moves:
+        if move.workflow == described["workflow"] and again:
+            lines.append(f"v{again}, with PersonalClaw's changed default")
+        elif move.workflow == described["workflow"]:
             lines.append(f"v{move.was or described['allowed']} → v{move.to}")
         elif move.was:
             lines.append(f"“{move.workflow}” v{move.was} → v{move.to}")
@@ -1001,9 +1072,11 @@ def workflow_version(trigger: Any) -> dict[str, Any] | None:
     * ``newer``: the workflow's version now, when that is not what runs (0 otherwise), with
       ``since``, who saved each version after the one it runs;
     * ``problem``: why a fire would run nothing (``""`` when it would run);
+    * ``revised``: the version allowed is the workflow as it is, but a PersonalClaw default it runs
+      with changed since, so its Allow is asked for again (its ``use`` allows the same version);
     * ``steps``: each workflow its steps start, at every depth, as the same fields say it
       (``workflow``, ``via`` — the workflow whose step starts it —, ``runs``, ``saved_by``,
-      ``newer``, ``since``, ``problem``); ``[]`` when a fire would run nothing;
+      ``newer``, ``since``, ``problem``, ``revised``); ``[]`` when a fire would run nothing;
     * ``use``: what its "Use vN" sends (``{version, steps}``, :func:`use_current_version`), or None
       when it runs every workflow it runs as it is now."""
     read = _read(trigger)
@@ -1047,6 +1120,7 @@ def _read(trigger: Any) -> "tuple[dict[str, Any], Current | None] | None":
         "newer": 0,
         "since": [],
         "problem": "",
+        "revised": False,
         "steps": [],
     }
     if now is None or not now.spec:
@@ -1064,6 +1138,7 @@ def _read(trigger: Any) -> "tuple[dict[str, Any], Current | None] | None":
     described["runs"] = fire.version if fire.spec is not None else 0
     described["saved_by"] = fire.saved_by
     described["problem"] = fire.problem
+    described["revised"] = fire.revised
     if fire.newer is not None:
         described["newer"] = fire.newer.version
         described["since"] = [
@@ -1093,6 +1168,7 @@ def _step_row(step: Any) -> dict[str, Any]:
         "newer": 0,
         "since": [],
         "problem": ran.problem,
+        "revised": ran.revised,
     }
     if ran.newer is not None:
         row["newer"] = ran.newer.version

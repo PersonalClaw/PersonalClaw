@@ -396,6 +396,7 @@ async def test_the_row_says_a_step_waits_and_use_asks_before_it_moves_it(supervi
             "newer": 2,
             "since": [{"version": 2, "saved_by": "agent"}],
             "problem": "",
+            "revised": False,
         }
     ]
     assert row["use"] == {"version": 1, "steps": {PART: 2}}

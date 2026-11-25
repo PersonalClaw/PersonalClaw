@@ -42,7 +42,7 @@ from personalclaw import approval_answer
 from personalclaw.safety_flags import confirm_granted, yes_or_no
 from personalclaw.tool_providers.base import ToolFailure, tool_failure
 from personalclaw.validation import decode_json_text
-from personalclaw.workflows import chat_runs, service, template_pipeline, versions
+from personalclaw.workflows import chat_runs, command_inputs, service, template_pipeline, versions
 from personalclaw.workflows.agent_plans import _current_session_id, _run, plan_answer
 from personalclaw.workflows.context_block import needs_staging, staged_spec_echo
 
@@ -920,7 +920,11 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         return _fmt(
             _on_engine(
                 lambda supervisor: service.start_run(
-                    **start_fields(args), supervisor=supervisor, session_key=session_key
+                    **start_fields(args),
+                    supervisor=supervisor,
+                    session_key=session_key,
+                    # An agent's start names no command and no folder (`command_inputs`).
+                    started_by=command_inputs.AGENT,
                 )
             ),
             summary=SUMMARIES["workflow_start"],
@@ -935,7 +939,10 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         return _fmt(
             _on_engine(
                 lambda supervisor: service.start_draft_run(
-                    run_id, supervisor=supervisor, session_key=caller
+                    run_id,
+                    started_by=command_inputs.AGENT,
+                    supervisor=supervisor,
+                    session_key=caller,
                 )
             ),
             summary=SUMMARIES["workflow_start_draft"],

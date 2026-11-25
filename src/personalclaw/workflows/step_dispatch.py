@@ -13,9 +13,9 @@ import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.workflows import conditions, effect_boundary, iteration_context
+from personalclaw.workflows import command_inputs, conditions, effect_boundary, iteration_context
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import supervisor_policy
+from personalclaw.workflows import judge_checks, supervisor_policy
 from personalclaw.workflows.bindings import BindingContext, BindingError
 from personalclaw.workflows.engine import NodeResult, dispatch
 from personalclaw.workflows.engine_support import DEFAULT_MODEL_TIERS, resolve_axis_model
@@ -132,6 +132,19 @@ def _worker_model(ctl: RunController) -> str:
     return ctl._worker_model_cache
 
 
+def _unchosen(refused: str) -> NodeResult:
+    """A step refused because what it would run is not what its run's owner chose: failed before
+    it ran, in the rule's words, as the owner's to fix."""
+    return NodeResult(
+        state=InstanceState.FAILED,
+        failure=Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=f"did not run: {refused}",
+            remediation="give the input its value yourself, or start the run yourself",
+        ),
+    )
+
+
 async def execute(ctl: RunController, item: ReadyNode, ctx: BindingContext) -> NodeResult:
     """Run a dispatcher under the total-timeout knob.
 
@@ -155,6 +168,26 @@ async def execute(ctl: RunController, item: ReadyNode, ctx: BindingContext) -> N
     # different ends — but dropping either on a retry would be a real loss.
     node = iteration_context.with_carried_context(ctl, node, item)
     node = _with_owner_guidance(node, ctx)
+    # The spec's `runtime_hints.judge`, parsed by the contract's own lenient parser
+    # — the same split `execution_hints.from_runtime_hints` does for the
+    # execution half. Parsed per dispatch rather than cached: it is a dict walk over a
+    # handful of keys, and caching it would have to be invalidated by a live mutation of
+    # the spec, which is a correctness risk in exchange for nothing measurable.
+    hints = judge_hints_from_dict(
+        (ctl.spec.get("runtime_hints") or {}).get("judge")
+        if isinstance(ctl.spec.get("runtime_hints"), dict)
+        else None
+    )
+    # A step runs a command, or works in a folder, only as the run's owner chose it, whoever
+    # started the run and whatever changed its inputs since (`command_inputs`).
+    chosen = command_inputs.Chosen.of(ctl.spec, ctx.inputs, ctl.run.extra)
+    if refused := command_inputs.step_refusal(node, chosen):
+        return _unchosen(refused)
+    # A judge's checks run here, by the engine, and it reads what they printed: no judge can run
+    # a command itself (`judge_checks`).
+    node, ctx = await judge_checks.measured(
+        node, ctx, hints=hints, folder=ctl.services.cwd, chosen=chosen
+    )
     # Write-scope snapshot BEFORE the node runs. Only for nodes that opted
     # in: the walk is real work, and a fan-out of fast transforms must not each pay
     # for a tree scan.
@@ -212,16 +245,7 @@ async def execute(ctl: RunController, item: ReadyNode, ctx: BindingContext) -> N
         # from the run's worker axis; only the JUDGE branch reads it, so a run with no
         # cross_model gate pays nothing.
         worker_model=_worker_model(ctl),
-        # The spec's `runtime_hints.judge`, parsed by the contract's own lenient parser
-        # — the same split `execution_hints.from_runtime_hints` does for the
-        # execution half. Parsed per dispatch rather than cached: it is a dict walk over a
-        # handful of keys, and caching it would have to be invalidated by a live mutation of
-        # the spec, which is a correctness risk in exchange for nothing measurable.
-        judge_hints=judge_hints_from_dict(
-            (ctl.spec.get("runtime_hints") or {}).get("judge")
-            if isinstance(ctl.spec.get("runtime_hints"), dict)
-            else None
-        ),
+        judge_hints=hints,
         # This node's compaction history. `setdefault` so the list IDENTITY is stable
         # across iterations — the ladder appends to it in place, and handing out a fresh copy
         # each call would record saves nobody ever reads, leaving the anti-thrashing rule

@@ -203,3 +203,35 @@ describe('Run says why it is off', () => {
     })
   })
 })
+
+// ── an input that names the values it may take ────────────────────────────────────────────
+
+describe('an input that declares its values', () => {
+  const CHOICES = {
+    verify_command: {
+      type: 'string', required: false, default: 'make test',
+      enum: ['make test', 'make lint'], help: 'The check its verify gate runs.',
+    },
+  }
+
+  it('🔑 is offered as a choice of those values, and the chosen one is posted', async () => {
+    const api = makeApi({}, CHOICES)
+    const r = await mount(api)
+    const select = r.container.querySelector('select') as HTMLSelectElement
+    expect(select).toBeTruthy()
+    // The values, after the form's blank, which leaves the input to its default.
+    expect([...select.options].map((o) => o.value)).toEqual(['', 'make test', 'make lint'])
+    expect(select.value).toBe('make test') // seeded from `default`
+    await act(async () => { fireEvent.change(select, { target: { value: 'make lint' } }) })
+    await click(runButton(r))
+    expect(api.startWorkflowRun).toHaveBeenCalledWith({
+      name: 'knowledge-lint',
+      inputs: { verify_command: 'make lint' },
+    })
+  })
+
+  it('🪤 an input with no declared values is still a text box', async () => {
+    const r = await mount(makeApi({}, { target: { type: 'string', required: true } }))
+    expect(r.container.querySelector('select')).toBeNull()
+  })
+})

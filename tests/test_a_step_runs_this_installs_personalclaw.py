@@ -266,7 +266,7 @@ async def test_the_optimize_harness_template_runs_its_steps_in_an_isolated_insta
     model is a priced stand-in, as the template's own end-to-end test sets them up."""
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
     from personalclaw.evals import optimize
-    from personalclaw.workflows import store
+    from personalclaw.workflows import command_inputs, store
     from personalclaw.workflows.bundled_defs import bundled_root
     from personalclaw.workflows.controller import EngineServices, RunController
     from personalclaw.workflows.models import RunStatus, WorkflowRun, spec_path, walk
@@ -297,8 +297,15 @@ async def test_the_optimize_harness_template_runs_its_steps_in_an_isolated_insta
         "no_improvement_halt": 5,
         "max_iterations": 1,
     }
+    # Started as its owner starts it, so it holds her values as hers (`command_inputs.stamped`).
     run = store.create(
-        WorkflowRun(id="", workflow_name=spec["name"], mode="background", inputs=inputs)
+        WorkflowRun(
+            id="",
+            workflow_name=spec["name"],
+            mode="background",
+            inputs=inputs,
+            extra=command_inputs.stamped({}, inputs, ""),
+        )
     )
     store.write_spec(run.id, spec)
     controller = live_runs.started(RunController(run, spec, services=EngineServices()))

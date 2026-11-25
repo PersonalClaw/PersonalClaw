@@ -355,20 +355,13 @@ class RunWorkflowActionProvider(ActionProvider):
         chain_state = carried_chain(getattr(ctx, "payload", None))
         if chain_state:
             extra = {**extra, CHAIN_EXTRA_KEY: chain_state}
-        # Which inputs the run was handed a reference in, so it fills them where they are used.
-        extra = input_secrets.stamp(extra, coerced, handed)
+        # What the run keeps of its inputs: the references it was handed, and its owner's choices.
+        extra = _record(extra, coerced, handed, ctx=ctx, parent=parent)
         if carried is not None:
             extra = automation_version.stamp(extra, carried)
-        from personalclaw.workflows import run_budget
-
-        caps, unreadable = run_budget.child_caps(spec, parent=parent)
-        if unreadable:
-            return ActionResult(
-                success=False,
-                error=f"run-workflow: did not start {name!r}: {unreadable}",
-                stderr="the workflow's definition declares a budget no run can be held to",
-                failure_class="user",
-            )
+        caps, stopped = _held_to(name, spec, extra, parent=parent)
+        if stopped is not None:
+            return stopped
         run = store.create(
             WorkflowRun(
                 id="",
@@ -457,6 +450,128 @@ class RunWorkflowActionProvider(ActionProvider):
             # The run, so the fire's row says how it went when it ends (`triggers.settle`).
             work_id=run_work_id(run.id),
         )
+
+
+def _record(
+    extra: dict[str, Any], given: dict[str, Any], handed: Any, *, ctx: Any, parent: Any
+) -> dict[str, Any]:
+    """The record of the run this action starts with the inputs *given*: the inputs it was handed
+    a secret reference in, so it fills them where they are used (`input_secrets`), and what its
+    owner chose of them (`command_inputs`). A step's run keeps the values its parent run held as
+    its owner's; an automation's, the values it gives when its owner made it, and none when an
+    agent, an app or a workflow did, or when it cannot be read."""
+    from personalclaw.workflows import command_inputs, input_secrets
+
+    extra = input_secrets.stamp(extra, given, handed)
+    if parent is not None:
+        return {**extra, **command_inputs.handed_by(parent, given)}
+    trigger_id = str(getattr(ctx, "trigger_id", "") or "")
+    made_by_you = _made_by_you(trigger_id)
+    record = command_inputs.stamped(extra, given, "" if made_by_you else command_inputs.OTHER)
+    if changed := _changed_unasked(trigger_id):
+        record[command_inputs.CHANGED_AUTOMATION_KEY] = changed
+    return record
+
+
+def _held_to(
+    name: str, spec: dict[str, Any], extra: dict[str, Any], *, parent: Any
+) -> tuple[Any, ActionResult | None]:
+    """The budget the run this action starts is held to, and the refusal of its start, or None:
+    a definition this start may not run (:func:`_not_theirs`), or a budget no run can be held to
+    (`run_budget.child_caps`)."""
+    from personalclaw.workflows import run_budget
+
+    def _refused(why: str, said: str) -> ActionResult:
+        return ActionResult(
+            success=False,
+            error=f"run-workflow: did not start {name!r}: {why}",
+            stderr=said,
+            failure_class="user",
+        )
+
+    if refused := _not_theirs(spec, extra, fired=parent is None):
+        return None, _refused(refused, "a command no save of yours wrote, which it does not cover")
+    caps, unreadable = run_budget.child_caps(spec, parent=parent)
+    if unreadable:
+        said = "the workflow's definition declares a budget no run can be held to"
+        return None, _refused(unreadable, said)
+    return caps, None
+
+
+def _not_theirs(spec: dict[str, Any], extra: dict[str, Any], *, fired: bool) -> str:
+    """Why the run this action starts, its record *extra*, may not run *spec*: whoever its start
+    is (a step of a run someone else started, an automation she did not make) may not start a
+    definition that is not hers and runs its own command (`command_inputs.not_yours_to_start`).
+
+    *fired*: an automation's own fire. Her Allow of an automation an agent or an app made named
+    the version it runs and who saved it, but showed her none of its commands, so it is no yes to
+    a command a save of hers did not write: she saves the workflow in its editor for that."""
+    from personalclaw.workflows import command_inputs
+
+    starter = command_inputs.starter(extra)
+    if not fired or not starter:
+        return command_inputs.not_yours_to_start(spec, starter)
+    first = command_inputs.unvouched_command(spec)
+    if first is None:
+        return ""
+    name = str(spec.get("name") or "")
+    if changed := str(extra.get(command_inputs.CHANGED_AUTOMATION_KEY) or ""):
+        return (
+            f"an agent or another door that did not ask you changed what the automation "
+            f"“{changed}” runs since you last saved it, and “{name}” runs `{first.change}` "
+            f"({first.label}), which no save of yours wrote. Open “{changed}” in Triggers and "
+            "save it in its editor to let it run."
+        )
+    return (
+        f"this version of “{name}” runs `{first.change}` ({first.label}), which no save of yours "
+        "wrote, and your Allow of this automation does not cover a command: it showed you which "
+        f"version it runs, not its commands. Open “{name}” in Workflows and save it in its "
+        "editor to let the automation run it."
+    )
+
+
+def _made_by_you(trigger_id: str) -> bool:
+    """Whether the automation *trigger_id* is one its owner made, or PersonalClaw's own code made
+    for her (`triggers.grants.made_by_personalclaw`, an app's job aside): one an agent, an app or a
+    workflow made gives a run no value she chose. A lifecycle hook records no maker, and a
+    trigger that cannot be read was made by nobody known."""
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+
+    if not trigger_id or trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX):
+        return False
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import grants
+        from personalclaw.triggers.routing import routed
+        from personalclaw.triggers.store import TriggerStore
+
+        row = routed(TriggerStore(base_dir=config_dir())).get(trigger_id)
+    except Exception:  # noqa: BLE001 - an automation that cannot be read vouches for nothing
+        logger.warning("run-workflow: trigger %s could not be read for its maker", trigger_id)
+        return False
+    if row is None or grants.action_by(row.trigger):
+        return False  # its action was written by a door that did not ask her
+    by = str(getattr(row.trigger, "created_by", "") or "")
+    return by in ("user", "system") or by.startswith("system:")
+
+
+def _changed_unasked(trigger_id: str) -> str:
+    """The name of the automation *trigger_id* when a door that did not ask her wrote its action
+    (`grants.action_by`), else ""."""
+    if not trigger_id:
+        return ""
+    try:
+        from personalclaw.config.loader import config_dir
+        from personalclaw.triggers import grants
+        from personalclaw.triggers.routing import routed
+        from personalclaw.triggers.store import TriggerStore
+
+        row = routed(TriggerStore(base_dir=config_dir())).get(trigger_id)
+    except Exception:  # noqa: BLE001 - one that cannot be read gives nothing as hers already
+        return ""
+    if row is None or not grants.action_by(row.trigger):
+        return ""
+    return str(getattr(row.trigger, "name", "") or trigger_id)
 
 
 def _run_of_step(ctx: Any) -> Any:

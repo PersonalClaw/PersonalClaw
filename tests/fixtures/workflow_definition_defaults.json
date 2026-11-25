@@ -1,0 +1,58 @@
+{
+  "defaults": {
+    "definition": {
+      "created_at": "",
+      "defaults": {
+        "budget": {
+          "max_cost": 0.0,
+          "max_tokens": 0
+        },
+        "effort": "",
+        "max_concurrency": 0,
+        "model_tier": "standard",
+        "node_timeout_stall_secs": 0,
+        "node_timeout_total_secs": 0
+      },
+      "description": "",
+      "inputs": {},
+      "metadata": {
+        "a2a_published": false,
+        "agent_digest": "",
+        "cadence_days": 0,
+        "capabilities": [],
+        "escalation": "manual",
+        "example_outputs": [],
+        "guided": false,
+        "hands_off_to": [],
+        "keywords": [],
+        "lighter_path": "",
+        "match_text": "",
+        "packs": [],
+        "presets": [],
+        "requirements": {},
+        "risk": "low",
+        "shapes": [],
+        "steering_examples": [],
+        "summary": "",
+        "surface_mode": "off",
+        "when_not_to_use": "",
+        "when_to_use": ""
+      },
+      "on_overlap": "skip",
+      "provenance": "user",
+      "runtime_hints": {},
+      "source": "user",
+      "spec_semver": "1.0",
+      "tags": [],
+      "updated_at": "",
+      "version": 1
+    },
+    "input": {
+      "default": null,
+      "help": "",
+      "required": false,
+      "type": "string"
+    }
+  },
+  "revision": 1
+}

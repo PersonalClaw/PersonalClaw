@@ -812,6 +812,12 @@ class InputParam:
     #:
     #: Empty for every input that is not a loop-kind intake point, which is almost all of them.
     loop_field: str = ""
+    #: The values the input may take, when the definition names them: a start must give one of
+    #: them (`contracts.coerce_declared_inputs`), the launch form offers them as a choice, and a
+    #: start by anyone but the owner may choose one even for an input a step runs as a command,
+    #: since each is a command the definition names (`command_inputs`). Empty: any value of its
+    #: type.
+    enum: list[Any] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -825,6 +831,8 @@ class InputParam:
         # launch dialog renders field by field.
         if self.loop_field:
             d["loop_field"] = self.loop_field
+        if self.enum:
+            d["enum"] = list(self.enum)
         return d
 
     @classmethod
@@ -835,6 +843,7 @@ class InputParam:
             default=d.get("default"),
             help=str(d.get("help", "") or ""),
             loop_field=str(d.get("loop_field", "") or "").strip().lower(),
+            enum=list(d["enum"]) if isinstance(d.get("enum"), list) else [],
         )
 
 

@@ -154,6 +154,7 @@ class NativeWorkflowDefProvider(WorkflowDefProvider):
                 saved_by=saved_by,
                 ops=[o for o in (fields.get("_version_ops") or []) if isinstance(o, dict)],
                 calls=calls,
+                allowed=fields.get("_owner_allowed") is True,
             )
         except Exception:
             logger.warning("versions: could not record v%s of %s", payload["version"], name)

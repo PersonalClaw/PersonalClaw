@@ -238,6 +238,8 @@ async def _apply_workflow(args: dict[str, Any], ctx: "ApplyContext") -> dict[str
         inputs=dict(args.get("inputs") or {}),
         idempotency_key=f"proposal:{ctx.item_id}",
         supervisor=ctx.supervisor,
+        # The owner accepted the proposal, its inputs shown on it.
+        started_by="",
     )
     if not res.get("ok"):
         # The service's refusal is a flat envelope whose sentence is its `message`.

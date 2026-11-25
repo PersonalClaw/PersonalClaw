@@ -30,7 +30,7 @@ import pytest
 
 from personalclaw.action_providers.artifact_inspect_provider import ArtifactInspectActionProvider
 from personalclaw.action_providers.base import ActionResult
-from personalclaw.workflows import service, store
+from personalclaw.workflows import command_inputs, service, store
 from personalclaw.workflows.bindings import BindingContext
 from personalclaw.workflows.bundled_defs import read_template, template_names
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -385,7 +385,11 @@ async def test_every_bundled_template_loads_and_runs_its_first_step(name: str) -
     result = validate_spec(spec, strict=True)
     assert result.ok, [issue.to_dict() for issue in result.issues]
 
-    run = store.create(WorkflowRun(id="", workflow_name=name, inputs=_inputs_for(spec)))
+    inputs = _inputs_for(spec)
+    # The owner's start, which records the values she gave (`command_inputs.stamped`): a run with
+    # no record holds none of them as hers, and a step that runs one does not run.
+    extra = command_inputs.stamped({}, inputs, "")
+    run = store.create(WorkflowRun(id="", workflow_name=name, inputs=inputs, extra=extra))
     store.write_spec(run.id, spec)
     first = _FirstStep(run.id)
     controller = RunController(

@@ -284,9 +284,11 @@ class JudgeHints:
     forbidden_success_modes: list[str] = field(
         default_factory=lambda: list(DEFAULT_FORBIDDEN_MODES)
     )
+    #: Run by the engine just before each of the run's judges, which reads what it printed
+    #: (`judge_checks`): a judge has no shell to run it with.
     proof_command: str = ""
     validator_script: str = ""
-    #: Rendered ONLY into judge prompts. A worker that can read the hidden checks can
+    #: Run the same way, and shown ONLY to judges. A worker that can read the hidden checks can
     #: satisfy them specifically, which is the same as not having them.
     hidden_validation_commands: list[str] = field(default_factory=list)
     #: Which node outputs are authoritative MEASUREMENTS rather than worker synthesis.
@@ -664,38 +666,27 @@ def _normalize_for_grounding(text: str) -> str:
     return " ".join((text or "").split()).casefold()
 
 
-def ungrounded_refs(
-    refs: list[str], evidence_text: str, hints: JudgeHints | None = None
-) -> list[str]:
-    """The citations that cannot be grounded in what the judge was shown or did.
+def ungrounded_refs(refs: list[str], evidence_text: str) -> list[str]:
+    """The citations that cannot be grounded in what the judge was shown.
 
-    A ref is GROUNDED when (a) its text appears verbatim (whitespace/case-normalized) in the
-    evidence slice, or (b) it cites one of the observation commands the hints DECLARED the
-    judge should run itself (`proof_command`, `hidden_validation_commands`) — the judge is
-    told to re-run those and cite their output, so that output is legitimately outside the
-    slice. Everything else references evidence that was neither shown nor sanctioned: the
-    verdict asserts a conclusion the presented evidence cannot support.
+    A ref is GROUNDED when its text appears verbatim (whitespace/case-normalized) in the evidence
+    slice, which holds what the checks the engine ran for the judge printed
+    (`judge_checks.measured`). Naming a declared check is not grounding: the judge cannot run one,
+    so a citation of output the engine did not record is output the judge made up. Everything else
+    references evidence it was not shown: the verdict asserts a conclusion the presented evidence
+    cannot support.
 
     Short refs (< 12 normalized chars) are never flagged: a fragment that small ("passed",
     "the diff") grounds against almost anything, so flagging it is noise, and passing it
     proves nothing either way — the check stays honest by staying silent there.
     """
     norm_evidence = _normalize_for_grounding(evidence_text)
-    sanctioned: list[str] = []
-    if hints is not None:
-        if hints.proof_command:
-            sanctioned.append(_normalize_for_grounding(hints.proof_command))
-        sanctioned.extend(
-            _normalize_for_grounding(c) for c in hints.hidden_validation_commands if c
-        )
     out: list[str] = []
     for ref in refs:
         norm = _normalize_for_grounding(str(ref))
         if len(norm) < 12:
             continue
         if norm_evidence and norm in norm_evidence:
-            continue
-        if any(cmd and cmd in norm for cmd in sanctioned):
             continue
         out.append(str(ref))
     return out
@@ -769,7 +760,7 @@ def validate_verdict(
     # that assemble evidence elsewhere (or none) are untouched.
     if evidence_text:
         result.evidence_hash = evidence_hash_of(evidence_text)
-        result.unanswerable_refs = ungrounded_refs(result.evidence_refs, evidence_text, hints)
+        result.unanswerable_refs = ungrounded_refs(result.evidence_refs, evidence_text)
 
     if result.cannot_judge:
         # A typed escape hatch: parseable refusal rather than a parse failure. It is
@@ -992,15 +983,9 @@ def judge_instruction(prompt: str, hints: JudgeHints) -> str:
             "Name each one the work did in `forbidden_modes_found`, copied exactly as written "
             "above, and leave it [] when it did none: a PASS that names one is set aside."
         )
-    if hints.hidden_validation_commands:
-        # Rendered ONLY here. A worker that can read the hidden checks satisfies them
-        # specifically, which is the same as not having them.
-        lines.append("")
-        lines.append("Run these checks yourself and report what they returned:")
-        lines.extend(f"  - {command}" for command in hints.hidden_validation_commands)
-    if hints.proof_command:
-        lines.append("")
-        lines.append(f"Re-run this yourself and cite its output as proof: {hints.proof_command}")
+    # The run's declared checks (`proof_command`, `hidden_validation_commands`) are not listed
+    # here for the judge to run: it has no tools. The engine ran them just before this call and
+    # their output is in the prompt above (`judge_checks.measured`), shown only to a judge.
     lines += [
         "",
         "Respond with ONE JSON object and nothing else — no prose either side, no code fence:",
@@ -1008,7 +993,7 @@ def judge_instruction(prompt: str, hints: JudgeHints) -> str:
         '  "reasoning": "what you checked and what you found",',
         '  "verdict": ' + " | ".join(f'"{v.value}"' for v in Verdict) + ",",
         '  "scores": {"<criterion exactly as written above>": 0},',
-        '  "proof": "the command you ran, the file you read, the line you checked",',
+        '  "proof": "the check output, the file line or the passage you relied on",',
         '  "evidence_refs": ["the artifact or output you relied on"],',
     ]
     if hints.forbidden_success_modes:
@@ -1020,9 +1005,9 @@ def judge_instruction(prompt: str, hints: JudgeHints) -> str:
         "A PASS carrying neither `proof` nor `evidence_refs` is REJECTED by the engine: a "
         "completion record without proof is a claim, not a verdict.",
         "Each `evidence_refs` entry must QUOTE the evidence: a verbatim span from the material "
-        "above, or the output of a command this instruction told you to run. A citation that "
-        "references evidence you were not shown is unanswerable — a PASS resting only on such "
-        "citations is rejected.",
+        "above, the output of a check the engine ran included. A citation that references "
+        "evidence you were not shown is unanswerable — a PASS resting only on such citations is "
+        "rejected.",
         "If you genuinely cannot tell, say why in `cannot_judge` — that escalates to a human, "
         "which is useful. A coin flip dressed as a verdict is not.",
     ]
