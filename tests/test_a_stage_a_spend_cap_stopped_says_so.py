@@ -150,6 +150,7 @@ def test_a_general_loop_a_spend_cap_stopped_ends_as_the_caps_stop():
     assert failure.failure_class is FailureClass.BUDGET, failure
     assert failure.cause_plain == refusal.headline(), failure
     assert failure.remediation == f"{refusal.fix()}, then Retry", failure
+    assert failure.budget_scope == refusal.scope == "day", failure
     assert step_cause(failure) == SPEND_CAP
     assert controller.run.status is RunStatus.ESCALATED, controller.run.status
     attention = controller.run.attention or {}
@@ -163,6 +164,34 @@ def test_a_helper_that_failed_on_its_own_is_still_the_steps_failure():
     """The control: an error no cap raised is the step's, as before."""
     ending = SubagentInfo(id="sub", task="t")
     ending.error = "the helper ended without an answer"
+    failure = _failed(_drive(ending))
+    assert failure.failure_class is not FailureClass.BUDGET, failure
+    assert step_cause(failure) != SPEND_CAP
+
+
+@pytest.mark.parametrize("scope", ["day", "run"])
+def test_the_engines_own_call_a_cap_refused_is_the_same_stop_with_its_scope(scope: str):
+    """The engine's own call the ceiling refused (`BudgetExceededError`) is read as the stage's is:
+    one shape (`failure_taxonomy.budget_failure`), the ceiling's scope with it, so a day ceiling's
+    stop is held as one wherever it was met."""
+    from personalclaw.workflows.failure_taxonomy import classify_exception
+
+    refusal = _refusal(scope)
+    failure = classify_exception(refusal)
+    assert failure.failure_class is FailureClass.BUDGET, failure
+    assert (failure.cause_plain, failure.remediation, failure.budget_scope) == (
+        refusal.headline(),
+        f"{refusal.fix()}, then Retry",
+        scope,
+    )
+
+
+def test_a_cap_record_with_no_headline_is_not_a_caps_stop():
+    """A helper whose record holds a cap with no headline (no refusal matched it) failed on its
+    own: its step settles as its own failure, never as a spend cap's stop with no words."""
+    ending = SubagentInfo(id="sub", task="t")
+    ending.error = "the helper ended without an answer"
+    ending.spend_cap = {"fix": "Raise the ceiling in Settings", "scope": "day"}
     failure = _failed(_drive(ending))
     assert failure.failure_class is not FailureClass.BUDGET, failure
     assert step_cause(failure) != SPEND_CAP
