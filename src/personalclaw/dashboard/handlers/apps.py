@@ -462,13 +462,15 @@ def _with_switches(
 ) -> dict[str, list[dict[str, Any]]]:
     """*app*'s health rows (``_health_rows``), each capability's with its switch (``on``), read
     from the installed record *app* was listed from."""
-    from personalclaw.apps.capability_switches import is_on
+    from personalclaw.apps.capability_switches import is_on, readable
     from personalclaw.apps.manager import InstalledApp
 
     rows = health or {"accounts": [], "capabilities": []}
     meta = InstalledApp.from_dict(app)
     for cap in rows["capabilities"]:
-        cap["on"] = is_on(meta, str(cap.get("id", "")))
+        cid = str(cap.get("id", ""))
+        cap["on"] = is_on(meta, cid)
+        cap["_readable"] = readable(meta, cid)  # taken off on the loop (`_capability_states`)
     return rows
 
 
@@ -486,7 +488,12 @@ def _capability_states(row: dict[str, Any]) -> dict[str, Any]:
     statuses = []
     for cap in caps:
         status = capability_status(
-            row["name"], cap["id"], on=cap["on"], app_enabled=enabled, app_label=label
+            row["name"],
+            cap["id"],
+            on=cap["on"],
+            app_enabled=enabled,
+            app_label=label,
+            readable=cap.pop("_readable", True),
         )
         cap.update(status.to_wire())
         statuses.append((str(cap.get("label") or cap["id"]), status))

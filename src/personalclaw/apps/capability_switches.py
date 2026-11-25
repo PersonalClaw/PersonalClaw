@@ -10,7 +10,8 @@ the capabilities switched on in its installed record (``InstalledApp.capabilitie
   ``…/off`` routes). An update never changes it: a capability it renames keeps its switch, one it
   drops leaves the record, and one it adds starts off (:func:`after_update`).
 * **A record written before the switches** has none, and its app runs every capability it
-  declares (:func:`is_on`); the first switch or update writes them all down.
+  declares (:func:`is_on`); the first switch or update writes them all down. A record whose
+  switches are there but cannot be read runs none of them.
 
 A capability that is off is not built (``app_runtime``), so it reads no settings and starts
 nothing, and switching one builds or tears down that one alone.
@@ -24,7 +25,6 @@ What a capability is doing comes from one place, :func:`capability_status`: the 
 from __future__ import annotations
 
 import logging
-import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -42,9 +42,6 @@ RUNNING = "running"
 FAILED = "failed"
 UNAVAILABLE = "unavailable"
 STATES = frozenset({OFF, NEEDS_SETUP, STARTING, RUNNING, FAILED, UNAVAILABLE})
-
-#: One switch is written at a time: each is a read and a write of the app's installed record.
-_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -90,10 +87,27 @@ def initial(manifest: AppManifest) -> dict[str, dict[str, bool]]:
 
 def is_on(meta: InstalledApp | None, capability: str) -> bool:
     """Whether *capability*'s switch is on in *meta*. A record with no switches (written before
-    them) runs every capability; one with switches runs only those it switches on."""
-    if meta is None or not meta.capabilities:
+    them) runs every capability; one with switches runs only those it switches on, so a map that
+    could not be read, or names no switch for it, runs nothing."""
+    if meta is None or meta.capabilities is None:
         return True
     return meta.capabilities.get(capability, {}).get("on") is True
+
+
+def readable(meta: InstalledApp | None, capability: str) -> bool:
+    """Whether *capability* has a switch *meta* can read. A record written before the switches
+    has none to read and runs all, so it reads as readable; one with switches whose mark for
+    *capability* is missing or could not be read does not: that capability stays off, and says
+    so (:func:`unreadable_sentence`)."""
+    return meta is None or meta.capabilities is None or capability in meta.capabilities
+
+
+def unreadable_sentence(app_label: str) -> str:
+    """What a capability whose switch cannot be read says about itself."""
+    return (
+        f"{app_label}'s capability switches couldn't be read, so they stay off until you "
+        "switch them on."
+    )
 
 
 def switched_on(manifest: AppManifest) -> list[str]:
@@ -115,15 +129,18 @@ def after_update(meta: InstalledApp, before: list[str] | None, new: AppManifest)
     if not after:
         return
     if before is None:
-        if not meta.capabilities:
+        if meta.capabilities is None:
             return  # nothing to tell an added capability by: it runs as it did
         before = list(meta.capabilities)
-    was = {cid: is_on(meta, cid) for cid in before}
+    was = {cid: is_on(meta, cid) for cid in before if readable(meta, cid)}
+    unread = set(before) - set(was)
     out: dict[str, dict[str, bool]] = {}
     for cid, provider in zip(after, new.all_providers()):
         if cid in was:
             out[cid] = {"on": was[cid]}
             continue
+        if cid in unread or unread.intersection(provider.renamedFrom):
+            continue  # its switch could not be read: it stays without one, off, and says so
         inherited = [was[old] for old in provider.renamedFrom if old in was]
         out[cid] = {"on": inherited[0] if inherited else False}
     meta.capabilities = out
@@ -142,10 +159,12 @@ def switch(
     declare, an app whose capabilities cannot be told apart, and a native app's switch off."""
     from personalclaw.acp.cli_resolve import adapter_installs_allowed
     from personalclaw.apps import app_manager, capability_lifecycle
-    from personalclaw.apps.manager import _now_iso, _read_installed, _write_installed
+    from personalclaw.apps.manager import _now_iso, _read_installed, _write_installed, record_lock
     from personalclaw.providers.registry import get_provider_registry
 
-    with _lock:
+    # The record is read under the lock every writer of it holds, so the app's own switch read
+    # here is the one in force: a disable that runs first leaves this one building nothing.
+    with record_lock(name):
         meta = _read_installed(name)
         manifest = app_manager._manifest_of(name)
         if meta is None or manifest is None or manifest.name != name:
@@ -164,8 +183,11 @@ def switch(
                 status=409,
                 native=True,
             )
-        meta.capabilities = {cid: {"on": is_on(meta, cid)} for cid in ids}
-        meta.capabilities[capability] = {"on": on}
+        # Every switch as it reads, the one asked for set; one that could not be read stays
+        # without a switch, off, until it is switched itself.
+        meta.capabilities = {
+            cid: {"on": is_on(meta, cid)} for cid in ids if readable(meta, cid)
+        } | {capability: {"on": on}}
         meta.updatedAt = _now_iso()
         _write_installed(name, meta)
         registry = get_provider_registry()
@@ -202,17 +224,25 @@ def status_of(name: str, capability: str) -> CapabilityStatus:
         on=is_on(meta, capability),
         app_enabled=bool(meta and meta.enabled),
         app_label=(meta.displayName if meta is not None else "") or name,
+        readable=readable(meta, capability),
     )
 
 
 def capability_status(
-    name: str, capability: str, *, on: bool, app_enabled: bool, app_label: str
+    name: str,
+    capability: str,
+    *,
+    on: bool,
+    app_enabled: bool,
+    app_label: str,
+    readable: bool = True,
 ) -> CapabilityStatus:
-    """The one reading of what *name*'s *capability* is doing, given its switch (*on*) and the
-    app's (*app_enabled*; *app_label* is the name the app goes by): every surface that says it
-    reads this.
+    """The one reading of what *name*'s *capability* is doing, given its switch (*on*, and
+    whether it could be *readable* at all) and the app's (*app_enabled*; *app_label* is the name
+    the app goes by): every surface that says it reads this.
 
-    ``off`` while either switch is off (the app's says so); then, from its record in the
+    ``off`` while either switch is off (the app's says so, and so does a switch that could not
+    be read); then, from its record in the
     provider registry, ``running`` once built, ``needs_setup`` while an account field it requires
     is empty, ``failed`` with the sentence its build failed with, and ``starting`` until its
     build has run. ``unavailable`` wherever the availability check found it cannot run on this
@@ -222,6 +252,8 @@ def capability_status(
 
     if not app_enabled:
         return CapabilityStatus(on, OFF, f"{app_label} is switched off.")
+    if not readable:
+        return CapabilityStatus(False, OFF, unreadable_sentence(app_label))
     if not on:
         return CapabilityStatus(False, OFF)
     rec = get_provider_registry().get(name, capability)
@@ -253,26 +285,32 @@ def _unavailable(rec: RegisteredProvider) -> str:
     return answer.reason
 
 
+#: Each state's words after the capabilities' labels: one capability, then several.
 _PHRASES = {
-    OFF: "is off",
-    STARTING: "is starting",
-    NEEDS_SETUP: "needs setup",
-    FAILED: "failed",
-    UNAVAILABLE: "is unavailable",
+    OFF: ("is off", "are off"),
+    STARTING: ("is starting", "are starting"),
+    NEEDS_SETUP: ("needs setup", "need setup"),
+    FAILED: ("failed", "failed"),
+    UNAVAILABLE: ("is unavailable", "are unavailable"),
 }
 
 
 def summary(app_label: str, rows: list[tuple[str, CapabilityStatus]], *, app_enabled: bool) -> str:
     """The app's one line about its capabilities, from each one's label and status:
-    ``2 of 3 capabilities running · Inbox failed: the token was refused``."""
+    ``2 of 3 capabilities running · Inbox failed: the token was refused``. Capabilities in one
+    state for one reason are named together, so a reason about the whole app (its switches
+    could not be read) is said once."""
     if not app_enabled:
         return f"{app_label} is switched off."
     running = sum(1 for _, status in rows if status.state == RUNNING)
     noun = "capability" if len(rows) == 1 else "capabilities"
     parts = [f"{running} of {len(rows)} {noun} running"]
+    groups: dict[tuple[str, str], list[str]] = {}
     for label, status in rows:
-        if status.state == RUNNING:
-            continue
-        phrase = f"{label} {_PHRASES[status.state]}"
-        parts.append(f"{phrase}: {status.reason}" if status.reason else phrase)
+        if status.state != RUNNING:
+            groups.setdefault((status.state, status.reason), []).append(label)
+    for (state, reason), labels in groups.items():
+        named = labels[0] if len(labels) == 1 else f"{', '.join(labels[:-1])} and {labels[-1]}"
+        phrase = f"{named} {_PHRASES[state][len(labels) > 1]}"
+        parts.append(f"{phrase}: {reason}" if reason else phrase)
     return " · ".join(parts)

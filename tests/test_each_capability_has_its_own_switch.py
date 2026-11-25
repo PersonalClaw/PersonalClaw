@@ -153,10 +153,22 @@ def test_a_switch_that_reads_as_neither_yes_nor_no_is_off() -> None:
     )
     assert meta.capabilities == {
         "inbox": {"on": True},
-        "search": {"on": False},
         "sync": {"on": False},
-        "notes": {"on": False},
-    }
+    }, "a mark that cannot be read is left without a switch"
+    from personalclaw.apps.capability_switches import is_on, readable
+
+    assert [is_on(meta, c) for c in ("inbox", "search", "sync", "notes")] == [
+        True,
+        False,
+        False,
+        False,
+    ]
+    assert [readable(meta, c) for c in ("inbox", "search", "sync", "notes")] == [
+        True,
+        False,
+        True,
+        False,
+    ]
     assert manager.InstalledApp.from_dict(meta.to_dict()).capabilities == meta.capabilities
 
 
@@ -328,7 +340,7 @@ def test_an_app_installed_before_the_switches_runs_every_capability(tmp_path, bu
     _install(tmp_path)
     meta = manager._read_installed(APP)
     assert meta is not None
-    meta.capabilities = {}
+    meta.capabilities = None
     manager._write_installed(APP, meta)
     assert "capabilities" not in json.loads(
         (manager.app_dir(APP) / "installed.json").read_text(encoding="utf-8")
@@ -371,9 +383,207 @@ def test_an_update_of_a_record_from_before_the_switches_keeps_what_ran(tmp_path,
     _install(tmp_path, [INBOX, SEARCH])
     meta = manager._read_installed(APP)
     assert meta is not None
-    meta.capabilities = {}
+    meta.capabilities = None
     manager._write_installed(APP, meta)
     notes = _provider("search", "notes", "Search your notes")
     res = app_manager.update(_bundle(tmp_path, "1.1.0", [INBOX, SEARCH, notes]), confirm=True)
     assert res.ok, res.error
     assert _switches() == {"inbox": {"on": True}, "search": {"on": True}, "notes": {"on": False}}
+
+
+# ── switches that cannot be read, and two writers at once ────────────────────────────────────
+
+
+def _rewrite_record(**fields: Any) -> None:
+    path = manager.app_dir(APP) / "installed.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.update(fields)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "unreadable",
+    [[], ["inbox"], "on", {}, {"inbox": "yes", "search": 3, "sync": None}],
+    ids=["a list", "a list of ids", "a word", "an empty map", "every mark junk"],
+)
+def test_switches_that_cannot_be_read_run_nothing(tmp_path, built, monkeypatch, unreadable) -> None:
+    _install(tmp_path)
+    _rewrite_record(capabilities=unreadable)
+    meta = manager._read_installed(APP)
+    assert meta is not None and meta.capabilities is not None
+    from personalclaw.apps.capability_switches import is_on
+
+    assert [is_on(meta, cid) for cid in ("inbox", "search", "sync")] == [False, False, False]
+    reg = registry_module.ProviderRegistry()
+    for type_ in ("inbox", "search", "sync"):
+        reg.register_type_handler(type_, built)  # type: ignore[arg-type]
+    monkeypatch.setattr(registry_module, "_registry", reg)
+    built.log.clear()
+    app_runtime.start_installed(gateway=False)
+    assert built.log == [], "a capability whose switch cannot be read is never built"
+    assert (
+        meta.to_dict()["capabilities"] is not None
+    ), "written back, it stays a record with switches"
+
+
+def test_only_a_record_with_no_switches_runs_every_capability(tmp_path, built) -> None:
+    _install(tmp_path)
+    path = manager.app_dir(APP) / "installed.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["capabilities"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    meta = manager._read_installed(APP)
+    assert meta is not None and meta.capabilities is None
+    _rewrite_record(capabilities={"inbox": {"on": True}, "search": {"on": "junk"}})
+    meta = manager._read_installed(APP)
+    from personalclaw.apps.capability_switches import is_on
+
+    assert [is_on(meta, cid) for cid in ("inbox", "search", "sync")] == [True, False, False]
+
+
+def test_an_empty_map_of_switches_is_kept_when_the_record_is_written() -> None:
+    meta = manager.InstalledApp(name=APP, capabilities={})
+    assert meta.to_dict()["capabilities"] == {}
+    assert manager.InstalledApp.from_dict(meta.to_dict()).capabilities == {}
+    assert "capabilities" not in manager.InstalledApp(name=APP).to_dict()
+
+
+def test_a_switch_on_waits_for_a_disable_and_then_builds_nothing(
+    tmp_path, built, monkeypatch
+) -> None:
+    import threading
+
+    from personalclaw.apps import capability_switches
+
+    _install(tmp_path)
+    in_unload, go = threading.Event(), threading.Event()
+    real_unload = app_runtime.unload
+
+    def slow_unload(*args: Any, **kwargs: Any) -> list[str]:
+        in_unload.set()
+        assert go.wait(10), "the test never let the disable go on"
+        return real_unload(*args, **kwargs)
+
+    monkeypatch.setattr(app_runtime, "unload", slow_unload)
+    disabled: list[bool] = []
+    switched: list[Any] = []
+    a = threading.Thread(target=lambda: disabled.append(app_manager.disable(APP)))
+    a.start()
+    assert in_unload.wait(10)
+    built.log.clear()
+    b = threading.Thread(
+        target=lambda: switched.append(capability_switches.switch(APP, "sync", True))
+    )
+    b.start()
+    b.join(0.5)
+    assert b.is_alive(), "the switch waits for the disable that holds the record"
+    go.set()
+    a.join(10)
+    b.join(10)
+    assert disabled == [True]
+    (status,) = switched
+    assert (status.on, status.state) == (True, "off"), "the switch is kept, and the app is off"
+    meta = manager._read_installed(APP)
+    assert meta is not None and meta.enabled is False
+    assert meta.capabilities is not None and meta.capabilities["sync"] == {"on": True}
+    assert f"+{APP}/sync" not in built.log, "nothing of an app switched off is built"
+    assert _running()["sync"] is False
+
+
+UNREAD = (
+    "Mail Kit's capability switches couldn't be read, so they stay off until you switch them on."
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unreadable",
+    [[], {}, {"inbox": "yes", "search": 3, "sync": None}],
+    ids=["a list", "an empty map", "every mark junk"],
+)
+async def test_switches_that_cannot_be_read_say_so_once(tmp_path, built, unreadable) -> None:
+    _install(tmp_path)
+    _rewrite_record(capabilities=unreadable)
+    assert app_manager.enable(APP)
+    async with TestClient(TestServer(_gateway())) as client:
+        row = _row(await (await client.get("/api/apps")).json())
+    states = {c["id"]: (c["on"], c["status"], c["reason"]) for c in row["capabilities"]}
+    assert states == {cid: (False, "off", UNREAD) for cid in ("inbox", "search", "sync")}
+    assert row["capabilitySummary"] == (
+        "0 of 3 capabilities running · Mail in your Inbox, Search your mail and Keep folders in "
+        "step are off: " + UNREAD
+    )
+    assert not any("_readable" in c for c in row["capabilities"])
+
+
+@pytest.mark.asyncio
+async def test_one_mark_that_cannot_be_read_leaves_the_others_as_written(tmp_path, built) -> None:
+    _install(tmp_path)
+    _rewrite_record(
+        capabilities={"inbox": {"on": True}, "search": {"on": "maybe"}, "sync": {"on": False}}
+    )
+    assert app_manager.enable(APP)
+    assert _running() == {"inbox": True, "search": False, "sync": False}
+    async with TestClient(TestServer(_gateway())) as client:
+        row = _row(await (await client.get("/api/apps")).json())
+        states = {c["id"]: (c["status"], c["reason"]) for c in row["capabilities"]}
+        assert states == {"inbox": ("running", ""), "search": ("off", UNREAD), "sync": ("off", "")}
+        on = await client.post(f"/api/apps/{APP}/capabilities/sync/on")
+        assert (await on.json())["status"] == "running"
+    assert _switches() == {
+        "inbox": {"on": True},
+        "sync": {"on": True},
+    }, "a switch writes the switches it can read, and the one asked for; search stays unread"
+    from personalclaw.apps.capability_switches import status_of
+
+    assert status_of(APP, "search").reason == UNREAD
+
+
+def test_an_update_keeps_a_switch_it_cannot_read_off(tmp_path, built) -> None:
+    _install(tmp_path, [INBOX, SEARCH])
+    _rewrite_record(capabilities={"inbox": {"on": True}, "search": ["junk"]})
+    notes = _provider("search", "notes", "Search your notes")
+    res = app_manager.update(_bundle(tmp_path, "1.1.0", [INBOX, SEARCH, notes]), confirm=True)
+    assert res.ok, res.error
+    assert _switches() == {"inbox": {"on": True}, "notes": {"on": False}}
+    assert _running() == {"inbox": True, "search": False, "notes": False}
+
+
+def test_the_version_sync_keeps_a_switch_written_while_it_read(
+    tmp_path, built, monkeypatch
+) -> None:
+    _install(tmp_path)
+    meta = manager._read_installed(APP)
+    assert meta is not None
+    meta.lifecycle = "app"
+    manager._write_installed(APP, meta)
+    app_json = manager.app_dir(APP) / "app.json"
+    declared = json.loads(app_json.read_text(encoding="utf-8"))
+    declared["version"] = "1.0.1"  # an app that manages itself moved its own version
+    app_json.write_text(json.dumps(declared), encoding="utf-8")
+    real = manager.record_lock
+
+    class SwitchLandsFirst:
+        """The record lock, taken just after a switch of search's wrote the record."""
+
+        def __init__(self, name: str) -> None:
+            self.name, self.lock = name, real(name)
+
+        def __enter__(self) -> "SwitchLandsFirst":
+            self.lock.acquire()
+            fresh = manager._read_installed(self.name)
+            assert fresh is not None and fresh.capabilities is not None
+            fresh.capabilities["search"] = {"on": False}
+            manager._write_installed(self.name, fresh)
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self.lock.release()
+
+    monkeypatch.setattr(manager, "record_lock", SwitchLandsFirst)
+    manager.list_apps()
+    meta = manager._read_installed(APP)
+    assert meta is not None and meta.version == "1.0.1"
+    assert meta.capabilities is not None and meta.capabilities["search"] == {
+        "on": False
+    }, "the sync writes back the record it read under the lock, not the one it listed"

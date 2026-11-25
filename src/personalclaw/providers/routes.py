@@ -15,6 +15,7 @@ under its own name: the gateway refuses one naming another before these handlers
 (``apps/permissions.ROUTE_AUTHZ``), and the list answers an app with its own providers only.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -366,7 +367,7 @@ async def apply_saved_settings(name: str, capability: str | None = None) -> None
     # this save may be what it waited for.
     failed = [rec for rec in records if not rec.enabled and rec.error]
     if failed:
-        meta = _read_installed(name)
+        meta = await asyncio.to_thread(_read_installed, name)
         failed = [rec for rec in failed if is_on(meta, rec.capability)]
     if (
         failed
