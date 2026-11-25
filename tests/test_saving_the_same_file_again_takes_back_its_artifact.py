@@ -9,7 +9,8 @@ first never followed its file again.
 
 Now a save of a file takes back the artifact whose link this home can no longer follow and that
 names the same file at the same place under a workspace, as the release that made the link had it
-(``NativeArtifactProvider.find_link_for``). A link outside any workspace is never taken.
+(``NativeArtifactProvider.find_link_for``). A link outside any workspace is never taken, and
+neither is a binary copy: an image's path is only where its bytes came from.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.stale_write import revision_of
 
 PLAN = "# Plan\n\nThe beds by the south fence get tomatoes.\n"
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 SAVED = "# Plan\n\nThe beds by the south fence get beans.\n"
 
 
@@ -155,3 +157,24 @@ def test_a_link_that_still_follows_its_file_is_never_taken(provider, monkeypatch
     here = _a_file(_workspace() / "beds" / "plan.md")
 
     assert provider.find_link_for(str(here)) is None
+
+
+def test_a_binary_copy_of_the_same_path_is_never_taken(provider, tmp_path) -> None:
+    """An image saved from the same place keeps its id and kind: a text save makes its own."""
+    earlier = _earlier_workspace(tmp_path) / "beds" / "plan.md"
+    photo = provider.create_binary(name="Plan photo", data=PNG, mime="image/png", kind="image")
+    photo.source_path = str(earlier)
+    provider._write_meta(photo)
+    from personalclaw.artifacts import source_files
+
+    # Its path is one this home cannot follow, as a lost text link's is: only its kind keeps it.
+    assert provider._read_source_path(photo.source_path, source_files.places())[1] == "outside"
+    here = _a_file(_workspace() / "beds" / "plan.md")
+
+    assert provider.find_link_for(str(here)) is None
+    status, body = asyncio.run(_save_from_files(here, SAVED))
+    assert status in (200, 201), body
+    assert body["slug"] != photo.slug and body["kind"] == "markdown"
+    kept = provider.get(photo.slug)
+    assert (kept.kind, kept.source_path) == ("image", str(earlier)), "the binary is left as it was"
+    assert len(provider.list()) == 2
