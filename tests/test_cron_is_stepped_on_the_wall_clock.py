@@ -162,3 +162,61 @@ def test_a_skip_date_across_a_change_is_read_on_that_day():
 
 
 # ── one owner ────────────────────────────────────────────────────────────────────────────────
+
+
+#: Every expression, zone and start above, for the stepper the preview walks.
+_EVERY_CASE = [
+    ("10 15 1 1 *", TORONTO, SEPT_29),
+    ("0 9 1 11 *", TORONTO, SEPT_29),
+    ("0 9 15 3 *", TORONTO, datetime(2027, 2, 1, tzinfo=TORONTO).timestamp()),
+    ("0 8 1 11 *", LONDON, datetime(2026, 10, 1, tzinfo=LONDON).timestamp()),
+    ("30 1 * * *", TORONTO, datetime(2026, 11, 1, 0, 50, tzinfo=TORONTO).timestamp()),
+    ("30 1 * * *", TORONTO, datetime(2026, 11, 1, 1, 10, tzinfo=TORONTO, fold=1).timestamp()),
+    ("30 2 * * *", TORONTO, datetime(2027, 3, 14, 1, 50, tzinfo=TORONTO).timestamp()),
+    ("15 2 4 10 *", LORD_HOWE, datetime(2026, 9, 30, tzinfo=LORD_HOWE).timestamp()),
+    ("*/15 * * * *", TORONTO, datetime(2027, 3, 14, 1, 50, tzinfo=TORONTO).timestamp()),
+    ("*/30 * * * *", TORONTO, datetime(2026, 11, 1, 0, 50, tzinfo=TORONTO).timestamp()),
+]
+
+
+@pytest.mark.parametrize(("expr", "tz", "now"), _EVERY_CASE)
+def test_the_upcoming_fires_are_the_clock_s_own_one_after_another(expr, tz, now):
+    """The preview's stepper and the clock are one: its first fire is `next_fire`, and each fire
+    after it is `next_fire` from the one before."""
+    from personalclaw.cron_clock import upcoming
+
+    fires = [p.at for p in upcoming(expr, now, tz, 5)]
+    assert fires[0] == next_fire(expr, now, tz)
+    chain, at = [], now
+    for _ in range(5):
+        at = next_fire(expr, at, tz)
+        chain.append(at)
+    assert fires == chain
+
+
+def test_each_fire_says_how_the_zone_shows_its_wall_time():
+    from personalclaw.cron_clock import upcoming
+
+    jumped = upcoming(
+        "30 2 * * *", datetime(2027, 3, 12, 12, tzinfo=TORONTO).timestamp(), TORONTO, 3
+    )
+    assert [p.placed for p in jumped] == ["exact", "jumped", "exact"]
+    assert _z(jumped[1].at) == "2027-03-14T07:00Z" and jumped[1].wall == datetime(
+        2027, 3, 14, 2, 30
+    )
+    repeated = upcoming(
+        "30 1 * * *", datetime(2026, 10, 30, 12, tzinfo=TORONTO).timestamp(), TORONTO, 3
+    )
+    assert [p.placed for p in repeated] == ["exact", "repeated", "exact"]
+    assert _z(repeated[1].at) == "2026-11-01T05:30Z"
+
+
+def test_the_skipped_wall_times_of_a_jump_are_one_fire():
+    """Every-quarter-hour across the jump: 02:00, 02:15, 02:30 and 02:45 never show, and 03:00 is
+    the instant they all land on, so the schedule fires there once and resumes at 03:15."""
+    from personalclaw.cron_clock import upcoming
+
+    start = datetime(2027, 3, 14, 1, 50, tzinfo=TORONTO).timestamp()
+    fires = upcoming("*/15 * * * *", start, TORONTO, 2)
+    assert [_z(p.at) for p in fires] == ["2027-03-14T07:00Z", "2027-03-14T07:15Z"]
+    assert fires[0].placed == "jumped"

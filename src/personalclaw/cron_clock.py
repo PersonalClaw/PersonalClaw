@@ -23,7 +23,9 @@ matching one (``croniter.is_valid``, ``croniter.match``) needs no zone and stays
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, tzinfo
+from typing import Literal
 
 from croniter import croniter  # type: ignore[import-untyped]
 
@@ -34,18 +36,54 @@ from croniter import croniter  # type: ignore[import-untyped]
 _MAX_STEPS = 256
 
 
+@dataclass(frozen=True)
+class Placement:
+    """One fire of an expression: the instant ``at`` (a UTC epoch), the naive wall time ``wall`` the
+    expression named, and how the zone shows that wall time (``placed``):
+
+    * ``exact``: once, so the fire is at that instant;
+    * ``jumped``: never, as the clocks go forward, so the fire is at the jump;
+    * ``repeated``: twice, as the clocks go back, so the fire is at its first instant.
+    """
+
+    at: float
+    wall: datetime
+    placed: Literal["exact", "jumped", "repeated"]
+
+
+def upcoming(expr: str, now: float, tz: tzinfo, count: int) -> list[Placement]:
+    """The next ``count`` fires of ``expr`` after the instant ``now``, read in ``tz``, in order.
+
+    Each fire is the first one after the one before it, exactly as :func:`next_fire` finds it, so
+    a preview of the fires and the clock that arms them cannot disagree. Wall times that land on one
+    instant (two that the clocks jump past, and the time they jump to) are one fire. Fewer than
+    ``count`` when a step passes :data:`_MAX_STEPS` wall times without one. Raises what ``croniter``
+    raises for an expression it refuses: callers validate first.
+    """
+    steps = croniter(expr, _wall(now, tz))
+    out: list[Placement] = []
+    after = now
+    while len(out) < count:
+        for _ in range(_MAX_STEPS):
+            wall = steps.get_next(datetime)
+            at = _placed(wall, tz)
+            if at > after:
+                out.append(Placement(at=at, wall=wall, placed=_how_shown(wall, at, tz)))
+                after = at
+                break
+        else:
+            break
+    return out
+
+
 def next_fire(expr: str, now: float, tz: tzinfo) -> float:
     """The first fire of ``expr`` after the instant ``now`` (a UTC epoch), read in ``tz``.
 
     0.0 when none is found within :data:`_MAX_STEPS`. Raises what ``croniter`` raises for an
     expression it refuses, as it did before: callers validate first.
     """
-    steps = croniter(expr, _wall(now, tz))
-    for _ in range(_MAX_STEPS):
-        at = _placed(steps.get_next(datetime), tz)
-        if at > now:
-            return at
-    return 0.0
+    first = upcoming(expr, now, tz, 1)
+    return first[0].at if first else 0.0
 
 
 def previous_fire(expr: str, now: float, tz: tzinfo) -> float:
@@ -60,6 +98,14 @@ def previous_fire(expr: str, now: float, tz: tzinfo) -> float:
         if at <= now:
             return at
     return 0.0
+
+
+def _how_shown(wall: datetime, at: float, tz: tzinfo) -> Literal["exact", "jumped", "repeated"]:
+    """How the zone shows the wall time ``wall``, which :func:`_placed` put at ``at``."""
+    if _wall(at, tz) != wall:
+        return "jumped"
+    second = wall.replace(tzinfo=tz, fold=1).timestamp()
+    return "repeated" if second != at and _wall(second, tz) == wall else "exact"
 
 
 def _wall(now: float, tz: tzinfo) -> datetime:
