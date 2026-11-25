@@ -17,6 +17,7 @@ import { howAnUpdateArrives } from '../../lib/updateRoute'
 import { useAppUpdate } from '../../app/appUpdate'
 import { AppUpdateControls } from '../../app/AppUpdateControls'
 import type { AppUpdateState } from '../../lib/desktopBridge'
+import { compareVersions } from '../../lib/versions'
 
 /** Where an update's upgrade steps live: the CHANGELOG is headline-only, so they are in the docs. */
 export const UPGRADE_NOTES_DOC = 'docs/guides/getting-started.md#updating'
@@ -278,12 +279,21 @@ export function UpdatesPanel() {
    *  newest release and offer to jump straight back to the version the user just left. The snapshot
    *  advice is in the confirm body because pre-1.0 there is no migration either way, so state written
    *  by the newer build is the real risk a downgrade carries. */
+  /** What a rollback to *to* leaves the desktop app at, when it is older than the app: the app does
+   *  not roll back, so the confirm says the two part ways until they are on one release again. */
+  const appStaysNewer = (to: string) => {
+    const app = appUpdate?.state?.current ?? ''
+    return app && compareVersions(to, app) === -1
+      ? <> The desktop app stays on v{app}: it does not roll back, so it runs newer than this gateway until both are on one release again.</>
+      : null
+  }
+
   const rollback = async () => {
     const to = info?.last_version ?? ''
     if (!to) return
     if (!(await confirm({
       title: `Roll back to v${to}?`,
-      body: <>This pins updates.pin to {to} and installs it, so later checks stay on that release. {DOWNGRADE_ADVICE}</>,
+      body: <>This pins updates.pin to {to} and installs it, so later checks stay on that release. {DOWNGRADE_ADVICE}{appStaysNewer(to)}</>,
       confirmLabel: `Roll back to v${to}`,
     }))) return
     setInfo((p) => p && { ...p, pin: to })
@@ -308,7 +318,7 @@ export function UpdatesPanel() {
     if (!to) return
     if (!(await confirm({
       title: `Roll back to v${to}?`,
-      body: <>This installs the pinned release v{to}, older than the v{info?.current ?? ''} running now. {DOWNGRADE_ADVICE}</>,
+      body: <>This installs the pinned release v{to}, older than the v{info?.current ?? ''} running now. {DOWNGRADE_ADVICE}{appStaysNewer(to)}</>,
       confirmLabel: `Roll back to v${to}`,
     }))) return
     await runApply()

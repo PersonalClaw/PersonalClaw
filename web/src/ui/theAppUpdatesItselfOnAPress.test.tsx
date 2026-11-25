@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import type { AppUpdateStart, AppUpdateState, DesktopBridge } from '../lib/desktopBridge'
 
 // ── The desktop app updates itself, on a press ──────────────────────────────────────────────────
@@ -356,6 +357,29 @@ describe('Settings › Updates', () => {
     }, true)
   }
   const sections = () => screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+
+  it('🔴 says a rollback to a release older than the desktop app leaves the app newer than its gateway', async () => {
+    writeQuery('settings:updates', {
+      info: { available: false, changes: '', checked: true, auto: 'off', kind: 'pip', current: '0.3.7', latest: '0.3.7', channel: 'stable', pin: '', check_enabled: true, last_version: '0.3.6' },
+      changelog: '',
+    }, true)
+    fakeApp(stands({ restartsGateway: false }))
+    const { subscribeDialogs, closeDialog } = await import('./dialog/dialogStore')
+    const bodies: ReactNode[] = []
+    const stop = subscribeDialogs((open) => {
+      for (const d of open) {
+        bodies.push(d.body)
+        setTimeout(() => closeDialog(d.id, false), 0)
+      }
+    })
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: /Roll back to v0\.3\.6/ }))
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    stop()
+    const { container: shown } = render(<>{bodies[0]}</>)
+    expect(shown.textContent).toContain('The desktop app stays on v0.3.7: it does not roll back, so it runs newer than this gateway until both are on one release again.')
+  })
 
   it('🔴 puts the desktop app first and the gateway after it, each with its own version line', async () => {
     primed()

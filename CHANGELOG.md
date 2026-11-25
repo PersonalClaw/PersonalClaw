@@ -30,6 +30,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **On a phone, every control in a page's header is a 44 px target, its `…` included: a page's New, Import, filters and menus were 40 px there unless the page asked for more.**
 - **In the desktop app, Settings › Updates shows the desktop app and its gateway in sections of their own, names the gateway the app uses and says what finishing an update does to it.**
 - **In the desktop app, the System status card's update row reads Update App, and a gateway built into the app no longer offers an Update of its own beside it.**
+- **In the desktop app, rolling the gateway back past the app's own version says the app stays on its version, newer than the gateway, before it rolls back.**
 
 ### Fixed
 

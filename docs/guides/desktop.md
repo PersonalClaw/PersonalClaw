@@ -856,7 +856,9 @@ with the app; a gateway the app found running keeps its own. That
 press, once you confirm, installs it; the confirm says whether your gateway restarts with the app,
 and how many running agents that interrupts. With a gateway the app found serving your home on an
 older release, it says that gateway is updated to the new release first. Nothing is downloaded
-before the first press, and nothing in Applications changes before the second.
+before the first press, and nothing in Applications changes before the second. The app does not
+roll back: rolling a gateway you run yourself back past the app's version leaves the app on its
+own, newer than the gateway, and the rollback's confirm in Settings › Updates says so.
 
 What **Update** does:
 

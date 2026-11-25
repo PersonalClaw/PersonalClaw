@@ -314,7 +314,13 @@ The gateway comes up on `http://127.0.0.1:10000` with a persistent
 
 `personalclaw update` advances whichever way you installed — it upgrades the wheel,
 checks out the release tag in a git clone, or prints the commands that replace a
-container's image. When nothing newer is published it says you are on the newest release
+container's image. In the desktop app, Settings → Updates shows the app and the gateway it uses
+in sections of their own: **Desktop app** (the app's own update, and which gateway it uses) and
+**Gateway** (this page's). A gateway built into the app updates with it. **If you run your own
+gateway** and open it in the desktop app, it keeps its own Update in the Gateway section, and the
+app's Restart to Finish the Update brings it to the app's release first when it is older; an app
+from 0.3.7 on a gateway newer than itself checks for its own update as soon as it opens a page of
+that gateway, while automatic update checks are on. When nothing newer is published it says you are on the newest release
 and changes nothing. Everything below is the same on every install kind, and all of it lives
 in **Settings → Updates** as well as in `config.json`.
 
@@ -367,8 +373,10 @@ later check cannot pull you forward again. Settings → Updates offers the same 
 **Roll back to v&lt;previous&gt;** once PersonalClaw has seen your version change at least
 once, and while a pin names an older release than the one running it says so — **Pinned to
 v0.1.3, older than this build (v0.2.0)** — beside a **Roll back to v0.1.3** that installs
-it. Take a snapshot first — pre-1.0 releases carry no data migrations in either
-direction:
+it. The desktop app does not roll back: when it uses a gateway you run yourself and you roll
+that gateway back past the app's own version, the confirm says the app stays on its version and
+runs newer than the gateway until both are on one release again. Take a snapshot first — pre-1.0
+releases carry no data migrations in either direction:
 
 ```bash
 personalclaw snapshot
