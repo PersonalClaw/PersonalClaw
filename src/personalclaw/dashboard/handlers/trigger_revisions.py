@@ -69,15 +69,16 @@ SCHEDULE_RUN_STATE: frozenset[str] = frozenset(
     }
 )
 
-#: The same split for a lifecycle row: the fire path stamps `last_run`/`last_status`/`run_count` on
-#: every fire, the toggle route owns `enabled`, `used_by`/`enforcement`/`blocking` are read off the
-#: agents that reference the hook and the event it is on, and `needs_grant` follows the grant the
-#: owner's switch writes — none of it is sent by the edit form.
+#: The same split for a lifecycle row: the fire path stamps `last_run`, `last_status`, `run_count`
+#: and `last_duration_ms` on every fire, the toggle route owns `enabled`, `used_by`/`enforcement`/
+#: `blocking` are read off the agents that reference the hook and the event it is on, and
+#: `needs_grant` follows the grant the owner's switch writes — none of it is sent by the edit form.
 LIFECYCLE_RUN_STATE: frozenset[str] = frozenset(
     {
         "enabled",
         "last_run",
         "last_status",
+        "last_duration_ms",
         "run_count",
         "used_by",
         "blocking",

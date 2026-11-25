@@ -640,6 +640,8 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
         "timeout": hook.timeout,
         "last_run": hook.last_run,
         "last_status": hook.last_status,
+        # How long its last run took, in milliseconds; 0 before it has run (`hooks._side_by_side`).
+        "last_duration_ms": hook.last_duration_ms,
         "run_count": hook.run_count,
         "used_by": sorted(used_by),
         # Whether THIS hook can block, not just whether its event could. `used_by` alone made

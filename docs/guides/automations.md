@@ -449,6 +449,16 @@ same name again for the same `sessionKey`, within a week, answers `already_recei
 - `src/personalclaw/dashboard/handlers/trigger_runs.py` — `api_trigger_fire`, the fire.
 - `src/personalclaw/dashboard/handlers/hooks.py` — `api_hooks_agent`, the callback's address.
 
+## When several lifecycle triggers match one event
+
+The lifecycle triggers that run before a tool call, the policy commands and scripts you bind to an
+agent, run at the same time, so the call waits only for the slowest one. Their answers are read in
+the order you set: the first that blocks refuses the call in its words, and one that doesn't answer
+in time refuses it too. So a policy script that writes a file another trigger also writes should
+lock it, or the two should be one trigger. Every other action on a tool call (a message it sends, a
+store it writes, an app's action) and every trigger on any other event still runs one after
+another, in the order you set.
+
 ## When something else asks for a run
 
 **In your words:** *"My agent can run an automation when I ask it to, but it must not get around the

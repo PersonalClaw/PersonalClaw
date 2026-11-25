@@ -259,8 +259,11 @@ def _arguments(tool_input: Any) -> Any:
 
 
 def _verdict(tool_name: str, results: Iterable[ScriptHookResult]) -> HooksSaid:
-    """What the hooks' *results* say of the call: a block refuses it in the blocking hook's words,
-    a hook that did not run refuses it as :data:`HOOK_FAILED`, and anything else lets it go on."""
+    """What the hooks' *results*, in their configured order, say of the call: a block refuses it in
+    the words of the first hook that blocked, then a hook that did not answer refuses it as
+    :data:`HOOK_FAILED` (one that timed out naming itself and the seconds it was given), and
+    anything else lets it go on. The hooks ran side by side (``hooks._side_by_side``), so the order
+    is the configured one whichever answered first."""
     results = list(results)
     for result in results:
         if result.exit_code == _BLOCKS:
@@ -271,7 +274,11 @@ def _verdict(tool_name: str, results: Iterable[ScriptHookResult]) -> HooksSaid:
             return HooksSaid(refusal=f"{result.hook_name}:{said}", blocked=True)
     for result in results:
         if result.exit_code == _DID_NOT_RUN:
-            failed = mask_child_output(result.error, limit=300) or "it did not run"
+            failed = (
+                f"“{result.hook_name}” did not answer in {result.timed_out_after} s"
+                if result.timed_out_after
+                else mask_child_output(result.error, limit=300) or "it did not run"
+            )
             logger.warning(
                 "pre-tool hook %s did not run for %s; refusing: %s",
                 result.hook_name,

@@ -11,7 +11,7 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -868,6 +868,8 @@ class ScriptHook:
     # `triggers.history.HOOK_STATUS_TO_OUTCOME`, which reports an unmapped one as a failure.
     last_status: str = ""
     run_count: int = 0
+    #: How long its last run took, in milliseconds (0 before it has run).
+    last_duration_ms: int = 0
 
     @property
     def workflow(self) -> dict:
@@ -898,6 +900,7 @@ class ScriptHook:
             last_run=data.get("last_run", 0.0),
             last_status=data.get("last_status", ""),
             run_count=data.get("run_count", 0),
+            last_duration_ms=data.get("last_duration_ms", 0),
         )
 
 
@@ -913,6 +916,7 @@ HOOK_RUNTIME_FIELDS: tuple[str, ...] = (
     "last_run",
     "last_status",
     "run_count",
+    "last_duration_ms",
 )
 
 
@@ -978,6 +982,8 @@ class ScriptHookResult:
     exit_code: int = -1
     error: str = ""
     duration_ms: int = 0
+    #: The seconds it was given, when it gave no answer within them (0 when it answered).
+    timed_out_after: int = 0
 
     @property
     def blocked(self) -> bool:
@@ -1244,7 +1250,7 @@ def _finished(
     route: Any,
     *,
     enforced: bool,
-    record: Callable[[str], None],
+    record: Callable[[str, int], None],
 ) -> ScriptHookResult:
     """What *hook*'s fire answers once its action has returned *result* and what it printed was
     *taken* back through the door (`take_in`, which :func:`run_script_hook` calls itself): the
@@ -1296,7 +1302,7 @@ def _finished(
         _status = "timeout"
     else:
         _status = "error"
-    record(_status)
+    record(_status, result.duration_ms)
 
     # The run's audit row at the rung it took, and at `auto_with_undo` its undo. Only for an
     # action that succeeded — a failed action has nothing to take back.
@@ -1325,7 +1331,114 @@ def _finished(
         exit_code=result.exit_code if exited and result.exit_code is not None else -1,
         error=" ".join(text for text in (error_text, withheld) if text),
         duration_ms=result.duration_ms,
+        timed_out_after=_given(hook) if _status == "timeout" else 0,
     )
+
+
+def _given(hook: ScriptHook) -> int:
+    """The seconds *hook*'s action is given to answer: its provider's own ``timeout`` setting when
+    it has one (a command's, as ``bash`` reads it), else the hook's."""
+    try:
+        return int(hook.provider_config.get("timeout", 0) or 0) or int(hook.timeout)
+    except (TypeError, ValueError):
+        return int(hook.timeout or 0)
+
+
+def _the_same_run(hook: ScriptHook) -> str:
+    """What makes two hooks one run in a fire: what runs, on what, for how long, under which yes
+    (`triggers.grants`). Never its id or name, which only tell copies apart."""
+    return json.dumps(
+        [
+            hook.provider,
+            hook.provider_config,
+            hook.event,
+            hook.matcher,
+            hook.timeout,
+            hook.capabilities,
+        ],
+        sort_keys=True,
+        default=str,
+    )
+
+
+#: Which hooks may run side by side in one fire, by their provider: on a tool call (the gating
+#: seam, :data:`BLOCKING_EVENTS`) the ones named here, and on every other event none yet. Every
+#: other provider keeps its configured order, one after another, as before: an action whose effects
+#: another hook's could interleave with (a store written without a lock, a message delivered, a run
+#: launched), and every provider an app contributes, which nobody here has read.
+#:
+#: On a tool call run order changes neither what a hook is handed nor which block wins (the verdict
+#: reads the results in configured order), so the owner's own policy commands may run at once; what
+#: one leaves for another is the owner's to lock or merge (the hooks guide says so). A provider is
+#: added here only by a security review that read it for ordering effects, never a store writer or
+#: a delivery.
+SIDE_BY_SIDE_ON_A_TOOL_CALL: frozenset[str] = frozenset({"bash", "run-script"})
+SIDE_BY_SIDE_ON_OTHER_EVENTS: frozenset[str] = frozenset()
+
+
+def _keeps_its_order(hook: ScriptHook, event: str) -> bool:
+    """Whether *hook* runs in its configured order, one after another with the others that do, in a
+    fire of *event*, rather than side by side (:data:`SIDE_BY_SIDE_ON_A_TOOL_CALL`)."""
+    free = SIDE_BY_SIDE_ON_A_TOOL_CALL if event in BLOCKING_EVENTS else SIDE_BY_SIDE_ON_OTHER_EVENTS
+    return hook.provider not in free
+
+
+def _as_copy(result: ScriptHookResult, copy: ScriptHook) -> ScriptHookResult:
+    """The one run's *result*, as *copy*'s: under its own id and name."""
+    return replace(result, hook_id=copy.id, hook_name=copy.name, event=copy.event)
+
+
+async def _side_by_side(
+    hooks: list[ScriptHook],
+    run: Callable[[ScriptHook], Awaitable[ScriptHookResult]],
+    *,
+    in_order: Callable[[ScriptHook], bool],
+) -> list[ScriptHookResult]:
+    """*run* for each of *hooks*, one run per group of copies (:func:`_the_same_run`): those
+    *in_order* says keep their order one after another, in *hooks*' order, beside the rest, which
+    run at once. Each hook's result comes back in *hooks*' order, whichever finished first. A copy
+    takes the run's status and duration as its own; a run that raised is a result that did not run
+    (exit -1), and the next in order still runs. A stop ends every run under way and starts none."""
+    groups: dict[str, list[ScriptHook]] = {}
+    for hook in hooks:
+        groups.setdefault(_the_same_run(hook), []).append(hook)
+    leads = [copies[0] for copies in groups.values()]
+    free = [lead for lead in leads if not in_order(lead)]
+    ordered = [lead for lead in leads if in_order(lead)]
+
+    async def one_after_another() -> list[ScriptHookResult | BaseException]:
+        answered: list[ScriptHookResult | BaseException] = []
+        for lead in ordered:
+            try:
+                answered.append(await run(lead))
+            except Exception as exc:  # noqa: BLE001 - it did not run; the next in order still runs
+                answered.append(exc)
+        return answered
+
+    at_once, in_turn = await asyncio.gather(
+        asyncio.gather(*(run(hook) for hook in free), return_exceptions=True),
+        one_after_another(),
+    )
+    by_lead: dict[str, ScriptHookResult] = {}
+    for lead, answer in zip([*free, *ordered], [*at_once, *in_turn]):
+        if isinstance(answer, BaseException):
+            logger.warning("hook %s raised while it ran", lead.id, exc_info=answer)
+            answer = ScriptHookResult(
+                hook_id=lead.id, hook_name=lead.name, event=lead.event, error="it did not run"
+            )
+        by_lead[lead.id] = answer
+    results = []
+    for copies in groups.values():
+        lead = copies[0]
+        for copy in copies[1:]:
+            copy.last_run, copy.last_status = lead.last_run, lead.last_status
+            copy.run_count += 1
+            copy.last_duration_ms = lead.last_duration_ms
+    for hook in hooks:
+        lead = groups[_the_same_run(hook)][0]
+        answer = by_lead[lead.id]
+        results.append(answer if hook is lead else _as_copy(answer, hook))
+    return results
 
 
 async def run_script_hook(
@@ -1377,7 +1490,7 @@ async def run_script_hook(
         folder, no_folder = hook_folder(cwd)
         hook_event = _hook_payload(hook, hook_event, folder, test=test)
 
-    def _record(status: str) -> None:
+    def _record(status: str, duration_ms: int = 0) -> None:
         # Every terminal branch records through here so the rehearsal rule cannot
         # drift per branch: a test NEVER writes the hook's real fire history.
         # The conditional closes the vocabulary at this single choke point — the
@@ -1408,6 +1521,9 @@ async def run_script_hook(
             else "error"
         )
         hook.run_count += 1
+        # The run's duration beside the time it ran, always the pair of one run: 0 for one that
+        # was not timed (refused, held, skipped), so no older run's time shows beside a newer one.
+        hook.last_duration_ms = int(duration_ms or 0)
 
     def _refused(why: str, status: str) -> ScriptHookResult:
         # A fire refused before its action ran, said in *why*. On the gating seam the refusal BLOCKS
@@ -1923,7 +2039,6 @@ class ScriptHookStore:
         :data:`BLOCKING_EVENTS` here: ``PreToolUse`` is the one event with a block seam at all, so
         a ``Stop`` hook that exits 2 records ``advisory`` no matter who fired it — there was
         nothing for it to block."""
-        results = []
         # Build base hook event (its `cwd` is the folder each hook runs in, written as it runs)
         hook_event: dict = {"hook_event_name": event}
         # Recursion depth for invoke-agent's spawn bound. Reserved key.
@@ -1947,6 +2062,7 @@ class ScriptHookStore:
             hook_event["tool_response"] = tool_response
 
         self._take_in()
+        matching = []
         for hook in list(self._hooks.values()):
             if not hook.enabled or hook.event != event:
                 continue
@@ -1959,14 +2075,22 @@ class ScriptHookStore:
                         continue
                 elif context and not fnmatch.fnmatch(context.lower(), hook.matcher.lower()):
                     continue
-            result = await run_script_hook(
+            matching.append(hook)
+        # Side by side, each under its own timeout: a fire takes its slowest hook, not their sum,
+        # but for the providers that keep their order (`_keeps_its_order`), and every reader gets
+        # the results in the hooks' configured order (`_side_by_side`).
+        results = await _side_by_side(
+            matching,
+            lambda hook: run_script_hook(
                 hook,
                 context,
                 hook_event,
                 enforced=enforced and event in BLOCKING_EVENTS,
                 cwd=cwd,
-            )
-            results.append(result)
+            ),
+            in_order=lambda hook: _keeps_its_order(hook, event),
+        )
+        for hook, result in zip(matching, results):
             logger.info(
                 "Hook %s (%s): %s in %dms (exit=%d)",
                 hook.name,

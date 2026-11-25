@@ -8,6 +8,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **Matching policy hooks on a tool call run side by side, so a call waits only for the slowest one. Copies of one hook (the same action, matcher, timeout and grant) run once per fire, and the first block in the hooks' order still refuses the call in its words. A hook that doesn't answer in time refuses it too, naming itself and how long it had, and each hook keeps how long its last run took.**
+
+### Changed
+
+- **Hooks on a tool call now run at the same time: the policy commands and scripts bound to an agent start together, so a call waits only for the slowest one. A policy script that writes a file another hook also writes should lock it, or the two should be merged into one hook. A hook that sends a message, writes a store or comes from an app, and every hook on any other event, still runs one after another in its configured order.**
+
 ## [0.4.2] — 2026-11-27
 
 This release holds a turn, a run and a file to where they belong: a stopped turn runs nothing more, a rewound or regenerated answer and a run's history keep what happened, a tool call, a command or a fetch that reaches past what you allowed is asked about first, and a file the agent sends shows only in its own chat. Each app capability has its own switch, every incident is kept with why and who, and Settings › Updates splits the desktop app from its gateway.
