@@ -486,6 +486,13 @@ _MAX_SKIP_DATES_CHECKED = 64
 _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
+def _never_runs(expr: str) -> str:
+    """Why the valid cron *expr* matches no date, or '' (`cron_clock.never_runs`)."""
+    from personalclaw.cron_clock import never_runs
+
+    return never_runs(expr)
+
+
 def _min_cron_gap_secs(expr: str) -> float:
     """The smallest gap between consecutive fires of ``expr``, sampled, in seconds.
 
@@ -658,6 +665,16 @@ def semantic_spec_issues(
                         f"@alias; {expr!r} has {fields} — a seconds field would fire "
                         f"far below the {MIN_CLOCK_INTERVAL_SECS}s cadence floor"
                     ),
+                )
+            )
+        elif never := _never_runs(expr):
+            # Valid, and matches no time on any calendar (`0 0 30 2 *`): it would sit switched on
+            # and never fire, and the stepper refuses to look for a fire that is not there.
+            issues.append(
+                Issue(
+                    path="spec.expr",
+                    severity="error",
+                    message=f"This schedule never runs: {never}",
                 )
             )
         else:

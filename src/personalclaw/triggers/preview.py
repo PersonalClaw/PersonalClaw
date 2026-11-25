@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, tzinfo
 from typing import Any, Literal
 
+from croniter import CroniterBadDateError  # type: ignore[import-untyped]
+
 NoteKind = Literal["", "clock_forward", "clock_back", "skip_date", "quiet_hours", "spread"]
 Outcome = Literal["ok", "never", "refused"]
 
@@ -80,6 +82,13 @@ def next_runs(trigger: Any, *, now: float, count: int = DEFAULT_COUNT) -> Previe
     from personalclaw.triggers.tools import spec_error_refusal
 
     spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    kind = str(spec.get("kind") or "").strip().lower()
+    expr = str(spec.get("expr") or "").strip()
+    # A valid cron that matches no time on any calendar never runs, said in plain words: the save
+    # refuses one now, and one saved before it did previews the same answer.
+    never = _cron_never_runs(expr) if kind == "cron" else ""
+    if never:
+        return Preview("never", problem=never, zone=str(spec.get("timezone") or ""))
     refusal = spec_error_refusal("clock", spec)
     if refusal is not None:
         return Preview("refused", problem=_sentence(refusal.text))
@@ -96,15 +105,30 @@ def next_runs(trigger: Any, *, now: float, count: int = DEFAULT_COUNT) -> Previe
     on = copy.copy(trigger)
     on.enabled = True
     cadence = describe_cadence(on, now=now)
-    kind = str(spec.get("kind") or "").strip().lower()
     if kind == "adaptive":
         return Preview("ok", zone=zone_name, cadence=cadence)
-    items = _walk(on, spec, kind, zone, now=now, count=max(1, min(int(count), MAX_COUNT)))
+    try:
+        items = _walk(on, spec, kind, zone, now=now, count=max(1, min(int(count), MAX_COUNT)))
+    except CroniterBadDateError:
+        # The stepper found no fire within its reach: a schedule no calendar reaches.
+        from personalclaw.cron_clock import NO_DATE
+
+        return Preview("never", problem=NO_DATE, zone=zone_name, cadence=cadence)
     if not any(i.runs for i in items):
         return Preview(
             "never", problem=ALL_SKIPPED if items else ELAPSED, zone=zone_name, cadence=cadence
         )
     return Preview("ok", zone=zone_name, cadence=cadence, items=tuple(items))
+
+
+def _cron_never_runs(expr: str) -> str:
+    """Why the cron *expr* never runs, or '' (`cron_clock.never_runs`); '' for one ``croniter``
+    refuses outright, which the save's refusal says instead."""
+    from croniter import croniter  # type: ignore[import-untyped]
+
+    from personalclaw.cron_clock import never_runs
+
+    return never_runs(expr) if expr and croniter.is_valid(expr) else ""
 
 
 def _walk(

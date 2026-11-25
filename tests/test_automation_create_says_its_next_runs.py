@@ -73,6 +73,38 @@ def test_a_moved_cadence_says_its_new_runs_and_a_rename_does_not(tmp_path) -> No
     assert any(said.startswith("  next runs:") for said in moved.text.splitlines())
 
 
+def test_a_cron_that_never_runs_is_refused_at_save_and_names_its_field(tmp_path) -> None:
+    store = TriggerStore(base_dir=tmp_path)
+    made = _make(store, {"kind": "cron", "expr": "0 0 30 2 *", "timezone": "UTC"})
+    assert not made.ok
+    assert "spec.expr: This schedule never runs: February has no 30th." in made.text
+    assert store.list_triggers() == [], "nothing is saved"
+
+    kept = _make(store, {"kind": "cron", "expr": "0 9 * * *", "timezone": "UTC"})
+    trigger_id = kept.data["trigger"]["id"]
+    moved = tools.update(
+        store,
+        trigger_id=trigger_id,
+        patch={"spec": {"kind": "cron", "expr": "0 9 31 4,6 *", "timezone": "UTC"}},
+    )
+    assert not moved.ok
+    assert "spec.expr: This schedule never runs: April and June have no 31st." in moved.text
+    assert store.get(trigger_id).trigger.spec["expr"] == "0 9 * * *", "the edit is not kept"
+
+
+def test_a_saved_cron_that_never_runs_is_said_without_raising(tmp_path) -> None:
+    from personalclaw.triggers.models import Trigger
+
+    trigger = Trigger(
+        id="clock:leap-report",
+        name="Leap report",
+        kind="clock",
+        spec={"kind": "cron", "expr": "0 0 30 2 *", "timezone": "UTC"},
+    )
+    lines, runs = tools._next_runs_said(trigger)
+    assert (lines, runs) == (["  next runs: none. February has no 30th."], [])
+
+
 def test_the_tool_tells_the_agent_to_say_them() -> None:
     from personalclaw.mcp_automation import _list_tools
 

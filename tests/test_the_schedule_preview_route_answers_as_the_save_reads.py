@@ -102,6 +102,46 @@ def test_an_automation_being_edited_is_previewed_with_its_own_spec() -> None:
     ), "it writes nothing"
 
 
+def test_a_cron_no_calendar_reaches_answers_never_in_plain_words() -> None:
+    for cron, why in (
+        ("0 0 30 2 *", "February has no 30th."),
+        ("* * 31 2 *", "February has no 31st."),
+        ("0 9 31 4,6 *", "April and June have no 31st."),
+        ("0 0 30 2 1", "February has no 30th."),
+    ):
+        status, body = _post({"cron": cron, "timezone": "UTC"})
+        assert status == 200, (cron, body)
+        assert (body["outcome"], body["problem"], body["items"]) == ("never", why, []), cron
+
+
+def test_a_saved_automation_no_calendar_reaches_previews_never() -> None:
+    # Saved before the save refused one: it previews the same plain answer, and nothing raises.
+    from personalclaw.dashboard.handlers.triggers import _trigger_store
+    from personalclaw.triggers.models import Trigger
+
+    _trigger_store().upsert(
+        Trigger(
+            id="clock:leap-report",
+            name="Leap report",
+            kind="clock",
+            spec={"kind": "cron", "expr": "0 0 30 2 *", "timezone": "UTC", "skip_dates": []},
+        )
+    )
+    status, body = _post({"trigger_id": "clock:leap-report"})
+    assert status == 200, body
+    assert (body["outcome"], body["problem"]) == ("never", "February has no 30th.")
+
+
+def test_a_walk_the_stepper_refuses_answers_never(monkeypatch) -> None:
+    # Past the named days, a refusal from the stepper itself is a "never", not a 500.
+    import personalclaw.cron_clock as cron_clock
+
+    monkeypatch.setattr(cron_clock, "never_runs", lambda expr: "")
+    status, body = _post({"cron": "0 0 30 2 *", "timezone": "UTC"})
+    assert status == 200, body
+    assert (body["outcome"], body["problem"]) == ("never", cron_clock.NO_DATE)
+
+
 def test_the_route_is_the_owner_s_alone() -> None:
     from personalclaw.apps.permissions import ROUTE_AUTHZ, OwnerOnly
 

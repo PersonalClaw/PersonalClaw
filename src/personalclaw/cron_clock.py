@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, tzinfo
 from typing import Literal
 
-from croniter import croniter  # type: ignore[import-untyped]
+from croniter import CroniterBadDateError, croniter  # type: ignore[import-untyped]
 
 #: How many wall times one step may pass over before it gives up. Only a wall time already behind
 #: ``now`` is passed over — the first instant of a repeated one, seen from its second — so an
@@ -49,6 +49,86 @@ class Placement:
     at: float
     wall: datetime
     placed: Literal["exact", "jumped", "repeated"]
+
+
+_MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+#: The most days each month has, February's leap day included.
+_MONTH_DAYS = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+#: What :func:`never_runs` says of an expression the stepper finds no fire for and cannot name.
+NO_DATE = "No date on the calendar matches it."
+
+
+def never_runs(expr: str) -> str:
+    """Why the valid expression *expr* matches no time on any calendar, in a plain sentence, or ''
+    when it runs. ``0 0 30 2 *`` is valid and never comes round: February has no 30th.
+
+    A day of the month that none of its months has is said by name. Any other expression the
+    stepper finds no fire for (``croniter``'s bad-date refusal) is said in general. An expression
+    ``croniter`` refuses outright is not this function's: :func:`croniter.is_valid` says that.
+    """
+    named = _impossible_days(expr)
+    if named:
+        return named
+    try:
+        croniter(expr, datetime(2000, 1, 1)).get_next(datetime)
+    except CroniterBadDateError:
+        # A weekday beside an impossible day (`0 0 30 2 1`) is refused too: name the day.
+        return _impossible_days(expr, any_weekday=True) or NO_DATE
+    except (ValueError, KeyError):
+        return ""
+    return ""
+
+
+def _impossible_days(expr: str, *, any_weekday: bool = False) -> str:
+    """'February has no 30th.' for a day of the month (field 3) that none of the months (field 4)
+    has, when both are plain numbers or lists of them; '' otherwise. A restricted weekday (field
+    5) can make the two days an either-or in cron, so it is named only with *any_weekday*, once
+    the stepper has refused the expression."""
+    fields = expr.split()
+    if len(fields) != 5 or (fields[4] not in ("*", "?") and not any_weekday):
+        return ""
+    days, months = _numbers(fields[2], 1, 31), _numbers(fields[3], 1, 12)
+    if days is None:
+        return ""
+    months = months if months is not None else list(range(1, 13))
+    if not days or not months or any(min(days) <= _MONTH_DAYS[m - 1] for m in months):
+        return ""
+    day = min(days)
+    names = [_MONTHS[m - 1] for m in sorted(set(months))]
+    said = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    return f"{said} {'has' if len(names) == 1 else 'have'} no {day}{_ordinal(day)}."
+
+
+def _numbers(field: str, low: int, high: int) -> list[int] | None:
+    """The values of a cron field made of plain numbers and ranges (``30``, ``29,30``, ``29-31``),
+    or None for any other spelling (``*``, steps, names)."""
+    out: list[int] = []
+    for part in field.split(","):
+        first, sep, last = part.partition("-")
+        if not first.isdigit() or (sep and not last.isdigit()):
+            return None
+        a, b = int(first), int(last) if sep else int(first)
+        if not low <= a <= b <= high:
+            return None
+        out.extend(range(a, b + 1))
+    return out
+
+
+def _ordinal(n: int) -> str:
+    return "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
 
 
 def upcoming(expr: str, now: float, tz: tzinfo, count: int) -> list[Placement]:

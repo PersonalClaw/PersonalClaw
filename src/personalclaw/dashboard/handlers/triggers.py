@@ -1914,6 +1914,7 @@ async def api_triggers_preview(request: web.Request) -> web.Response:
     that is not a schedule, 404 for a ``trigger_id`` that names no clock automation. Owner only, and
     it reads the store and writes nothing.
     """
+    import asyncio
     import copy
     import time
 
@@ -1951,7 +1952,8 @@ async def api_triggers_preview(request: web.Request) -> web.Response:
         trigger.spec = spec
     else:
         trigger = Trigger(id="", name="", kind="clock", spec=spec)
-    preview = next_runs(trigger, now=time.time(), count=count)
+    # Off the event loop: the walk steps a calendar, and the form asks on every pause in typing.
+    preview = await asyncio.to_thread(next_runs, trigger, now=time.time(), count=count)
     return web.json_response({**preview.to_dict(), "next_cursor": None})
 
 
