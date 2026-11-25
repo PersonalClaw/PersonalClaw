@@ -4120,7 +4120,7 @@ Status: planned
   `uv` the owner allowed (the `installers` book, §17.1; `update.installer_allowed`).
 - **The desktop app's own update.** The shell checks the release list a minute after it starts and
   once a day, follows `updates.channel` (and `updates.pin` while it runs its own gateway), and downloads
-  nothing until its owner presses Update (Settings › Updates › This app, Check for Updates…). Update
+  nothing until its owner presses Update (Settings › Updates › Desktop app, Check for Updates…). Update
   takes exactly the release's copy for this computer, from GitHub's release hosts, checked against the
   size and `sha256` digest GitHub publishes for it as it streams, into a private folder of its own; on
   macOS the app inside the image must carry this app's bundle id, the release's version, an intact seal

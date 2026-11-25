@@ -3971,7 +3971,7 @@ if (!app.requestSingleInstanceLock()) {
       isAppWindow: (sender) => BaseWindow.getAllWindows().some((w) => w._pcBridgeAttached === true && w.webContents === sender),
       log: (msg) => console.warn(`desktop: ${msg}`),
     });
-    // The app's own update, for the same windows only: Settings › Updates › This app and the
+    // The app's own update, for the same windows only: Settings › Updates › Desktop app and the
     // System popover's row.
     registerAppUpdateIpc({
       ipcMain,

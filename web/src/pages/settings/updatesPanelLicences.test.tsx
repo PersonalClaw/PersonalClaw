@@ -37,10 +37,10 @@ describe('Settings → Updates → Licences', () => {
     expect(fonts.getAttribute('target')).toBe('_blank')
   })
 
-  it('sits directly under the Version section, where the version it describes is shown', () => {
+  it('is the last section: it is read once, and every section above it is about what to run', () => {
     useQuery.mockReturnValue({ data: { info: INFO, changelog: '' }, loading: false, error: null, refresh: vi.fn() })
     render(<UpdatesPanel />)
     const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-    expect(headings.slice(0, 2)).toEqual(['Version', 'Licences'])
+    expect(headings).toEqual(['Gateway', 'Release line', 'Automatic updates', 'Release notes', 'Changelog', 'Licences'])
   })
 })

@@ -7,7 +7,7 @@ import type { AppUpdateStart, AppUpdateState, DesktopBridge } from '../lib/deskt
 // A new desktop version came only as a download from the releases page: the System popover and
 // Home said so, and Settings › Updates said "Install the new version from the releases page, then
 // reopen the app". The app now checks on launch and once a day, and offers the update in its own
-// windows: Settings › Updates › This app, and a row in the System popover while a new version is
+// windows: Settings › Updates › Desktop app, and a row in the System popover while a new version is
 // on offer (`desktop/appUpdate.js`). It takes two presses: Update downloads and checks the release
 // in the background and changes nothing beside the app; once it is ready, Restart to Finish the
 // Update, confirmed, installs it, and the confirm names the restart and what it interrupts. A copy
@@ -277,7 +277,7 @@ describe("Home's Update available, in the app", () => {
   })
 })
 
-describe("Settings › Updates › This app's controls", () => {
+describe("Settings › Updates › Desktop app's controls", () => {
   function ThisApp() {
     const update = useAppUpdate()
     return update ? <AppUpdateControls update={update} place="settings" /> : <p>no app</p>
@@ -340,29 +340,89 @@ describe("Settings › Updates › This app's controls", () => {
 
 describe('Settings › Updates', () => {
   /** The panel's one snapshot, for the desktop app's own gateway with a new version out. */
-  function primed() {
+  function primed(kind = 'desktop') {
     writeQuery('settings:updates', {
-      info: { available: true, changes: '', checked: true, auto: 'off', kind: 'desktop', current: '0.3.7', latest: '0.3.8', channel: 'stable', pin: '', check_enabled: true },
+      info: { available: true, changes: '', checked: true, auto: 'off', kind, current: '0.3.7', latest: '0.3.8', channel: 'stable', pin: '', check_enabled: true },
       changelog: '',
     }, true)
   }
+  const sections = () => screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
 
-  it('🔴 has This app in the app, and its Version row points there instead of at the releases page', async () => {
+  it('🔴 puts the desktop app first and the gateway after it, each with its own version line', async () => {
     primed()
     fakeApp(OFFERED)
     const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
     render(<UpdatesPanel />)
-    expect(await screen.findByRole('heading', { name: 'This app' })).toBeTruthy()
     expect(await screen.findByText('PersonalClaw 0.3.8 is available for this app.')).toBeTruthy()
-    expect(screen.getByText('This app updates itself: see This app, below.')).toBeTruthy()
+    expect(sections()).toEqual(['Desktop app', 'Gateway', 'Release line', 'Automatic updates', 'Release notes', 'Changelog', 'Licences'])
+    const app = screen.getByRole('heading', { name: 'Desktop app' }).closest('section') as HTMLElement
+    expect(within(app).getByText('This app: v0.3.7')).toBeTruthy()
+    const gateway = screen.getByRole('heading', { name: 'Gateway' }).closest('section') as HTMLElement
+    expect(within(gateway).getByText('Built into the desktop app · v0.3.7 · Stable channel')).toBeTruthy()
   })
 
-  it('says the releases page, with no This app, in a browser tab', async () => {
+  it('🔴 names the gateway the app uses, and what Restart to Finish the Update does to it', async () => {
+    primed()
+    fakeApp(OFFERED)
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('Gateway: built into the desktop app. Restart to Finish the Update restarts it with the app.')).toBeTruthy()
+  })
+
+  it('names a gateway the app found running, at its version, and the step that brings it along', async () => {
+    primed('pip')
+    fakeApp(stands({ ...READY, restartsGateway: false, gatewayStep: { port: 10870, from: '0.3.7', to: '0.3.8' } }))
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('Gateway: found running on this computer, v0.3.7. Restart to Finish the Update updates it from 0.3.7 to 0.3.8 first.')).toBeTruthy()
+    const gateway = screen.getByRole('heading', { name: 'Gateway' }).closest('section') as HTMLElement
+    expect(within(gateway).getByText('Install type: pip / uv install · v0.3.7 · Stable channel')).toBeTruthy()
+  })
+
+  it('says a found gateway is brought along when it is older, before a copy is ready', async () => {
+    primed('pip')
+    fakeApp(stands({ ...OFFERED, restartsGateway: false }))
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('Gateway: found running on this computer, v0.3.7. Restart to Finish the Update updates it to the app’s release first when it is older.')).toBeTruthy()
+  })
+
+  it('🔴 has the built-in gateway point at the app above instead of at the releases page', async () => {
+    primed()
+    fakeApp(OFFERED)
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('It updates with the desktop app: see Desktop app, above.')).toBeTruthy()
+    expect(screen.queryByText(/releases page/)).toBeNull()
+  })
+
+  it('🔴 points a browser tab at the app’s Check for Updates…, with no Desktop app section', async () => {
     primed()
     const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
     render(<UpdatesPanel />)
-    expect(await screen.findByText(/Install the new version from the/)).toBeTruthy()
-    expect(screen.queryByRole('heading', { name: 'This app' })).toBeNull()
+    expect(await screen.findByText('Update it from the desktop app: choose Check for Updates… in its PersonalClaw menu, or under Help on Windows and Linux.')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Desktop app' })).toBeNull()
+    expect(screen.queryByText(/releases page/)).toBeNull()
+  })
+
+  it('keeps the releases page for a pin back to an older release: the app does not roll back', async () => {
+    writeQuery('settings:updates', {
+      info: { available: false, changes: '', checked: true, auto: 'off', kind: 'desktop', current: '0.3.8', latest: '0.3.7', channel: 'stable', pin: '0.3.7', pin_older: true, check_enabled: true },
+      changelog: '',
+    }, true)
+    fakeApp(stands({ current: '0.3.8' }))
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText(/Install the pinned version from the/)).toBeTruthy()
+  })
+
+  it('says the release line and the automatic checks steer both, and how the app follows them', async () => {
+    primed()
+    fakeApp(OFFERED)
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('Which releases the gateway and the desktop app follow. A version pin overrides the channel, for both: the app takes its own copy of the release the line or pin names, and has no Developer builds, so on Developer it follows Stable.')).toBeTruthy()
+    expect(screen.getByText('Whether PersonalClaw looks for new releases on its own. Installing one is yours to do on this install. The desktop app follows the same switch: while it is on, the app looks when it starts and once a day, and it downloads nothing until you press Update.')).toBeTruthy()
   })
 })
 

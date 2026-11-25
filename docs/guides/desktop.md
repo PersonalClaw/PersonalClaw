@@ -846,11 +846,11 @@ tested backend paths today: [WSL2 or Docker Desktop](platforms.md#windows-via-ws
 
 **The app updates itself when you ask it to.** It looks for a new release a minute after it
 starts and then once a day, and at once when it finds the gateway it uses on a newer version than
-itself (one you updated from a browser tab, say), and says so in two places: **Settings › Updates › This app**, and a
+itself (one you updated from a browser tab, say), and says so in two places: **Settings › Updates › Desktop app**, and a
 row in the System status card while a new version is on offer. **PersonalClaw › Check for
-Updates…** (on Linux, **Help › Check for Updates…**) looks now and opens This app. It takes two
+Updates…** (on Linux, **Help › Check for Updates…**) looks now and opens the Desktop app section. It takes two
 presses. **Update** downloads and checks the new version in the background, and changes nothing
-beside the app; when it is ready, This app and the row say **Restart to Finish the Update**. That
+beside the app; when it is ready, the Desktop app section and the row say **Restart to Finish the Update**. That
 press, once you confirm, installs it; the confirm says whether your gateway restarts with the app,
 and how many running agents that interrupts. With a gateway the app found serving your home on an
 older release, it says that gateway is updated to the new release first. Nothing is downloaded
@@ -903,7 +903,7 @@ What **Restart to Finish the Update** does:
    if the new one doesn't start, move it to the Trash and rename the old one back (it is hidden;
    in Terminal, `mv /Applications/.PersonalClaw-<old>.app.previous /Applications/PersonalClaw.app`).
 
-The next start says how it went: This app reads "Updated from 0.3.7 to 0.3.8.", or, when the new
+The next start says how it went: the Desktop app section reads "Updated from 0.3.7 to 0.3.8.", or, when the new
 copy could not be put in place, that this copy is unchanged, and Settings › Updates opens on it.
 An AppImage replaces itself the same way, the old file kept beside it until the new one starts.
 Your data lives in `~/.personalclaw` and is untouched by any of it.
@@ -930,14 +930,14 @@ Updates…, or the releases page. On a gateway the app did not start
 ([one already serving your home](#when-a-gateway-already-serves-your-home)), they are that
 gateway's: one installed with pip updates itself as it does in a browser, and the app follows it
 through the restart. The app's row is about the app alone. A browser tab, or a paired gateway's
-window, has no app to ask, so it shows neither This app nor the row.
+window, has no app to ask, so it shows neither the Desktop app section nor the row.
 
 ### What the update settings still do here
 
 The `updates` block is honored on this install, by the gateway's check and by the app's own; the
 app reads it from `~/.personalclaw/config.json` at each check, so a change in Settings holds from
 the next one. A file it can't read offers nothing: the pin it may hold is a limit the app won't
-drop, so This app says the file couldn't be read instead.
+drop, so the Desktop app section says the file couldn't be read instead.
 
 - **Channel** (`updates.channel`) — `stable` (default) watches normal releases, `beta`
   watches release candidates too. `nightly` tracks a git branch, so it has no meaning for

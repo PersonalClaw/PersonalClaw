@@ -140,7 +140,7 @@ program" is a hard requirement, stop here.
 install yourself, is unacceptable.
 
 The Electron desktop shell is explicitly experimental. It **updates itself only when you press
-for it** (Settings › Updates › This app), and what it checks is that a download is the file the
+for it** (Settings › Updates › Desktop app), and what it checks is that a download is the file the
 release published, by the size and `sha256` digest GitHub states for it, not who made it: nothing
 signs the releases yet ([The desktop app → Updating](desktop.md#updating)). CI builds it for every
 release, which attaches a `.dmg` for Apple silicon, one for Intel Macs, and an x86-64 Linux

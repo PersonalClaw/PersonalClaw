@@ -174,7 +174,7 @@ export interface DesktopBridge {
     kept?: 'dark' | 'light' | 'auto' | null
     changed: (a: { preference: 'dark' | 'light' | 'auto'; mode: 'dark' | 'light'; canvas: string }) => void
   }
-  /** The app's own update: Settings › Updates › This app and the System popover's row. Absent in
+  /** The app's own update: Settings › Updates › Desktop app and the System popover's row. Absent in
    *  a browser tab, on a paired gateway's page (which carries no bridge), and in a shell from
    *  before it. `download` takes the version Update named, and `finish` the version the confirm
    *  named; the app goes on only with the one on offer, or the one ready. */

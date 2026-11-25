@@ -67,7 +67,7 @@ function confirmWords(
   return `${ask} ${what}, which interrupts ${agents}${live}.`
 }
 
-/** The app's own update, in Settings › Updates › This app (`place="settings"`, with Check now and
+/** The app's own update, in Settings › Updates › Desktop app (`place="settings"`, with Check now and
  *  how the last update ended) and as the System popover's row (`place="popover"`). Two presses:
  *  Update downloads and checks the release in the background, and nothing beside the app changes;
  *  once it is ready, Restart to Finish the Update, confirmed, puts it in place and restarts. An

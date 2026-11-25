@@ -16,6 +16,7 @@ import { RELEASES_PAGE_URL, repoDocUrl } from '../../lib/repoDocs'
 import { howAnUpdateArrives } from '../../lib/updateRoute'
 import { useAppUpdate } from '../../app/appUpdate'
 import { AppUpdateControls } from '../../app/AppUpdateControls'
+import type { AppUpdateState } from '../../lib/desktopBridge'
 
 /** Where an update's upgrade steps live: the CHANGELOG is headline-only, so they are in the docs. */
 export const UPGRADE_NOTES_DOC = 'docs/guides/getting-started.md#updating'
@@ -135,6 +136,19 @@ export function plainHeadline(line: string): string {
  *  added no entry. */
 export function updateEntries(changes: string): string {
   return changes.split('\n').filter((l) => l.startsWith('- ')).map(plainHeadline).join('\n')
+}
+
+/** The gateway the desktop app uses, as its section names it, and what Restart to Finish the Update
+ *  does to it: one built into the app restarts with the app; one the app found running (*version*,
+ *  the gateway this page is served by) is updated to the app's release first when it is older, and
+ *  the confirm names that step once a copy is ready (`gatewayStep`). */
+export function appGatewayLine(state: AppUpdateState, version: string): string {
+  if (state.restartsGateway) return 'Gateway: built into the desktop app. Restart to Finish the Update restarts it with the app.'
+  const found = `Gateway: found running on this computer${version ? `, v${version}` : ''}.`
+  const step = state.gatewayStep
+  return step
+    ? `${found} Restart to Finish the Update updates it from ${step.from} to ${step.to} first.`
+    : `${found} Restart to Finish the Update updates it to the app’s release first when it is older.`
 }
 
 export function UpdatesPanel() {
@@ -331,15 +345,32 @@ export function UpdatesPanel() {
   )
   const channelName = { stable: 'Stable', beta: 'Beta', nightly: 'Developer' }[channel] ?? channel
   const verdict = updateVerdict(info)
-  // A pin already set back to that release offers its rollback in the Version row, so the
+  // A pin already set back to that release offers its rollback in the Gateway card, so the
   // Release line row would be the same action twice.
   const canRollBack = Boolean(rollbackTo) && rollbackTo !== (info.current ?? '')
     && !(verdict === 'pin_older' && rollbackTo === pinnedTo)
   return (
     <div>
-      <PanelHeader title="Updates" hint={`Keep the PersonalClaw core current — choose a release line, pin a version, ${info.unattended_apply ? 'decide whether updates apply on their own, ' : ''}and read what changed. Apps update individually from the Store.`} />
+      <PanelHeader title="Updates" hint={`${appUpdate ? 'Keep the desktop app and its gateway current' : 'Keep the PersonalClaw core current'} — choose a release line, pin a version, ${info.unattended_apply ? 'decide whether updates apply on their own, ' : ''}and read what changed. Apps update individually from the Store.`} />
 
-      <Section title="Version">
+      {/* The desktop app on this computer, which updates itself: on launch and once a day it looks
+          for a release on this home's line (and its pin, whichever gateway it uses). It downloads
+          nothing until Update is pressed, and puts nothing in place until Restart to Finish the Update
+          (the app's own updater). First, because in the app it is the part the owner installed; the
+          gateway it uses is named here, with what finishing an update does to it. Only in the app's
+          own windows: a browser tab or a paired gateway's page has no app to ask. */}
+      {appUpdate && (
+        <Section title="Desktop app" hint="The PersonalClaw app on this computer. While automatic update checks are on, it looks for a new version when it starts and once a day. It downloads nothing until you press Update, and changes nothing until you press Restart to Finish the Update.">
+          <div className="rounded-lg bg-surface-container px-4 py-3">
+            <AppUpdateControls update={appUpdate} place="settings" />
+            {appUpdate.state && (
+              <div data-type="caption" className="mt-2 text-on-surface-low">{appGatewayLine(appUpdate.state, info.current ?? '')}</div>
+            )}
+          </div>
+        </Section>
+      )}
+
+      <Section title="Gateway">
         <div className="rounded-lg bg-surface-container px-4 py-3">
           <div className="flex items-center gap-3">
             <DownloadCloud size={20} className="shrink-0 text-on-surface-low" />
@@ -401,7 +432,7 @@ export function UpdatesPanel() {
                   Checked once, just now. Automatic checks stay off.
                 </div>
               )}
-              <div data-type="caption" className="text-on-surface-low mt-0.5">Install type: {kindLabel}{info.current ? ` · v${info.current}` : ''}{info.pin ? ` · pinned to ${info.pin}` : ` · ${channelName} channel`}</div>
+              <div data-type="caption" className="text-on-surface-low mt-0.5">{isDesktop ? 'Built into the desktop app' : `Install type: ${kindLabel}`}{info.current ? ` · v${info.current}` : ''}{info.pin ? ` · pinned to ${info.pin}` : ` · ${channelName} channel`}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button variant="secondary" size="sm" loading={checking} onClick={checkNow}
@@ -436,53 +467,27 @@ export function UpdatesPanel() {
                 data-type="caption" className="overflow-auto leading-relaxed text-on-surface"><code>{info.instructions.join('\n')}</code></pre>
             </div>
           ) : null}
-          {/* Desktop: the SHELL owns updates, so the gateway applies none. In the app, its own
-              update is This app, below (the app's own updater); elsewhere (a browser tab) the
-              release page is the way, the answer `personalclaw update` gives beside the app's
-              menu. A pin back to an older release is the releases page in both: the app does not
-              roll back. This note once promised a self-update on next launch that nothing
-              built (issue 2673). */}
+          {/* Desktop: the gateway is built into the app, so the SHELL owns its updates and the
+              gateway applies none. In the app, it updates with the app (Desktop app, above); in a
+              browser tab, the app's own Check for Updates… is the way, the menu item that checks
+              and opens this page in the app. A pin back to an older release is the releases page in
+              both: the app does not roll back. This note once promised a self-update on next launch
+              that nothing built (issue 2673). */}
           {isDesktop && (info.available || verdict === 'pin_older') && (
             <div data-type="caption" className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low">
-              {appUpdate && verdict !== 'pin_older'
-                ? 'This app updates itself: see This app, below.'
-                : <>Install the {verdict === 'pin_older' ? 'pinned' : 'new'} version from the <a className="underline" href={RELEASES_PAGE_URL} target="_blank" rel="noreferrer noopener">releases page</a>, then reopen the app.</>}
+              {verdict === 'pin_older'
+                ? <>Install the pinned version from the <a className="underline" href={RELEASES_PAGE_URL} target="_blank" rel="noreferrer noopener">releases page</a>, then reopen the app.</>
+                : appUpdate
+                  ? 'It updates with the desktop app: see Desktop app, above.'
+                  : 'Update it from the desktop app: choose Check for Updates… in its PersonalClaw menu, or under Help on Windows and Linux.'}
             </div>
           )}
         </div>
       </Section>
 
-      {/* The desktop app on this computer, which updates itself: on launch and once a day it looks
-          for a release on this home's line (and its pin, while it runs its own gateway). It downloads
-          nothing until Update is pressed, and puts nothing in place until Restart to Finish the Update
-          (the app's own updater). Only in the
-          app's own windows: a browser tab or a paired gateway's page has no app to ask. */}
-      {appUpdate && (
-        <Section title="This app" hint="The PersonalClaw app on this computer. It looks for a new version when it starts and once a day, on the release line below, downloads nothing until you press Update, and changes nothing until you press Restart to Finish the Update.">
-          <div className="rounded-lg bg-surface-container px-4 py-3">
-            <AppUpdateControls update={appUpdate} place="settings" />
-          </div>
-        </Section>
-      )}
-
-      {/* The licences, beside the version they are the licences of. Both notices are plain text at
-          the dist root: the fonts' is tracked in web/public, and the packages' is written by the
-          web build from its own module graph (web/scripts/thirdPartyNotices.mjs), because the
-          minifier strips every licence comment from the code. */}
-      <Section title="Licences" hint="PersonalClaw is MIT-licensed. The dashboard also ships third-party open-source code and fonts, each under its own licence.">
-        <RowGroup>
-          <Row label="Open-source packages" hint="Every package in the dashboard's code, with its version, its licence and the licence's full text.">
-            <TextLink href="/THIRD_PARTY_NOTICES_NPM.txt" external size="sm" ink="emphasis" icon={ExternalLink} iconPosition="trailing"
-              aria-label="Open the open-source packages' licence notices">Open</TextLink>
-          </Row>
-          <Row label="Fonts" hint="The dashboard's typefaces, its math fonts and the code editor's icon font.">
-            <TextLink href="/THIRD_PARTY_NOTICES.txt" external size="sm" ink="emphasis" icon={ExternalLink} iconPosition="trailing"
-              aria-label="Open the fonts' licence notices">Open</TextLink>
-          </Row>
-        </RowGroup>
-      </Section>
-
-      <Section title="Release line" hint="Which releases this install follows. A version pin overrides the channel.">
+      <Section title="Release line" hint={appUpdate
+        ? 'Which releases the gateway and the desktop app follow. A version pin overrides the channel, for both: the app takes its own copy of the release the line or pin names, and has no Developer builds, so on Developer it follows Stable.'
+        : 'Which releases this install follows. A version pin overrides the channel.'}>
         <RowGroup>
           <Row label="Channel" hint={isGit
             ? 'Stable follows the newest normal release. Beta includes release candidates. Developer tracks every commit on your checked-out branch (contributors — needs a clean tree).'
@@ -525,9 +530,11 @@ export function UpdatesPanel() {
         </RowGroup>
       </Section>
 
-      <Section title="Automatic updates" hint={info.unattended_apply
+      <Section title="Automatic updates" hint={`${info.unattended_apply
         ? 'Whether PersonalClaw looks for new releases on its own, and whether it installs them for you.'
-        : 'Whether PersonalClaw looks for new releases on its own. Installing one is yours to do on this install.'}>
+        : 'Whether PersonalClaw looks for new releases on its own. Installing one is yours to do on this install.'}${appUpdate
+        ? ' The desktop app follows the same switch: while it is on, the app looks when it starts and once a day, and it downloads nothing until you press Update.'
+        : ''}`}>
         <RowGroup>
           <Row label="Automatic update checks" hint={`On: PersonalClaw asks GitHub whether a newer release exists when it starts, then every ${info.check_interval_hours ?? 12} hours. Off: it never checks for updates on its own. Check now and Update still reach GitHub, each time you press one.`}>
             <div className="flex items-center gap-2">
@@ -595,6 +602,23 @@ export function UpdatesPanel() {
               <Markdown>{changelogBody(changelog)}</Markdown>
             </div>
           : <p data-type="body-s" className="text-on-surface-low italic">No changelog available.</p>}
+      </Section>
+
+      {/* The licences, last: they are read once, and every section above is about what to run. Both notices are plain text at
+          the dist root: the fonts' is tracked in web/public, and the packages' is written by the
+          web build from its own module graph (web/scripts/thirdPartyNotices.mjs), because the
+          minifier strips every licence comment from the code. */}
+      <Section title="Licences" hint="PersonalClaw is MIT-licensed. The dashboard also ships third-party open-source code and fonts, each under its own licence.">
+        <RowGroup>
+          <Row label="Open-source packages" hint="Every package in the dashboard's code, with its version, its licence and the licence's full text.">
+            <TextLink href="/THIRD_PARTY_NOTICES_NPM.txt" external size="sm" ink="emphasis" icon={ExternalLink} iconPosition="trailing"
+              aria-label="Open the open-source packages' licence notices">Open</TextLink>
+          </Row>
+          <Row label="Fonts" hint="The dashboard's typefaces, its math fonts and the code editor's icon font.">
+            <TextLink href="/THIRD_PARTY_NOTICES.txt" external size="sm" ink="emphasis" icon={ExternalLink} iconPosition="trailing"
+              aria-label="Open the fonts' licence notices">Open</TextLink>
+          </Row>
+        </RowGroup>
       </Section>
     </div>
   )
