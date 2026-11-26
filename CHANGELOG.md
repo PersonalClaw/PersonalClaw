@@ -16,6 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Each capability of an app has its own switch and its own status. `POST /api/apps/{name}/capabilities/{id}/on` and `…/off` switch one capability without the others, a capability that is off is not built, and one that fails no longer stops the rest: `GET /api/apps` says which run, and why one does not, and the Doctor's `apps.capabilities` check names one that failed.**
 - **For apps, `personalclaw.sdk.manifest.ProviderConfig` has `startsOn` (default `true`): `"startsOn": false` installs that capability switched off. No shipped app needs a change.**
 - **For apps, `personalclaw.sdk.manifest.CronEntry` has `capability`: a scheduled job that names one of the app's capability ids runs only while that capability is switched on, and switching it off takes the job out at once. A job that names none is the app's own, as before. No shipped app needs a change.**
+- **Switching off an agent CLI app's capability withdraws its runtime: what a capability's code registers as it is built (an `acp:<cli>` agent runtime, a catalog) leaves when it is switched off or fails to build, and the app's other capabilities keep theirs. What the app's modules register as they load stays until the app is switched off. No shipped app needs a change.**
 
 ### Changed
 

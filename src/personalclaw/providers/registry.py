@@ -14,6 +14,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
+from personalclaw import app_code
 from personalclaw.apps.capability_ids import derived_capability_id
 from personalclaw.apps.manifest import AppManifest, ProviderConfig
 
@@ -170,15 +171,20 @@ class ProviderRegistry:
             # Cleared before the attempt, not after it: a handler that registers some of an
             # app's providers and has others refused reports those in `error` as it goes.
             ext.error = ""
-            instance = handler.create(ext)
-            if instance is not None:
-                handler.register(ext, instance)
+            # What the app's code registers while its factory runs is this capability's, and
+            # leaves with it (``app_code.release_capability``): an agent runtime's entry, say.
+            with app_code.building(ext.name, ext.capability or ""):
+                instance = handler.create(ext)
+                if instance is not None:
+                    handler.register(ext, instance)
             ext.provider_instance = instance
             ext.enabled = True
             logger.info("Enabled extension %s (type=%s)", ext.key, ext.provider_config.type)
             return True
         except Exception as exc:
             ext.error = str(exc)
+            # A capability that failed part way does not half run: what it registered goes.
+            app_code.release_capability(ext.name, ext.capability or "")
             logger.exception("Failed to enable extension %s", ext.key)
             return False
 
@@ -203,6 +209,8 @@ class ProviderRegistry:
                 handler.deregister(ext, ext.provider_instance)
             except Exception:
                 logger.exception("Error deregistering extension %s", ext.key)
+        # Off means deregistered, a factory that built no instance included (#3843).
+        app_code.release_capability(ext.name, ext.capability or "")
         ext.provider_instance = None
         ext.enabled = False
         logger.info("Disabled extension %s (type=%s)", ext.key, ext.provider_config.type)

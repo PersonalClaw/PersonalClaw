@@ -1018,8 +1018,13 @@ update writes them down. A record whose switches are there but can't be read (no
 that is no yes or no) runs none of those capabilities, and each says the app's switches couldn't be
 read; switching one writes only that one, so the rest keep saying so. A capability that is off is not built, so it reads no settings and
 starts nothing; `POST /api/apps/{name}/capabilities/{id}/on` and `…/off` (owner only) write the
-switch, build or tear down that capability alone while the app runs, and answer its status. A
-native app's capabilities are always on. A settings save retries a capability that failed only
+switch, build or tear down that capability alone while the app runs, and answer its status.
+Tearing one down takes back what the app's code registered while its factory ran (an agent CLI
+app's `acp:<cli>` runtime, a catalog), so off means deregistered even for a factory that builds
+no instance, and a build that fails part way leaves nothing of its own registered
+(`app_code.building` and `app_code.release_capability`). What the app's modules register as they
+load is the app's, whichever capability's build first imported them: it stays while the app is
+on and leaves with the app. A native app's capabilities are always on. A settings save retries a capability that failed only
 while it is switched on.
 
 What a capability is doing is read in one place, `capability_status`: its switch (`on`) beside
