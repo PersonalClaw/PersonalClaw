@@ -462,11 +462,14 @@ every tool PersonalClaw offers it. A list is the whole of what the agent may use
   built-in tools (its shell, its file edits) run in its own process, where no list of PersonalClaw's
   reaches: they follow the CLI's permission mode, as the Agents page says. While a tool server has
   not yet read its session's policy (a session the gateway has not registered yet, or a gateway it
-  cannot reach), it offers every tool, and it holds the list from the first call after the read; a
-  saved list reaches an open session at its next turn. A save of such an agent's list warns of each
-  entry no PersonalClaw tool a CLI is offered matches (a tool of PersonalClaw's own runtime such as
-  `read_file`, another tool server's tool, a typo), since it lets the CLI call nothing; the list is
-  saved all the same.
+  cannot reach), it offers every tool, and it holds the list from the first call after the read.
+  It reads the list again once its last read is 5 seconds old, so a list you save holds an open
+  session from its next call after that, and a call to a tool the list now leaves out is refused.
+  The tools the CLI was shown as it started stay in its catalog until it next starts (a new chat,
+  a restart of the CLI). A read again that fails keeps the list read before. A save of such an
+  agent's list warns of each entry no PersonalClaw tool a CLI is offered matches (a tool of
+  PersonalClaw's own runtime such as `read_file`, another tool server's tool, a typo), since it lets
+  the CLI call nothing; the list is saved all the same.
 
 ### An agent's skill list (`agents.*.skills`)
 

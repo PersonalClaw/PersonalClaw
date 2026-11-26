@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import types
+import urllib.error
+from email.message import Message
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -28,6 +30,9 @@ from fakes import answers_as_this_home
 from personalclaw import gateway_base, home_gateway, mcp_shared
 from personalclaw.config.loader import AgentProfile, AppConfig
 
+#: A gateway's answer for a session it does not know (404), as ``_server_reads_each`` takes it.
+NOT_KNOWN = "404"
+
 #: What the tool server serves, by name: two PersonalClaw tools and the one every list keeps.
 SERVED = ("memory_recall", "artifact_save", "tool_result_get")
 
@@ -38,6 +43,7 @@ def _first_read(monkeypatch):
     for name, value in (
         ("_excluded_tools", None),
         ("_agent_list", None),
+        ("_resolved_at", 0.0),
         ("_last_failure_time", 0.0),
         ("_last_startup_race_time", 0.0),
         ("_failure_count", 0),
@@ -97,6 +103,12 @@ async def _policy(agent: str, session: str = "dashboard:chat-7") -> dict:
 def _server_reads(monkeypatch, tmp_path, answer: dict | None) -> MagicMock:
     """The tool server's gateway answers its policy read with *answer* (``None``: unreachable).
     Returns the audit log the server writes to."""
+    return _server_reads_each(monkeypatch, tmp_path, [answer])
+
+
+def _server_reads_each(monkeypatch, tmp_path, answers: list) -> MagicMock:
+    """As :func:`_server_reads`, the gateway answering each read with ``answers[0]`` as it is
+    then: a test replaces it to change what the next read is answered. Returns the audit log."""
     monkeypatch.setenv(gateway_base.PORT_ENV, "7777")
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setenv("PERSONALCLAW_SESSION_KEY", "dashboard:chat-7")
@@ -104,8 +116,11 @@ def _server_reads(monkeypatch, tmp_path, answer: dict | None) -> MagicMock:
     monkeypatch.setattr(home_gateway, "_healthz", answers_as_this_home("test-secret"))
 
     def opened(_req, timeout=5):
+        answer = answers[0]
         if answer is None:
             raise OSError("connection refused")
+        if answer == NOT_KNOWN:
+            raise urllib.error.HTTPError(_req.full_url, 404, "agent not resolved", Message(), None)
         body = MagicMock()
         body.read.return_value = json.dumps(answer).encode()
         body.__enter__ = MagicMock(return_value=body)
@@ -259,3 +274,72 @@ def test_while_the_gateway_does_not_answer_every_tool_is_offered(monkeypatch, tm
     """The read fails open, as it always has: the server cannot know of a list it was not told."""
     _server_reads(monkeypatch, tmp_path, None)
     assert _listed(monkeypatch) == list(SERVED)
+
+
+# ── a list saved while a session is open ──────────────────────────────────────
+
+
+def _aged() -> None:
+    """The server's last read of its policy is as old as a read may be before the next."""
+    mcp_shared._resolved_at -= mcp_shared._POLICY_FRESH_SECS
+
+
+@pytest.mark.asyncio
+async def test_a_list_narrowed_while_a_session_is_open_refuses_its_next_call(monkeypatch, tmp_path):
+    """The tool server lives as long as the CLI, across turns: a list read once would keep
+    offering what she has since taken away. Read again once it is a few seconds old, the narrowed
+    list refuses the next call. 🔴 Red before: the policy was read once for the server's life."""
+    _agents(reviewer=["memory_recall", "artifact_save"])
+    answers = [await _policy("reviewer")]
+    _server_reads_each(monkeypatch, tmp_path, answers)
+    first, ran = _call(monkeypatch, "artifact_save")
+    assert ran == ["artifact_save"] and not first.get("isError")
+
+    _agents(reviewer=["memory_recall"])
+    answers[0] = await _policy("reviewer")
+    _aged()
+    answer, ran = _call(monkeypatch, "artifact_save")
+
+    assert ran == [], "a call the narrowed list leaves out ran"
+    assert answer["isError"] is True and "tool list" in json.dumps(answer)
+
+
+@pytest.mark.asyncio
+async def test_a_list_read_moments_ago_is_not_read_again(monkeypatch, tmp_path):
+    """Within a few seconds of a read, a call is answered by what was read, not by a new read.
+    Green before too; it holds the read again to its window."""
+    _agents(reviewer=["memory_recall"])
+    answers = [await _policy("reviewer")]
+    _server_reads_each(monkeypatch, tmp_path, answers)
+    _call(monkeypatch, "memory_recall")
+    answers[0] = {}  # what a read now would answer: no list at all
+
+    answer, ran = _call(monkeypatch, "artifact_save")
+
+    assert ran == [] and answer["isError"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("why", ["unreachable", "session-not-known", "no-session-key"])
+async def test_a_read_again_that_fails_keeps_the_list_it_held(monkeypatch, tmp_path, why):
+    """A read again that does not answer does not open every tool, whatever stops it: a gateway
+    that no longer answers, one that no longer knows the session (404), a key the server can no
+    longer find. The list read before holds, with no fail-open row. Green before too, when nothing
+    was read again; it holds each of the read again's three guards (planted: each falls back to
+    every tool, red)."""
+    _agents(reviewer=["memory_recall"])
+    answers = [await _policy("reviewer")]
+    audit = _server_reads_each(monkeypatch, tmp_path, answers)
+    _call(monkeypatch, "memory_recall")
+
+    if why == "unreachable":
+        answers[0] = None
+    elif why == "session-not-known":
+        answers[0] = NOT_KNOWN
+    else:
+        monkeypatch.delenv("PERSONALCLAW_SESSION_KEY")
+    _aged()
+    answer, ran = _call(monkeypatch, "artifact_save")
+
+    assert ran == [] and answer["isError"] is True
+    assert [c.kwargs["outcome"] for c in audit.log_api_access.call_args_list] == []
