@@ -141,7 +141,8 @@ export function updateEntries(changes: string): string {
 
 /** The gateway the desktop app uses, as its section names it, and what Restart to Finish the Update
  *  does to it: one built into the app restarts with the app; one the app found running (*version*,
- *  the gateway this page is served by) is updated to the app's release first when it is older, and
+ *  the gateway this page is served by) is updated to the app's release first when it is older, or the
+ *  press says why it can't (a Developer checkout, a pin, a gateway that can't reach GitHub), and
  *  the confirm names that step once a copy is ready (`gatewayStep`). */
 export function appGatewayLine(state: AppUpdateState, version: string): string {
   if (state.restartsGateway) return 'Gateway: built into the desktop app. Restart to Finish the Update restarts it with the app.'
@@ -149,7 +150,7 @@ export function appGatewayLine(state: AppUpdateState, version: string): string {
   const step = state.gatewayStep
   return step
     ? `${found} Restart to Finish the Update updates it from ${step.from} to ${step.to} first.`
-    : `${found} Restart to Finish the Update updates it to the app’s release first when it is older.`
+    : `${found} Restart to Finish the Update updates it to the app’s release first when it is older, or says why it can’t.`
 }
 
 export function UpdatesPanel() {

@@ -318,9 +318,9 @@ container's image. In the desktop app, Settings → Updates shows the app and th
 in sections of their own: **Desktop app** (the app's own update, and which gateway it uses) and
 **Gateway** (this page's). A gateway built into the app updates with it. **If you run your own
 gateway** and open it in the desktop app, it keeps its own Update in the Gateway section, and the
-app's Restart to Finish the Update brings it to the app's release first when it is older; an app
-from 0.3.7 on a gateway newer than itself checks for its own update as soon as it opens a page of
-that gateway, while automatic update checks are on. When nothing newer is published it says you are on the newest release
+app's Restart to Finish the Update brings it to the app's release first when it is older, or says
+why it can't; an app from 0.3.7 on a gateway newer than itself checks for its own update as soon
+as it opens a page of that gateway, while automatic update checks are on. When nothing newer is published it says you are on the newest release
 and changes nothing. Everything below is the same on every install kind, and all of it lives
 in **Settings → Updates** as well as in `config.json`.
 

@@ -417,7 +417,7 @@ describe('Settings › Updates', () => {
     fakeApp(stands({ ...OFFERED, restartsGateway: false }))
     const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
     render(<UpdatesPanel />)
-    expect(await screen.findByText('Gateway: found running on this computer, v0.3.7. Restart to Finish the Update updates it to the app’s release first when it is older.')).toBeTruthy()
+    expect(await screen.findByText('Gateway: found running on this computer, v0.3.7. Restart to Finish the Update updates it to the app’s release first when it is older, or says why it can’t.')).toBeTruthy()
   })
 
   it('🔴 has the built-in gateway point at the app above instead of at the releases page', async () => {
