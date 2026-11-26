@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type CallerHealth, type IncidentHeld, type IncidentResumed, type IncidentState, type ProviderHealth } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery, invalidateKeys } from '../../lib/data'
@@ -318,6 +318,15 @@ export function IncidentSection() {
   const [reviewing, setReviewing] = useState(false)
   const [note, setNote] = useState('')
   const [resumed, setResumed] = useState<{ done: IncidentResumed; noteErr: string } | null>(null)
+  // Where focus goes when the review or the summary closes: back to the switch, which the review
+  // disabled while it was open, so a keyboard user is not left on the page's body.
+  const switchRow = useRef<HTMLDivElement>(null)
+  const backToSwitch = useRef(false)
+  useEffect(() => {
+    if (!backToSwitch.current || reviewing || resumed) return
+    backToSwitch.current = false
+    switchRow.current?.querySelector<HTMLElement>('[role="switch"]')?.focus()
+  }, [reviewing, resumed])
   const load = () => api.incident().then((s) => { setState(s); setLoadErr(null) }).catch(setLoadErr)
   useEffect(() => { load() }, [])
 
@@ -353,7 +362,7 @@ export function IncidentSection() {
   return (
     <>
       <Section title="Incident kill switch" hint={INCIDENT_HINT}>
-        <div className={`rounded-lg px-4 py-1 ${state?.active ? 'bg-error/10 ring-1 ring-error/40' : 'bg-surface-container'}`}>
+        <div ref={switchRow} className={`rounded-lg px-4 py-1 ${state?.active ? 'bg-error/10 ring-1 ring-error/40' : 'bg-surface-container'}`}>
           <Row label={state?.active ? 'Incident mode is ACTIVE' : 'Incident mode'}
             hint={loadErr
               ? `Couldn't check whether incident mode is active: ${said(loadErr)}`
@@ -365,13 +374,22 @@ export function IncidentSection() {
         </div>
         {reviewing && state?.active ? (
           <ResumeReview held={state.suppressed} note={note} setNote={setNote} busy={busy}
-            onResume={resume} onKeep={() => { setReviewing(false); setNote('') }} />
+            onResume={resume} onKeep={() => { backToSwitch.current = true; setReviewing(false); setNote('') }} />
         ) : null}
-        {resumed ? <ResumedSummary {...resumed} onDone={() => setResumed(null)} /> : null}
+        {resumed ? <ResumedSummary {...resumed} onDone={() => { backToSwitch.current = true; setResumed(null) }} /> : null}
       </Section>
       <IncidentHistory />
     </>
   )
+}
+
+/** A ref that puts focus on its element once, as it opens: the review and the summary replace the
+ *  control that was pressed (the switch the review disables, the Resume the summary replaces), so
+ *  focus would otherwise fall to the page's body. */
+function useFocusOnOpen<T extends HTMLElement>() {
+  const ref = useRef<T>(null)
+  useEffect(() => { ref.current?.focus() }, [])
+  return ref
 }
 
 function ResumeReview({ held, note, setNote, busy, onResume, onKeep }: {
@@ -383,9 +401,10 @@ function ResumeReview({ held, note, setNote, busy, onResume, onKeep }: {
   onKeep: () => void
 }) {
   const titleId = useId()
+  const heading = useFocusOnOpen<HTMLHeadingElement>()
   return (
     <section aria-labelledby={titleId} className="mt-3 flex flex-col gap-2 rounded-lg bg-surface-container px-4 py-3">
-      <h3 id={titleId} data-type="title-s" className="text-on-surface">Before you resume</h3>
+      <h3 id={titleId} ref={heading} tabIndex={-1} data-type="title-s" className="rounded-sm text-on-surface">Before you resume</h3>
       <p data-type="body-s" className="text-on-surface">
         {heldSentence(held) || 'Nothing was held back during this incident.'}
       </p>
@@ -404,12 +423,13 @@ function ResumeReview({ held, note, setNote, busy, onResume, onKeep }: {
 
 function ResumedSummary({ done, noteErr, onDone }: { done: IncidentResumed; noteErr: string; onDone: () => void }) {
   const titleId = useId()
+  const heading = useFocusOnOpen<HTMLHeadingElement>()
   const held = done.incident?.suppressed
   const fires = droppedFires(held)
   const sentence = heldSentence(held)
   return (
     <section aria-labelledby={titleId} className="mt-3 flex flex-col gap-2 rounded-lg bg-surface-container px-4 py-3">
-      <h3 id={titleId} data-type="title-s" className="text-on-surface">Unattended work runs again</h3>
+      <h3 id={titleId} ref={heading} tabIndex={-1} data-type="title-s" className="rounded-sm text-on-surface">Unattended work runs again</h3>
       <p role="status" data-type="body-s" className={done.recorded ? 'text-on-surface' : 'text-error'}>
         {done.recorded
           ? 'Resumed. This incident is kept under Past incidents.'

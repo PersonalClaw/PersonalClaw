@@ -214,6 +214,30 @@ describe('Settings › Guardrails › Incident kill switch', () => {
     expect(screen.getByText('Off — automation runs normally.')).toBeTruthy()
   })
 
+  it('moves focus with the review: into it, to the summary after Resume, and back to the switch', async () => {
+    // A keyboard walk found focus on the page's body twice: the review disables the switch that was
+    // pressed, and the summary replaces the Resume that was pressed.
+    incident.mockResolvedValue(ON)
+    incidentResume.mockResolvedValue({ active: false, incident: LINE, recorded: true, why: '' })
+    show()
+    const sw = await screen.findByRole('switch', { name: 'Incident mode' })
+    fireEvent.click(sw)
+    const review = await screen.findByRole('region', { name: 'Before you resume' })
+    expect(document.activeElement).toBe(within(review).getByRole('heading', { name: 'Before you resume' }))
+    fireEvent.click(within(review).getByRole('button', { name: 'Keep it on' }))
+    await flush()
+    expect(document.activeElement).toBe(screen.getByRole('switch', { name: 'Incident mode' }))
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Incident mode' }))
+    fireEvent.click(within(await screen.findByRole('region', { name: 'Before you resume' })).getByRole('button', { name: 'Resume unattended work' }))
+    await flush()
+    const done = await screen.findByRole('region', { name: 'Unattended work runs again' })
+    expect(document.activeElement).toBe(within(done).getByRole('heading', { name: 'Unattended work runs again' }))
+    fireEvent.click(within(done).getByRole('button', { name: 'Done' }))
+    await flush()
+    expect(document.activeElement).toBe(screen.getByRole('switch', { name: 'Incident mode' }))
+  })
+
   it('keeping it on resumes nothing', async () => {
     incident.mockResolvedValue(ON)
     show()
