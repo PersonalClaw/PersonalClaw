@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Iterator
@@ -172,8 +174,8 @@ def test_a_runtime_whose_folder_was_swept_is_handed_it_again(tmp):
 def test_a_tests_runs_never_reach_this_machines_scratch_parent():
     """The real ``<tmp>/personalclaw-scratch-<uid>`` is the owner's own gateway's: a test that
     leaves ``tempfile`` alone is handed a folder under a parent of its own
-    (``conftest._a_scratch_parent_of_its_own``), so its sweeps and removals reach none of hers.
-    🔴 Red before: the folder was made in the machine's own parent."""
+    (``conftest._a_scratch_parent_of_its_own``), so its sweeps and removals reach none of the
+    owner's. 🔴 Red before: the folder was made in the machine's own parent."""
     real = os.path.realpath(
         os.path.join(tempfile.gettempdir(), f"personalclaw-scratch-{os.getuid()}")
     )
@@ -182,6 +184,123 @@ def test_a_tests_runs_never_reach_this_machines_scratch_parent():
 
     assert folder and os.path.isdir(folder)
     assert not folder.startswith(real + os.sep), folder
+
+
+def test_a_child_a_test_starts_keeps_its_scratch_folders_under_the_runs_own_temp(
+    tmp_path, tmp_path_factory
+):
+    """A gateway a test starts as a child inherits this environment: its scratch parent, which
+    its sweep empties, is under the run's basetemp (``conftest._children_get_a_temp_of_their_own``),
+    never the machine's own ``$TMPDIR``. The child has a home of its own, as every PersonalClaw
+    child a test starts must; the scratch parent is the machine's, not a home's. 🔴 Red before:
+    the child's parent was the machine's."""
+    shown = "from personalclaw import run_bounds; print(run_bounds._scratch_parent())"
+    env = {**os.environ, "PERSONALCLAW_HOME": str(tmp_path / "home")}
+    child = subprocess.run([sys.executable, "-c", shown], env=env, capture_output=True, text=True)
+    assert child.returncode == 0, child.stderr
+    base = os.path.realpath(tmp_path_factory.getbasetemp())
+    assert os.path.realpath(child.stdout.strip()).startswith(base + os.sep), child.stdout
+
+
+_A_WORKERS_TEMP = """
+import os
+import tempfile
+
+
+def test_a_workers_temp(tmp_path_factory):
+    own = os.path.realpath(tempfile.gettempdir())
+    base = os.path.realpath(tmp_path_factory.getbasetemp())
+    assert base.startswith(own + os.sep), f"the worker's basetemp {base} is outside its temp {own}"
+    children = os.path.realpath(os.environ["TMPDIR"])
+    assert children == base, f"its children's temp {children} is not its basetemp"
+"""
+
+
+def test_an_xdist_worker_keeps_the_runs_temporary_folder_and_its_children_get_its_own(tmp_path):
+    """A worker resolves its own temporary folder as it imports conftest, and pytest's basetemp for
+    it and the guards' own folders are read from it: the controller, which runs no test, gives its
+    workers the run's ``$TMPDIR`` as it was, and each worker gives its own children its basetemp.
+    🔴 Red before: the controller set its children's folder before it started its
+    workers, so a worker's temporary folder was the controller's children's, its basetemp was
+    outside it, and on a runner whose temporary folder is in its home every worker refused its
+    basetemp as in the home (run 45786114043)."""
+    import nested_pytest
+
+    (tmp_path / "test_a_workers_temp.py").write_text(_A_WORKERS_TEMP, encoding="utf-8")
+    (tmp_path / "tmp").mkdir()
+    tests = str(Path(__file__).resolve().parent)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
+    env["PYTHONPATH"] = os.pathsep.join([tests, env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    env["TMPDIR"] = str(tmp_path / "tmp")
+    proc = subprocess.run(
+        [
+            *nested_pytest.argv(tmp_path / "tmp"),
+            "-o",
+            "addopts=",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "conftest",
+            "-q",
+            "--color=no",
+            "-n",
+            "1",
+            "test_a_workers_temp.py",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
+
+
+_A_NESTED_RUNS_TEMP = """
+import os
+import tempfile
+
+
+def test_a_nested_runs_temp(tmp_path_factory):
+    own = os.path.realpath(tempfile.gettempdir())
+    base = os.path.realpath(tmp_path_factory.getbasetemp())
+    assert base.startswith(own + os.sep), f"its basetemp {base} is outside its temp {own}"
+"""
+
+
+def test_a_pytest_a_test_starts_has_its_basetemp_in_its_own_temporary_folder(tmp_path):
+    """A test that starts a pytest of its own gives it a basetemp in the test's ``tmp_path``
+    (``nested_pytest``), and the child's temporary folder is the one this run gives its children:
+    the basetemp is in it, so the guard takes it as the nested run's own wherever the temporary
+    folder is. 🔴 Red before: the children's folder was one beside the tests' own, the nested run's
+    basetemp was outside it, and on a runner whose temporary folder is in its home every nested run
+    refused its basetemp as in the home (run 45813078059)."""
+    import nested_pytest
+
+    (tmp_path / "test_a_nested_runs_temp.py").write_text(_A_NESTED_RUNS_TEMP, encoding="utf-8")
+    tests = str(Path(__file__).resolve().parent)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
+    env["PYTHONPATH"] = os.pathsep.join([tests, env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    proc = subprocess.run(
+        nested_pytest.argv(
+            tmp_path,
+            "-o",
+            "addopts=",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "conftest",
+            "-q",
+            "--color=no",
+            "test_a_nested_runs_temp.py",
+        ),
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
 
 
 def test_the_gateways_sweep_runs_as_it_starts_and_stops(tmp):

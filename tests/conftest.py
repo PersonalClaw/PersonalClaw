@@ -1836,10 +1836,11 @@ def _a_scratch_parent_of_its_own(request, tmp_path_factory, monkeypatch) -> None
 
     That parent is per user, not per home, and a sweep removes every folder in it that no runtime
     of its own process holds and that has been idle for two days. So a test that made, swept or
-    removed folders there reached the owner's own gateway's: a run of hers paused for days lost
-    its temporary files to a test's sweep, and a test's run with the same session key as hers
-    shared her folder. A test that points ``tempfile`` at a folder of its own keeps its parent
-    there, as the scratch tests do; every other test's is under the run's own temporary root.
+    removed folders there reached the owner's own gateway's: a run of the owner's paused for
+    days lost its temporary files to a test's sweep, and a test's run with the same session key
+    as one of the owner's shared its folder. A test that points ``tempfile`` at a folder of its
+    own keeps its parent there, as the scratch tests do; every other test's is under the run's
+    own temporary root.
     """
     from personalclaw import run_bounds
 
@@ -2230,3 +2231,32 @@ def pytest_sessionstart(session):
     pre_resident = native_omp_guard.resident(sys.modules)
     if pre_resident:
         raise RuntimeError(native_omp_guard.explain(pre_resident, "session start"))
+    _children_get_a_temp_of_their_own(session.config)
+
+
+def _children_get_a_temp_of_their_own(config) -> None:
+    """Every child a test starts inherits the run's own basetemp as its temporary folder, never
+    this machine's ``$TMPDIR``, which the owner's own gateway keeps its runs' scratch folders in
+    (``run_bounds._scratch_parent``). A gateway a test started as a child, with an environment
+    built from this one, swept that parent as it started and removed the owner's runs' idle folders.
+
+    Only ``TMPDIR`` in the environment: this process resolved its own temporary folder as
+    conftest was imported, so a test here sees the folder it always did, and the scratch parent
+    of each is its own (``_a_scratch_parent_of_its_own``). In every process that runs tests, so
+    an xdist worker's children get the worker's, and a child of a child inherits it.
+
+    The basetemp itself, not a folder in it: a nested pytest a test starts takes a basetemp in
+    the test's ``tmp_path`` (``nested_pytest``), and a basetemp a run names is the run's own only
+    in its temporary folder (``_a_basetemp_the_run_names_is_a_tests_own``). Given a folder beside
+    the tests' own, a nested run's basetemp was outside its temporary folder, and on a runner whose
+    temporary folder is in its home each nested run refused it as in the home (run 45813078059).
+
+    Never in an xdist controller (``dsession``), which runs no test: its children are its
+    workers, started after this, and each resolves its own temporary folder as it imports
+    conftest, which pytest's basetemp for it and the guards' own folders are read from. Given the
+    controller's children's folder, a worker's basetemp was outside its own temporary folder, and
+    on a runner whose temporary folder is in its home every worker refused it as in the home
+    (run 45786114043)."""
+    if config.pluginmanager.hasplugin("dsession"):
+        return
+    os.environ["TMPDIR"] = str(config._tmp_path_factory.getbasetemp())
