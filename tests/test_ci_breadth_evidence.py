@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import urllib.parse
 from pathlib import Path
@@ -1254,19 +1255,26 @@ def _random_order_night(
     tmp_path, monkeypatch, gh: _Gh, run_id: int, seeds: str, *, tree: str, red: tuple[int, ...]
 ):
     """One night of the random-order leg as breadth.yml writes it: each shard's inputs, then its
-    entry with the night's seeds beside them (``ran --seeds``), then ``report`` and ``issues``."""
+    entry with the night's seeds beside them (``ran --seeds``) and its two orders' reports, then
+    ``report`` and ``issues``."""
     entries = _all_green()
     for shard in range(1, 5):
         folder = tmp_path / f"{run_id}-random-order-{shard}"
         folder.mkdir()
         inputs, out = folder / "inputs.json", folder / "entry.json"
+        (folder / "shard.txt").write_text(_FILES)
+        reports = []
+        for n in (1, 2):
+            reports += ["--junit", str(folder / f"junit-{n}.xml")]
+            (folder / f"junit-{n}.xml").write_bytes(_junit((_X, "passed")))
+        reports += ["--shard-list", str(folder / "shard.txt")]
         argv = ["inputs", "--out", str(inputs), "--tree", tree, "--image", "ubuntu24"]
         argv += ["--image-version", "20261012.1.0", "--arch", "X64", "--python", "3.13.16"]
         argv += ["--uv", "0.13.1", "--node", "none", "--external", f"shard_files={'f' * 64}"]
         assert be.main(argv) == 0
         outcome = be.RED if shard in red else be.GREEN
         argv = ["ran", "--inputs", str(inputs), "--outcome", outcome, "--seeds", seeds]
-        assert be.main([*argv, "--out", str(out)]) == 0
+        assert be.main([*argv, *reports, "--out", str(out)]) == 0
         entries[f"random-order/{shard}"] = be.json.loads(out.read_text("utf-8"))
     return _night(tmp_path, monkeypatch, gh, entries, run_id)
 
@@ -1375,3 +1383,264 @@ def test_main_s_runs_are_read_whatever_started_them(monkeypatch) -> None:
     assert be.GhSource("o/r", 41).runs() == [40]
     asked = [" ".join(call) for call in calls if any("breadth.yml/runs" in a for a in call)]
     assert asked and all("branch=main" in c and "event=" not in c for c in asked), asked
+
+
+# ── a random-order shard's one-order red (ONE_ORDER) and a green's PASSED_BY_FILE ────────────
+
+_CENSUS = Path(__file__).resolve().parent / "security_census.py"
+_FILES = "tests/test_a.py\ntests/test_b.py\ntests/security/test_c.py\n"
+_X = "tests.test_a::test_x"
+_X_ID = "tests/test_a.py::test_x"
+
+
+def _junit(*cases: tuple[str, str]) -> bytes:
+    """A JUnit report of ``classname::name`` cases, each with its result."""
+    body = []
+    for key, result in cases:
+        classname, _, name = key.partition("::")
+        inner = {"failed": "<failure message='no'/>", "skipped": "<skipped/>"}.get(result, "")
+        body.append(f'<testcase classname="{classname}" name="{name}">{inner}</testcase>')
+    return f"<testsuites><testsuite>{''.join(body)}</testsuite></testsuites>".encode()
+
+
+def _passing(*failing: str, skipped: tuple[str, ...] = ()) -> dict[str, str]:
+    keys = [_X, "tests.test_a::test_y", "tests.test_b::test_z", "tests.security.test_c::test_s"]
+    return be.junit_results(
+        _junit(
+            *(
+                (k, "failed" if k in failing else "skipped" if k in skipped else "passed")
+                for k in keys
+            )
+        )
+    )
+
+
+def _root(tmp_path: Path, **sources: str) -> Path:
+    (tmp_path / "tests" / "security").mkdir(parents=True)
+    (tmp_path / be.CENSUS).write_text(_CENSUS.read_text(encoding="utf-8"), encoding="utf-8")
+    for name, text in {"test_a.py": "def test_x(): pass\n", **sources}.items():
+        (tmp_path / "tests" / name).write_text(text, encoding="utf-8")
+    return tmp_path
+
+
+def _replay(outcome: str = be.REPLAY_PASSED, seed: str = "801", test: str = _X_ID) -> dict:
+    return {"seed": seed, "worker": "gw1", "tests": [{"test": test, "outcome": outcome}]}
+
+
+def _evidence(tmp_path: Path, results: dict, replay: dict | None = None, **sources: str) -> dict:
+    found = be.one_order_red(
+        results, replay or _replay(), be.shard_files(_FILES), _root(tmp_path, **sources)
+    )
+    assert found is not None
+    return found
+
+
+def test_a_one_order_red_its_other_seed_and_replay_passed_is_a_flakes_evidence(
+    tmp_path: Path,
+) -> None:
+    """🔴 Before: a red random-order shard said only that it was red."""
+    evidence = _evidence(tmp_path, {"801": _passing(_X), "802": _passing()})
+    assert evidence["accepted"] is True, evidence
+    assert evidence["test"] == _X_ID and evidence["file"] == "tests/test_a.py"
+    assert evidence["failed"] == {"seed": "801", "outcome": "failed"}
+    assert evidence["passed"] == {"seed": "802", "outcome": "passed"}
+    assert evidence["rerun"] == {"seed": "801", "worker": "gw1", "outcome": be.REPLAY_PASSED}
+    assert evidence["counts"] == {"801": 4, "802": 4}
+    green = be.passed_by_file([_passing(), _passing()], be.shard_files(_FILES))
+    assert green[be.path_key("tests/test_a.py")] == evidence["file_passed"]
+
+
+@pytest.mark.parametrize(
+    "replay,why",
+    [
+        (_replay(be.REPLAY_PASSED.replace("passed", "failed again")), "its replay of seed 801"),
+        (_replay(seed="802"), "its replay of seed 801"),
+        (_replay(test="tests/test_a.py::test_y"), "no replay"),
+        (None, "its replay of seed 801"),
+    ],
+    ids=["it failed again", "another seed's replay", "another test's replay", "no replay"],
+)
+def test_a_one_order_red_whose_replay_did_not_pass_it_is_no_flake(
+    tmp_path: Path, replay: dict | None, why: str
+) -> None:
+    results = {"801": _passing(_X), "802": _passing()}
+    found = be.one_order_red(results, replay, be.shard_files(_FILES), _root(tmp_path))
+    assert found is not None and found["accepted"] is False
+    assert why in found["why"] or why in found["rerun"]["outcome"], found
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        {"test_a.py": "import pytest\n\npytestmark = pytest.mark.security\n"},
+        {"test_a.py": "from personalclaw.security import fence_untrusted\n"},
+        {"test_a.py": "import pytest\n\n\n@pytest.mark.security\ndef test_x(): pass\n"},
+    ],
+    ids=["marked module", "imports a registry", "marked test"],
+)
+def test_a_security_row_is_never_a_flake(tmp_path: Path, sources: dict[str, str]) -> None:
+    evidence = _evidence(tmp_path, {"801": _passing(_X), "802": _passing()}, **sources)
+    assert evidence["accepted"] is False and evidence["security"] is True
+    assert evidence["why"] == "a security row is never a flake"
+
+
+def test_a_test_in_the_security_folder_is_never_a_flake(tmp_path: Path) -> None:
+    secure = "tests.security.test_c::test_s"
+    root = _root(tmp_path)
+    (root / "tests" / "security" / "test_c.py").write_text("def test_s(): pass\n")
+    results = {"801": _passing(secure), "802": _passing()}
+    replay = _replay(test="tests/security/test_c.py::test_s")
+    found = be.one_order_red(results, replay, be.shard_files(_FILES), root)
+    assert found is not None and found["accepted"] is False and found["security"] is True
+
+
+def test_the_other_seed_must_have_passed_it_with_the_same_tests_collected(tmp_path: Path) -> None:
+    skipped = _evidence(tmp_path / "a", {"801": _passing(_X), "802": _passing(skipped=(_X,))})
+    assert skipped["accepted"] is False and "did not pass it (skipped)" in skipped["why"]
+    fewer = dict(_passing())
+    del fewer["tests.test_b::test_z"]
+    other = _evidence(tmp_path / "b", {"801": _passing(_X), "802": fewer})
+    assert other["accepted"] is False and other["counts"] == {"801": 4, "802": 3}
+    assert other["why"] == "its two seeds did not collect the same tests"
+
+
+def test_a_red_under_both_seeds_or_of_two_tests_is_no_flake(tmp_path: Path) -> None:
+    both = be.one_order_red(
+        {"801": _passing(_X), "802": _passing(_X)}, _replay(), be.shard_files(_FILES), tmp_path
+    )
+    assert both is None
+    two = _evidence(tmp_path, {"801": _passing(_X, "tests.test_b::test_z"), "802": _passing()})
+    assert two["accepted"] is False and two["why"] == "2 tests failed under seed 801"
+
+
+def test_ran_keeps_a_reds_evidence_and_a_greens_passed_files(tmp_path: Path) -> None:
+    root = _root(tmp_path / "root")
+    (tmp_path / "inputs.json").write_text("{}")
+    (tmp_path / "shard.txt").write_text(_FILES)
+    (tmp_path / "1.xml").write_bytes(
+        _junit(
+            (_X, "failed"), ("tests.test_a::test_y", "passed"), ("tests.test_b::test_z", "passed")
+        )
+    )
+    (tmp_path / "2.xml").write_bytes(
+        _junit(
+            (_X, "passed"), ("tests.test_a::test_y", "passed"), ("tests.test_b::test_z", "passed")
+        )
+    )
+    (tmp_path / "replay.json").write_text(json.dumps(_replay()))
+    common = [
+        "ran",
+        "--inputs",
+        str(tmp_path / "inputs.json"),
+        "--seeds",
+        "801,802",
+        "--junit",
+        str(tmp_path / "1.xml"),
+        "--junit",
+        str(tmp_path / "2.xml"),
+        "--shard-list",
+        str(tmp_path / "shard.txt"),
+        "--root",
+        str(root),
+    ]
+    assert (
+        be.main(
+            [
+                *common,
+                "--outcome",
+                "failure",
+                "--replay",
+                str(tmp_path / "replay.json"),
+                "--out",
+                str(tmp_path / "red.json"),
+            ]
+        )
+        == 0
+    )
+    red = json.loads((tmp_path / "red.json").read_text())
+    assert red["result"] == be.RED and red[be.ONE_ORDER]["accepted"] is True, red
+    (tmp_path / "1.xml").write_bytes((tmp_path / "2.xml").read_bytes())
+    assert be.main([*common, "--outcome", "success", "--out", str(tmp_path / "green.json")]) == 0
+    green = json.loads((tmp_path / "green.json").read_text())
+    assert green["result"] == be.GREEN and be.ONE_ORDER not in green
+    assert (
+        green[be.PASSED_BY_FILE][be.path_key("tests/test_a.py")] == red[be.ONE_ORDER]["file_passed"]
+    )
+
+
+def _ran_green(tmp_path: Path, first: bytes | None, second: bytes | None, *named: str) -> dict:
+    """``ran`` on a green step of the random-order leg, its two orders' reports as given (None:
+    not written), and *named* in place of the reports' and the list's flags when given."""
+    (tmp_path / "inputs.json").write_text("{}")
+    (tmp_path / "shard.txt").write_text(_FILES)
+    for n, report in ((1, first), (2, second)):
+        if report is not None:
+            (tmp_path / f"{n}.xml").write_bytes(report)
+    flags = named or (
+        "--junit",
+        str(tmp_path / "1.xml"),
+        "--junit",
+        str(tmp_path / "2.xml"),
+        "--shard-list",
+        str(tmp_path / "shard.txt"),
+    )
+    argv = ["ran", "--inputs", str(tmp_path / "inputs.json"), "--seeds", "801,802", *flags]
+    assert be.main([*argv, "--outcome", "success", "--out", str(tmp_path / "entry.json")]) == 0
+    return json.loads((tmp_path / "entry.json").read_text())
+
+
+_RAN = _junit((_X, "passed"), ("tests.test_a::test_y", "passed"))
+
+
+@pytest.mark.parametrize(
+    ("report", "said"),
+    [
+        (_junit(), "seed 802's order ran no test (0 in its report, none run)"),
+        (_junit((_X, "skipped")), "seed 802's order ran no test (1 in its report, none run)"),
+        (_junit((_X, "passed")), "its two orders ran other tests (1 in one report and not"),
+    ],
+    ids=["collect-only", "only-skips", "other-tests"],
+)
+def test_a_green_order_that_ran_no_test_or_other_tests_is_red(tmp_path, report, said) -> None:
+    """🔴 A collect-only order (``--co``) exits 0 and writes a report of no case: the shard read
+    green on one order run. An order whose tests were deselected or skipped is the same, and so
+    is one that ran a part of the shard, since a seed only reorders what was collected."""
+    entry = _ran_green(tmp_path, _RAN, report)
+    assert entry["result"] == be.RED, entry
+    assert entry[be.ORDERS_NOT_RUN].startswith(said)
+    assert be.PASSED_BY_FILE not in entry
+
+
+def test_an_order_whose_report_is_missing_or_not_named_is_red(tmp_path, monkeypatch) -> None:
+    """🔴 Nothing shows an order ran when its report is gone, or when the step names no reports
+    at all (its env dropped): the shard is red, never green on what was not read."""
+    monkeypatch.delenv("BREADTH_ORDER_REPORTS", raising=False)
+    entry = _ran_green(tmp_path, _RAN, None)
+    assert entry["result"] == be.RED and "were not read" in entry[be.ORDERS_NOT_RUN], entry
+    entry = _ran_green(tmp_path, _RAN, _RAN, "--shard-list", str(tmp_path / "shard.txt"))
+    assert entry["result"] == be.RED, entry
+    assert "0 order reports and a shard list are named" in entry[be.ORDERS_NOT_RUN]
+
+
+def test_two_orders_that_ran_the_same_tests_are_green(tmp_path) -> None:
+    entry = _ran_green(tmp_path, _RAN, _RAN)
+    assert entry["result"] == be.GREEN and be.ORDERS_NOT_RUN not in entry, entry
+
+
+@pytest.mark.parametrize(
+    "census",
+    [None, "SECURITY_FOLDER = (\n", "SECURITY_FOLDER = 1\n"],
+    ids=["missing", "unparsable", "unknown-shape"],
+)
+def test_a_census_that_cannot_be_read_reads_as_security(tmp_path: Path, census) -> None:
+    """🔴 What isn't read can't clear a test of being a security row: a census missing, unparsable
+    or of a shape this doesn't know reads as security, and the red is no flake."""
+    root = _root(tmp_path)
+    if census is None:
+        (root / be.CENSUS).unlink()
+    else:
+        (root / be.CENSUS).write_text(census, encoding="utf-8")
+    found = be.one_order_red(
+        {"801": _passing(_X), "802": _passing()}, _replay(), be.shard_files(_FILES), root
+    )
+    assert found is not None and found["accepted"] is False and found["security"] is True, found

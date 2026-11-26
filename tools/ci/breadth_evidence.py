@@ -278,6 +278,233 @@ def settle(
 NIGHT_STARTS_UTC = (9, 37)
 
 
+# ── a random-order shard's one-order red, and what a green one passed ─────────────────────────
+
+#: A red random-order entry's evidence (:func:`one_order_red`): the one test that failed under
+#: one of its two seeds, how its other seed and the replay of its worker's order found it, and
+#: whether that is a flake's evidence. Only the release gate reads it; the entry stays red.
+ONE_ORDER = "one_order_red"
+#: A green random-order entry's digest, per test file, of the tests that passed under both its
+#: seeds (:func:`passed_by_file`), so a later release can tell a flaky test passed here.
+PASSED_BY_FILE = "passed_by_file"
+#: Why a random-order entry is red though its step was green (:func:`orders_ran`): an order
+#: whose report shows no test run, two orders that ran other tests, or a report not read.
+ORDERS_NOT_RUN = "orders_not_run"
+#: The one outcome of run-job's replay rerun (``tools/ci/jobs.py``'s ``REPLAY_PASSED``) that is
+#: a flake's evidence: the failing worker's whole order, replayed in one worker, passed.
+REPLAY_PASSED = "passed replayed in its worker's order"
+#: The largest JUnit report read, and the census this reads with ``ast``, never importing it.
+_MAX_JUNIT_BYTES = 64 * 1024 * 1024
+CENSUS = "tests/security_census.py"
+
+
+def junit_results(data: bytes) -> dict[str, str]:
+    """Each test a JUnit report holds, as ``classname::name``, and its result: ``failed`` when
+    any of its cases failed or errored (a failed call and an errored teardown are one test), or
+    it was an expected failure; ``passed`` when every case passed; else ``skipped``. Raises
+    :class:`Refused` for a report that is not one."""
+    import xml.etree.ElementTree as ET
+
+    if len(data) > _MAX_JUNIT_BYTES or b"<!DOCTYPE" in data[:4096].upper():
+        raise Refused("not a JUnit report this reads")
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError as exc:
+        raise Refused(f"not a JUnit report: {exc}") from None
+    found: dict[str, set[str]] = {}
+    for case in root.iter("testcase"):
+        key = f"{case.get('classname') or ''}::{case.get('name') or ''}"
+        skipped = case.find("skipped")
+        if case.find("failure") is not None or case.find("error") is not None:
+            got = "failed"
+        elif skipped is not None:
+            got = "failed" if skipped.get("type") == "pytest.xfail" else "skipped"
+        else:
+            got = "passed"
+        found.setdefault(key, set()).add(got)
+    return {
+        key: "failed" if "failed" in got else "passed" if got == {"passed"} else "skipped"
+        for key, got in found.items()
+    }
+
+
+def shard_files(shard_list: str) -> dict[str, str]:
+    """Each test file a shard's list names, by its module's dotted name, as pytest's JUnit
+    classname begins."""
+    files = [line.strip() for line in shard_list.splitlines() if line.strip()]
+    return {f.removesuffix(".py").replace("/", "."): f for f in files if f.endswith(".py")}
+
+
+def node_id(key: str, files: Mapping[str, str]) -> tuple[str, str] | None:
+    """A JUnit ``classname::name``'s test file and pytest node id: the longest dotted prefix of
+    its classname that is one of the shard's *files*, then its classes, then its name."""
+    classname, _, name = key.partition("::")
+    parts = classname.split(".")
+    for k in range(len(parts), 0, -1):
+        found = files.get(".".join(parts[:k]))
+        if found is not None:
+            return found, "::".join([found, *parts[k:], name])
+    return None
+
+
+def _digest16(keys: Sequence[str]) -> str:
+    return digest("\n".join(sorted(keys)).encode())[:16]
+
+
+def path_key(path: str) -> str:
+    """The key :data:`PASSED_BY_FILE` gives a test file: its path's digest, cut short."""
+    return digest(path.encode())[:12]
+
+
+def passed_by_file(
+    results: Sequence[Mapping[str, str]], files: Mapping[str, str]
+) -> dict[str, str]:
+    """For each test file, the digest of the tests that passed under every one of *results*
+    (each order's), by :func:`path_key`."""
+    both = set.intersection(*({k for k, r in got.items() if r == "passed"} for got in results))
+    by_file: dict[str, list[str]] = {}
+    for key in both:
+        where = node_id(key, files)
+        if where is not None:
+            by_file.setdefault(where[0], []).append(key)
+    return {path_key(path): _digest16(keys) for path, keys in sorted(by_file.items())}
+
+
+def _registry_imports(tree: Any, registries: Sequence[str]) -> bool:
+    import ast
+
+    def under(name: str) -> bool:
+        return any(name == r or name.startswith(r + ".") for r in registries)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(under(a.name) for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            if under(node.module) or any(under(f"{node.module}.{a.name}") for a in node.names):
+                return True
+    return False
+
+
+def security_named(root: Path, path: str) -> bool | None:
+    """Whether test file *path* is one the security census names, or names the ``security``
+    marker anywhere: under its folder, by a name prefix, one by one, or importing a registry,
+    as ``tests/security_census.py`` holds them (read with ``ast``, never imported). None when
+    the census or the file cannot be read, which a caller reads as security."""
+    import ast
+
+    try:
+        census = ast.parse((root / CENSUS).read_text(encoding="utf-8"))
+        source = (root / path).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, ValueError):
+        return None
+    named: dict[str, Any] = {}
+    for node in census.body:
+        target: ast.expr
+        value: ast.expr | None
+        if isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        else:
+            continue
+        if isinstance(target, ast.Name) and value is not None:
+            try:
+                named[target.id] = ast.literal_eval(value)
+            except ValueError:
+                continue
+    folder, prefixes = named.get("SECURITY_FOLDER"), named.get("NAME_PREFIXES")
+    modules, registries = named.get("NAMED_MODULES"), named.get("REGISTRIES")
+    if not (
+        isinstance(folder, str)
+        and isinstance(prefixes, dict)
+        and isinstance(modules, dict)
+        and isinstance(registries, dict)
+    ):
+        return None
+    if path.startswith(f"tests/{folder}/") or path in modules:
+        return True
+    if any(path.rsplit("/", 1)[-1].startswith(prefix) for prefix in prefixes):
+        return True
+    return _registry_imports(tree, list(registries)) or bool(
+        re.search(r"\bmark\.security\b", source)
+    )
+
+
+def one_order_red(
+    results: Mapping[str, Mapping[str, str]],
+    replay: Mapping[str, Any] | None,
+    files: Mapping[str, str],
+    root: Path,
+) -> dict[str, Any] | None:
+    """A red random-order shard's evidence when exactly one of its two seeds (*results*, each
+    seed's JUnit results) failed, else None: that red is red, and nothing reads it as a flake.
+
+    The evidence names the one test, and is ``accepted`` only when all of these hold; else
+    ``why`` says which did not:
+    - the red seed failed exactly that one test;
+    - the other seed collected the same tests, and passed it (not skipped);
+    - the replay of the red seed's failing worker's order (run-job's *replay*) is of that seed
+      and passed it, :data:`REPLAY_PASSED`;
+    - it is not security-marked: the replay says so, and the census names neither its file nor
+      the marker in it (:func:`security_named`).
+    Its file's tests that passed under the other seed are kept as one digest, which the release
+    gate holds to the last green breadth's (:data:`PASSED_BY_FILE`)."""
+    if len(results) != 2:
+        return None
+    failing = {
+        seed: sorted(k for k, r in got.items() if r == "failed") for seed, got in results.items()
+    }
+    red = [seed for seed, failed in failing.items() if failed]
+    if len(red) != 1:
+        return None
+    [failed_seed] = red
+    [passed_seed] = [seed for seed in results if seed != failed_seed]
+    counts = {seed: len(got) for seed, got in results.items()}
+    evidence: dict[str, Any] = {
+        "failed": {"seed": failed_seed, "outcome": "failed"},
+        "passed": {"seed": passed_seed},
+        "counts": counts,
+        "accepted": False,
+    }
+    if len(failing[failed_seed]) != 1:
+        evidence["why"] = f"{len(failing[failed_seed])} tests failed under seed {failed_seed}"
+        return evidence
+    [key] = failing[failed_seed]
+    where = node_id(key, files)
+    evidence["test"] = where[1] if where else key
+    outcome = results[passed_seed].get(key, "not run")
+    evidence["passed"]["outcome"] = outcome
+    found: Mapping[str, Any] = replay if isinstance(replay, Mapping) else {}
+    tests = [t for t in found.get("tests") or [] if isinstance(t, Mapping)]
+    rerun = next((t for t in tests if where and t.get("test") == where[1]), None)
+    evidence["rerun"] = {
+        "seed": found.get("seed"),
+        "worker": found.get("worker"),
+        "outcome": (rerun or {}).get("outcome", "no replay"),
+    }
+    named = security_named(root, where[0]) if where else None
+    evidence["security"] = named is not False
+    if where is None:
+        evidence["why"] = "its case names no test file of the shard"
+    elif set(results[passed_seed]) != set(results[failed_seed]):
+        evidence["why"] = "its two seeds did not collect the same tests"
+    elif outcome != "passed":
+        evidence["why"] = f"seed {passed_seed} did not pass it ({outcome})"
+    elif evidence["rerun"]["seed"] != failed_seed or evidence["rerun"]["outcome"] != REPLAY_PASSED:
+        evidence["why"] = f"its replay of seed {failed_seed}: {evidence['rerun']['outcome']}"
+    elif evidence["security"]:
+        evidence["why"] = "a security row is never a flake"
+    else:
+        passed = [
+            k
+            for k, r in results[passed_seed].items()
+            if r == "passed" and (node_id(k, files) or ("",))[0] == where[0]
+        ]
+        evidence.update({"accepted": True, "file": where[0], "file_passed": _digest16(passed)})
+    return evidence
+
+
 def night_of(created_at: str) -> str:
     """The night a run belongs to: the date of the scheduled slot at or before its creation.
 
@@ -952,6 +1179,65 @@ def _jobs_ran_in(repo: str, run_id: int, attempt: int) -> dict[str, tuple[int, s
     return ran_in(rows, attempt)
 
 
+def orders_ran(results: Mapping[str, Mapping[str, str]]) -> str | None:
+    """Why two seeded orders' JUnit results (*results*, by seed) don't show that both ran the
+    shard's tests, or None when they do: each holds a test that ran, passed or failed, and both
+    hold the same tests, since a seed only reorders what was collected. A collect-only order
+    writes a report of no case, and an order that deselects its tests one of only skips."""
+    for seed, got in results.items():
+        if not any(r != "skipped" for r in got.values()):
+            return f"seed {seed}'s order ran no test ({len(got)} in its report, none run)"
+    first, second = results.values()
+    if set(first) != set(second):
+        apart = len(set(first) ^ set(second))
+        return f"its two orders ran other tests ({apart} in one report and not the other)"
+    return None
+
+
+def _orders(args: argparse.Namespace, result: str) -> tuple[str, dict[str, Any]]:
+    """``ran``'s reading of a random-order shard's two orders (two ``--seeds``): the entry's
+    result, and its evidence, a red's :data:`ONE_ORDER` or a green's :data:`PASSED_BY_FILE`. A
+    green step is a green entry only when both orders' reports show they ran the shard's tests
+    (:func:`orders_ran`). A report or the shard's list that is not named or not read shows
+    nothing, so the entry is red, :data:`ORDERS_NOT_RUN` saying why, and holds no evidence."""
+    if len(args.seeds) != 2:
+        return result, {}
+    junits = (
+        args.junit
+        if args.junit is not None
+        else os.environ.get("BREADTH_ORDER_REPORTS", "").split()
+    )
+    try:
+        if len(junits) != 2 or not args.shard_list:
+            raise Refused(
+                f"{len(junits)} order reports and {'a' if args.shard_list else 'no'} shard list"
+                " are named, not one report a seed and the list"
+            )
+        results = {
+            seed: junit_results(Path(path).read_bytes())
+            for seed, path in zip(args.seeds, junits, strict=True)
+        }
+        files = shard_files(Path(args.shard_list).read_text(encoding="utf-8"))
+    except (OSError, Refused) as exc:
+        why = f"its orders' reports were not read, so nothing shows they ran: {exc}"
+        _summary(f"The shard is red: {why}")
+        return RED, {ORDERS_NOT_RUN: why}
+    not_run = orders_ran(results)
+    if not_run is not None:
+        _summary(f"The shard is red: {not_run}")
+        return RED, {ORDERS_NOT_RUN: not_run}
+    if result == GREEN:
+        return GREEN, {PASSED_BY_FILE: passed_by_file(list(results.values()), files)}
+    replay: Any = None
+    if args.replay:
+        try:
+            replay = _load(args.replay)
+        except (OSError, ValueError):
+            replay = None
+    evidence = one_order_red(results, replay, files, Path(args.root))
+    return RED, {ONE_ORDER: evidence} if evidence is not None else {}
+
+
 def _seeds(text: str) -> tuple[str, ...]:
     """``ran --seeds``: whole numbers, comma-separated, as ``--random-order-seed`` takes them."""
     seeds = tuple(text.split(","))
@@ -990,6 +1276,25 @@ def main(argv: list[str] | None = None) -> int:
         default=(),
         help="the seeds its orders were drawn from, comma-separated, kept beside its inputs",
     )
+    # The random-order leg's evidence, from its step's env when not given here: its run: line is
+    # one the contract holds token for token.
+    p.add_argument(
+        "--junit",
+        action="append",
+        default=None,
+        help="each seed's JUnit report, in the seeds' order (default: $BREADTH_ORDER_REPORTS)",
+    )
+    p.add_argument(
+        "--replay",
+        default=os.environ.get("BREADTH_REPLAY") or None,
+        help="run-job's replay of the shard's failed test, if it left one ($BREADTH_REPLAY)",
+    )
+    p.add_argument(
+        "--shard-list",
+        default=os.environ.get("BREADTH_SHARD_LIST") or None,
+        help="the shard's test files, one a line ($BREADTH_SHARD_LIST)",
+    )
+    p.add_argument("--root", default=".", help="the checkout, where the security census is read")
     p.add_argument("--out", required=True)
     p = sub.add_parser("night", help="the night a run belongs to, from its creation time")
     p.add_argument("--created-at", required=True, help="the run's created_at, fixed on reruns")
@@ -1060,9 +1365,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             _output("run=false")
     elif args.command == "ran":
-        result = GREEN if args.outcome == GREEN else RED
+        result, evidence = _orders(args, GREEN if args.outcome == GREEN else RED)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        _write(args.out, executed(_load(args.inputs), result, now, args.attempt, args.seeds))
+        entry = executed(_load(args.inputs), result, now, args.attempt, args.seeds)
+        entry.update(evidence)
+        _write(args.out, entry)
     elif args.command == "night":
         _output(f"night={night_of(args.created_at)}")
     elif args.command == "report":

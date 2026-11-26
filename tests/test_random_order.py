@@ -184,8 +184,9 @@ def test_an_order_that_fails_leaves_its_order_and_the_pre_cleanup_snapshot(tmp_p
         .splitlines()
     ]
     assert [line["nodeid"] for line in lines] == random_order.shuffled(ids, seed)
-    report = json.loads((tmp_path / "reports" / "state-leaks.json").read_text())
+    report = json.loads((tmp_path / random_order.FOLDER / f"state-leaks-{seed}.json").read_text())
     assert report["tests"] == 2
+    assert not (tmp_path / "reports" / "state-leaks.json").exists(), "each order keeps its own"
 
 
 def test_the_seed_names_itself_in_the_summary(tmp_path: Path) -> None:
@@ -242,6 +243,54 @@ def test_a_replay_of_a_failing_order_file_fails_as_the_order_did(tmp_path: Path)
     (tmp_path / "fixed.txt").write_text(f"{polluter}\n{victim}\n")
     fixed = _pytest(tmp_path, "-q", "-p", "no:xdist", "--replay-order", "fixed.txt")
     assert fixed.returncode == 0 and "2 passed" in fixed.stdout, fixed.stdout[-3000:]
+
+
+def _recording(tmp_path: Path) -> None:
+    """Two modules whose every test writes its own id to ``ran.txt`` as it runs."""
+    for module in ("test_rec_a", "test_rec_b"):
+        body = ["from pathlib import Path\n"]
+        for n in range(3):
+            body.append(
+                f"\ndef test_{n}():\n"
+                f"    with (Path(__file__).parent / 'ran.txt').open('a') as out:\n"
+                f"        out.write('{module}.py::test_{n}\\n')\n"
+            )
+        (tmp_path / f"{module}.py").write_text("".join(body))
+
+
+def test_a_replay_in_one_worker_runs_the_files_tests_in_its_order(tmp_path: Path) -> None:
+    """``-n 1 --dist load`` hands the one worker every test the file lists, in the file's order,
+    across modules and back."""
+    _recording(tmp_path)
+    listed = [
+        "test_rec_b.py::test_2",
+        "test_rec_a.py::test_0",
+        "test_rec_b.py::test_0",
+        "test_rec_a.py::test_2",
+        "test_rec_a.py::test_1",
+    ]
+    (tmp_path / "listed.txt").write_text("\n".join(listed) + "\n")
+    ran = _pytest(tmp_path, "-q", "-n", "1", "--dist", "load", "--replay-order", "listed.txt")
+    assert ran.returncode == 0 and "5 passed" in ran.stdout, ran.stdout[-3000:] + ran.stderr[-2000:]
+    assert (tmp_path / "ran.txt").read_text().splitlines() == listed
+
+
+def test_a_replay_in_a_worker_runs_as_a_worker_and_two_workers_are_refused(
+    tmp_path: Path,
+) -> None:
+    """A test that fails only in an xdist worker fails in a one-worker replay, as it failed in
+    the worker whose order is replayed, and passes alone; a replay never splits over workers."""
+    (tmp_path / "test_in_a_worker.py").write_text(
+        "import os\n\n\ndef test_alone():\n" "    assert 'PYTEST_XDIST_WORKER' not in os.environ\n"
+    )
+    (tmp_path / "one.txt").write_text("test_in_a_worker.py::test_alone\n")
+    worker = _pytest(tmp_path, "-q", "-n", "1", "--dist", "load", "--replay-order", "one.txt")
+    assert worker.returncode == 1, worker.stdout[-3000:] + worker.stderr[-2000:]
+    alone = _pytest(tmp_path, "-q", "-p", "no:xdist", "--replay-order", "one.txt")
+    assert alone.returncode == 0, alone.stdout[-3000:] + alone.stderr[-2000:]
+    for split in (["-n", "2", "--dist", "load"], ["-n", "1", "--dist", "worksteal"]):
+        refused = _pytest(tmp_path, "-q", *split, "--replay-order", "one.txt")
+        assert refused.returncode == 4 and "one process" in refused.stderr, refused.stderr[-2000:]
 
 
 def test_a_replay_runs_what_it_lists_in_its_order_and_refuses_what_it_cannot(

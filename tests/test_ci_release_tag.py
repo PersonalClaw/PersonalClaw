@@ -566,6 +566,7 @@ class BreadthApi:
         self.artifacts: dict[int, list[dict[str, object]]] = {}
         self.zips: dict[int, bytes] = {}
         self.issues: list[dict[str, object]] = []
+        self.history: list[dict[str, object]] = []
         self.fail = ""
         self.paths: list[str] = []
 
@@ -640,10 +641,22 @@ class BreadthApi:
         )
         return self
 
+    def earlier(self, run_id: int, *records: dict, **overrides: object) -> "BreadthApi":
+        """An earlier breadth run of another commit or branch: main's nightly, by default."""
+        overrides = {"branch": "main", "event": "schedule", **overrides}
+        self.run(run_id, *records, **overrides)  # type: ignore[arg-type]
+        self.history.append(self.runs.pop())
+        return self
+
     def __call__(self, path: str) -> object:
         self.paths.append(path)
         if self.fail and self.fail in path:
             raise OSError("HTTP Error 502: Bad Gateway")
+        if path == (
+            f"/repos/{REPOSITORY}/actions/workflows/breadth.yml/runs?status=completed&per_page=100"
+        ):
+            done = [r for r in [*self.runs, *self.history] if r["status"] == "completed"]
+            return {"total_count": len(done), "workflow_runs": done}
         if path == (
             f"/repos/{REPOSITORY}/actions/workflows/breadth.yml/runs"
             f"?head_sha={self.commit}&per_page=100"
@@ -1470,3 +1483,182 @@ def test_main_reads_the_verdict_before_it_creates_and_a_red_one_creates_nothing(
     out = capsys.readouterr().out
     assert f"the controller's verdict on its tree is green: #{PR}" in out, out
     assert len(post.calls) == 2
+
+
+# ── the one-order flake rule (breadth_evidence.ONE_ORDER) ────────────────────────────────────
+
+#: The flaky test the rows plant, in a file the planted commit holds.
+FLAKY_FILE = "README.md"
+FLAKY = f"{FLAKY_FILE}::test_it"
+FLAKY_SHARD = "random-order/2"
+#: The digest of the file's tests its other seed passed, and of a green run's both seeds.
+PASSED = "d" * 16
+
+
+def _one_order(test: str = FLAKY, **more: object) -> dict[str, object]:
+    """An accepted one-order red's evidence, as ``breadth_evidence ran`` writes it."""
+    return {
+        "test": test,
+        "file": FLAKY_FILE,
+        "file_passed": PASSED,
+        "accepted": True,
+        "failed": {"seed": "801", "outcome": "failed"},
+        "passed": {"seed": "802", "outcome": "passed"},
+        "rerun": {"seed": "801", "worker": "gw2", "outcome": breadth_evidence.REPLAY_PASSED},
+        "counts": {"801": 40, "802": 40},
+        "security": False,
+        **more,
+    }
+
+
+def _flaky(key: str = FLAKY_SHARD, attempt: int = 1, **more: object) -> dict[str, object]:
+    return _red(key, attempt, **{breadth_evidence.ONE_ORDER: _one_order(**more)})
+
+
+def _green(api: BreadthApi, run_id: int, passed: str = PASSED, **overrides: object) -> None:
+    """An earlier green breadth whose random-order shard passed the flaky file's tests."""
+    record = _record(run_id, "another-tree")
+    shard = record["legs"][FLAKY_SHARD]
+    shard[breadth_evidence.PASSED_BY_FILE] = {breadth_evidence.path_key(FLAKY_FILE): passed}
+    api.earlier(run_id, record, **overrides)
+
+
+def _flaky_release(planted: dict[str, object], *flakes: dict[str, object]) -> BreadthApi:
+    api = BreadthApi(planted)
+    legs = {FLAKY_SHARD: flakes[0]} if len(flakes) == 1 else {}
+    for n, flake in enumerate(flakes if len(flakes) > 1 else ()):
+        legs[f"random-order/{n + 1}"] = flake
+    api.run(
+        80, _record(80, api.tree, **legs), conclusion="failure", created_at="2026-11-25T02:00:00Z"
+    )
+    return api
+
+
+def test_a_one_order_red_its_rule_holds_is_passed_over_and_said(
+    planted: dict[str, object],
+) -> None:
+    """🔴 Before: a random-order shard red under one seed refused the release, whatever its other
+    seed and a replay of its worker's order found. Its rule holding, the gate passes it and says
+    it in full beside the run."""
+    api = _flaky_release(planted, _flaky())
+    _green(api, 79, created_at="2026-11-24T02:00:00Z")
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    said = _breadth(planted, api)
+    assert said.startswith(f"https://github.com/{REPOSITORY}/actions/runs/80 ("), said
+    assert (
+        f"one-order flake {FLAKY}: failed under seed 801, passed under seed 802,"
+        f" {breadth_evidence.REPLAY_PASSED} (gw2); passed in"
+        f" https://github.com/{REPOSITORY}/actions/runs/79; its row #5"
+    ) in said
+
+
+def test_a_one_order_red_whose_evidence_is_not_accepted_stays_red(
+    planted: dict[str, object],
+) -> None:
+    api = _flaky_release(planted, _flaky(accepted=False))
+    _green(api, 79)
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    assert f"{FLAKY_SHARD} is red on attempt 1" in _breadth_refusal(planted, api)
+
+
+@pytest.mark.parametrize("carried", [False, True], ids=["measured", "carried"])
+def test_a_carried_one_order_red_is_never_passed_over(
+    planted: dict[str, object], carried: bool
+) -> None:
+    """🔴 A release rests on what its own run measured. Attempt 1's one-order red, passed over
+    when that attempt ran it, refuses when it was carried from another run."""
+    api = BreadthApi(planted)
+    flake = _flaky()
+    if carried:
+        flake["reused_from"] = {"run_id": 70, "digest": "d"}
+    first = _record(80, api.tree, **{FLAKY_SHARD: flake})
+    api.run(80, first, _record(80, api.tree, attempt=2), attempt=2)
+    _green(api, 79, created_at="2026-11-24T02:00:00Z")
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    if carried:
+        assert f"{FLAKY_SHARD} is red on attempt 1" in _breadth_refusal(planted, api)
+    else:
+        assert f"one-order flake {FLAKY}" in _breadth(planted, api)
+
+
+def test_a_second_one_order_red_in_the_run_refuses(planted: dict[str, object]) -> None:
+    """🔴 Before: refused as any red. One flake at most, across every shard and attempt."""
+    api = _flaky_release(planted, _flaky(), _flaky(test="README.md::test_other"))
+    _green(api, 79)
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    assert "holds 2 one-order reds" in _breadth_refusal(planted, api)
+
+
+@pytest.mark.parametrize(
+    "back,created_at",
+    [(1, "2026-11-24T02:00:00Z"), (12, "2026-11-20T02:00:00Z")],
+    ids=["within ten runs", "past ten runs, within fourteen days"],
+)
+def test_a_repeat_of_the_same_flaky_test_refuses(
+    planted: dict[str, object], back: int, created_at: str
+) -> None:
+    """🔴 Before: refused as any red. The same test passed over as a flake in the last ten
+    breadth runs, or in the last fourteen days, is red the next time."""
+    api = _flaky_release(planted, _flaky())
+    _green(api, 79, created_at="2026-11-24T03:00:00Z")
+    for n in range(2, back):
+        api.earlier(80 - n, _record(80 - n, "t"), created_at="2026-11-23T02:00:00Z")
+    repeat = 80 - max(back, 2)
+    api.earlier(repeat, _record(repeat, "t", **{FLAKY_SHARD: _flaky()}), created_at=created_at)
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    refused = _breadth_refusal(planted, api)
+    assert f"passed over {FLAKY} as a one-order flake in run" in refused, refused
+    assert "a repeat is red" in refused
+
+
+def test_a_repeat_older_than_the_window_does_not_refuse(planted: dict[str, object]) -> None:
+    api = _flaky_release(planted, _flaky())
+    _green(api, 79, created_at="2026-11-24T03:00:00Z")
+    for n in range(2, 12):
+        api.earlier(80 - n, _record(80 - n, "t"), created_at="2026-11-23T02:00:00Z")
+    api.earlier(60, _record(60, "t", **{FLAKY_SHARD: _flaky()}), created_at="2026-11-01T02:00:00Z")
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    assert f"one-order flake {FLAKY}" in _breadth(planted, api)
+
+
+def test_a_flaky_test_the_last_green_breadth_did_not_pass_refuses(
+    planted: dict[str, object],
+) -> None:
+    """🔴 Before: refused as any red. The last green breadth must have passed the test: its
+    file's digest of what passed under both seeds equals the flake's, or a new test, or one
+    skipped there, would arrive as a flake."""
+    api = _flaky_release(planted, _flaky())
+    _green(api, 79, passed="e" * 16)
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    refused = _breadth_refusal(planted, api)
+    assert f"cannot show {FLAKY} passed in the last green breadth" in refused, refused
+
+
+def test_a_flaky_test_whose_file_changed_since_the_last_green_breadth_refuses(
+    planted: dict[str, object],
+) -> None:
+    api = _flaky_release(planted, _flaky())
+    _green(api, 79, head_sha=str(planted["first"]))
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    assert f"changed {FLAKY_FILE} since the last green breadth" in _breadth_refusal(planted, api)
+
+
+def test_a_one_order_red_with_no_green_breadth_or_no_owned_row_refuses(
+    planted: dict[str, object],
+) -> None:
+    api = _flaky_release(planted, _flaky())
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    assert "has no green breadth among the last 30 runs" in _breadth_refusal(planted, api)
+    api = _flaky_release(planted, _flaky())
+    _green(api, 79)
+    api.issue("unused", 6, title=f"Flaky test: {FLAKY}", login="someone", kind="User")
+    refused = _breadth_refusal(planted, api)
+    assert f"has no open issue titled 'Flaky test: {FLAKY}'" in refused, refused
+
+
+def test_an_earlier_run_that_cannot_be_read_refuses_the_flake(planted: dict[str, object]) -> None:
+    api = _flaky_release(planted, _flaky())
+    _green(api, 79)
+    api.issue("unused", 5, title=f"Flaky test: {FLAKY}")
+    api.fail = "/actions/runs/79/artifacts"
+    assert "so a repeat of" in _breadth_refusal(planted, api)

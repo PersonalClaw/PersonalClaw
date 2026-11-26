@@ -48,6 +48,7 @@ See docs/maintainers/ci.md, "The release tags".
 from __future__ import annotations
 
 import argparse
+import datetime
 import importlib.util
 import io
 import json
@@ -63,7 +64,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import breadth_evidence, merge_verdict, trust, workflows
+from . import breadth_evidence, flaky_issues, merge_verdict, trust, workflows
 from .merge_controller import QUEUE_BRANCH
 
 API = "https://api.github.com"
@@ -366,14 +367,18 @@ _MAINTAINERS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 
 def _release_findings(
-    records: list[dict[str, Any]], run_attempt: int
+    records: list[dict[str, Any]],
+    run_attempt: int,
+    *,
+    passed_over: frozenset[tuple[int, str]] = frozenset(),
 ) -> tuple[list[str], set[str]]:
     """What in a run's records refuses a release outright, and which advisory legs are red.
 
     The run must hold a record of every attempt up to ``run_attempt``; the newest attempt's
     must hold every expected shard, each run there (none carried, none that never ran); a gating
-    shard red on any attempt refuses. An advisory shard red on any attempt makes its leg red,
-    which an open issue owns (:func:`_owning_issue`)."""
+    shard red on any attempt refuses, but the one one-order flake *passed_over* names, by
+    attempt and key, which :func:`_flake_findings` holds. An advisory shard red on any attempt
+    makes its leg red, which an open issue owns (:func:`_owning_issue`)."""
     refusals: list[str] = []
     advisory: set[str] = set()
     attempts = {r.get("attempt") for r in records}
@@ -395,6 +400,8 @@ def _release_findings(
             elif newest and leg.get("missing") and leg_id in ADVISORY_LEGS:
                 refusals.append(f"advisory {key} did not run")
             elif leg.get("result") != breadth_evidence.GREEN:
+                if (int(record.get("attempt") or 0), key) in passed_over:
+                    continue
                 if leg_id in ADVISORY_LEGS:
                     advisory.add(leg_id)
                 else:
@@ -402,9 +409,204 @@ def _release_findings(
     return sorted(set(refusals)), advisory
 
 
+# ── a random-order shard's one-order flake (breadth_evidence.ONE_ORDER) ───────────────────────
+
+#: The leg whose one red a release may pass over, and only as :func:`_one_order_flakes` and
+#: :func:`_flake_findings` hold it.
+RANDOM_ORDER_LEG = "random-order"
+#: How far back an accepted flake of the same test makes another red: the last 10 breadth runs
+#: before this one, and every run of the last 14 days.
+REPEAT_RUNS = 10
+REPEAT_DAYS = 14
+#: How many earlier runs are read to find the last green breadth, newest first.
+GREEN_RUNS = 30
+
+
+def _one_order_flakes(records: list[dict[str, Any]]) -> list[tuple[int, str, dict[str, Any]]]:
+    """Each red random-order shard, by attempt, whose entry holds an accepted one-order red
+    (``breadth_evidence.ONE_ORDER``): its attempt, its key and its evidence. A carried one is
+    none: a release rests only on what its own run measured."""
+    found: list[tuple[int, str, dict[str, Any]]] = []
+    for record in records:
+        legs = record.get("legs")
+        for key, leg in sorted((legs if isinstance(legs, dict) else {}).items()):
+            evidence = leg.get(breadth_evidence.ONE_ORDER) if isinstance(leg, dict) else None
+            if (
+                breadth_evidence.leg_of(key) == RANDOM_ORDER_LEG
+                and leg.get("result") == breadth_evidence.RED
+                and not leg.get("reused_from")
+                and isinstance(evidence, dict)
+                and evidence.get("accepted") is True
+                and isinstance(evidence.get("test"), str)
+            ):
+                found.append((int(record.get("attempt") or 0), key, evidence))
+    return found
+
+
+def _gating_green(records: list[dict[str, Any]], run_attempt: object) -> bool:
+    """Whether a run's records hold every attempt up to its newest, the newest every shard, and
+    every gating shard green on every attempt: a green breadth, carried results counted as they
+    were measured."""
+    if not isinstance(run_attempt, int) or run_attempt < 1:
+        return False
+    if {r.get("attempt") for r in records} != set(range(1, run_attempt + 1)):
+        return False
+    for record in records:
+        legs = record.get("legs")
+        if not isinstance(legs, dict):
+            return False
+        if record.get("attempt") == run_attempt and breadth_evidence.expected_keys() - set(legs):
+            return False
+        for key, leg in legs.items():
+            if breadth_evidence.leg_of(key) in ADVISORY_LEGS:
+                continue
+            if not isinstance(leg, dict) or leg.get("result") != breadth_evidence.GREEN:
+                return False
+    return True
+
+
+def _earlier_runs(repository: str, run: dict[str, Any], get: Get) -> list[dict[str, Any]]:
+    """breadth.yml's finished runs of *repository* before *run*, any commit and branch, newest
+    first: one page, which holds every run the flake rule reads."""
+    what = f"{BREADTH_WORKFLOW}'s earlier runs"
+    answer = _ask(
+        get,
+        f"/repos/{repository}/actions/workflows/{BREADTH_WORKFLOW}/runs"
+        "?status=completed&per_page=100",
+        what,
+    )
+    listed = answer.get("workflow_runs") if isinstance(answer, dict) else None
+    if not isinstance(listed, list):
+        raise trust.Refused(f"cannot read {what}: {answer!r}")
+    this = int(run.get("id") or 0)
+    return sorted(
+        (
+            r
+            for r in listed
+            if isinstance(r, dict)
+            and int(r.get("id") or 0) < this
+            and (r.get("head_repository") or {}).get("full_name") == repository
+            and str(r.get("path", "")).split("@", 1)[0] == WORKFLOW_DIR + BREADTH_WORKFLOW
+        ),
+        key=lambda r: int(r.get("id") or 0),
+        reverse=True,
+    )
+
+
+def _when(run: dict[str, Any]) -> datetime.datetime | None:
+    try:
+        return datetime.datetime.fromisoformat(str(run.get("created_at")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _blob(repo: Path, commit: str, path: str) -> str | None:
+    done = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{commit}:{path}"],
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else None
+
+
+def _flake_findings(
+    repository: str,
+    run: dict[str, Any],
+    flake: dict[str, Any],
+    commit: str,
+    get: Get,
+    download: Download,
+    *,
+    repo: Path,
+) -> tuple[str | None, str]:
+    """Why run *run*'s one accepted one-order red (*flake*, its evidence) may not be passed over
+    (None when it may), and what the gate says of it beside the run's URL.
+
+    - **No repeat.** No run of the last :data:`REPEAT_RUNS` before it, nor of the last
+      :data:`REPEAT_DAYS` days, holds an accepted one-order red of the same test. A run whose
+      records cannot be read is red: a repeat it may hold cannot be ruled out.
+    - **It was green before.** The last green breadth before it (:func:`_gating_green`, among the
+      last :data:`GREEN_RUNS`) ran the test's file at the blob the commit holds, and its digest of
+      that file's tests that passed under both seeds equals the flake's of the tests its other
+      seed passed, which hold the test: so the test passed there.
+    - **Its row.** An open issue titled for the test (``flaky_issues.title``), filed by the
+      workflow's account or a maintainer, owns it."""
+    test, path = str(flake["test"]), str(flake.get("file") or "")
+    when = _when(run)
+    earlier = _earlier_runs(repository, run, get)
+    green: dict[str, Any] | None = None
+    green_records: list[dict[str, Any]] = []
+    for n, other in enumerate(earlier):
+        then = _when(other)
+        in_window = n < REPEAT_RUNS or (
+            when is not None
+            and then is not None
+            and when - then <= datetime.timedelta(days=REPEAT_DAYS)
+        )
+        if not in_window and (green is not None or n >= GREEN_RUNS):
+            break
+        try:
+            records = _breadth_records(repository, int(other.get("id") or 0), get, download)
+        except (breadth_evidence.Refused, trust.Refused) as refused:
+            if in_window:
+                return (
+                    f"cannot read run {other.get('html_url')}'s records, so a repeat of {test}"
+                    f" cannot be ruled out: {refused}",
+                    "",
+                )
+            continue
+        if in_window and any(f[2].get("test") == test for f in _one_order_flakes(records)):
+            return (
+                f"passed over {test} as a one-order flake in run {other.get('html_url')}, within"
+                f" the last {REPEAT_RUNS} runs or {REPEAT_DAYS} days: a repeat is red",
+                "",
+            )
+        if green is None and _gating_green(records, other.get("run_attempt")):
+            green, green_records = other, records
+    if green is None:
+        return f"has no green breadth among the last {GREEN_RUNS} runs to show {test} passed", ""
+    green_url = str(green.get("html_url") or f"run {green.get('id')}")
+    here = _blob(repo, commit, path) if path else None
+    there = _blob(repo, str(green.get("head_sha") or ""), path) if path else None
+    if here is None or here != there:
+        return f"changed {path or test} since the last green breadth ({green_url})", ""
+    newest = max(green_records, key=lambda r: int(r.get("attempt") or 0))
+    want = breadth_evidence.path_key(path)
+    digests = {
+        str(leg.get(breadth_evidence.PASSED_BY_FILE, {}).get(want))
+        for key, leg in (newest.get("legs") or {}).items()
+        if breadth_evidence.leg_of(key) == RANDOM_ORDER_LEG
+        and isinstance(leg, dict)
+        and isinstance(leg.get(breadth_evidence.PASSED_BY_FILE), dict)
+        and want in leg[breadth_evidence.PASSED_BY_FILE]
+    }
+    if digests != {str(flake.get("file_passed"))}:
+        return f"cannot show {test} passed in the last green breadth ({green_url})", ""
+    row = _open_issue_titled(repository, flaky_issues.title(test), get)
+    if row is None:
+        return (
+            f"has no open issue titled '{flaky_issues.title(test)}' to own the one-order red of"
+            f" {test}",
+            "",
+        )
+    failed, passed = flake.get("failed") or {}, flake.get("passed") or {}
+    rerun = flake.get("rerun") or {}
+    said = (
+        f"one-order flake {test}: failed under seed {failed.get('seed')}, passed under seed"
+        f" {passed.get('seed')}, {rerun.get('outcome')} ({rerun.get('worker')}); passed in"
+        f" {green_url}; its row {row}"
+    )
+    return None, said
+
+
 def _owning_issue(repository: str, leg: str, get: Get) -> str | None:
     """The open issue that owns advisory *leg*'s red, titled as breadth's report titles it."""
-    title = breadth_evidence.issue_title(leg)
+    return _open_issue_titled(repository, breadth_evidence.issue_title(leg), get)
+
+
+def _open_issue_titled(repository: str, title: str, get: Get) -> str | None:
+    """The open issue titled exactly *title*, filed by the workflow's account or a maintainer:
+    on a public repository anyone may open an issue under any title, and theirs owns nothing."""
     query = urllib.parse.urlencode(
         {"q": f'repo:{repository} is:issue is:open in:title "{title}"', "per_page": 100}
     )
@@ -431,30 +633,44 @@ def _owning_issue(repository: str, leg: str, get: Get) -> str | None:
 
 
 def _breadth_red(
-    repository: str, run: dict[str, Any], tree: str, get: Get, download: Download
-) -> tuple[str | None, list[str]]:
-    """Why a finished run is not one a release may rest on (None when it is one), and each
-    advisory red it holds with the issue that owns it."""
+    repository: str,
+    run: dict[str, Any],
+    tree: str,
+    get: Get,
+    download: Download,
+    *,
+    commit: str = "",
+    repo: Path | None = None,
+) -> tuple[str | None, list[str], list[str]]:
+    """Why a finished run is not one a release may rest on (None when it is one), each advisory
+    red it holds with the issue that owns it, and the one one-order flake it passes over, said
+    in full (:func:`_flake_findings`). Two one-order reds refuse: a release passes over one at
+    most, across every shard and attempt."""
     if run.get("conclusion") not in _JUDGED_CONCLUSIONS:
-        return f"concluded {run.get('conclusion')}", []
+        return f"concluded {run.get('conclusion')}", [], []
     run_id = int(run.get("id") or 0)
     try:
         records = _breadth_records(repository, run_id, get, download)
     except breadth_evidence.Refused as refused:
-        return f"has a record that does not verify: {refused}", []
+        return f"has a record that does not verify: {refused}", [], []
     if not records:
-        return "holds no breadth record", []
+        return "holds no breadth record", [], []
     for record in records:
         if record.get("run_id") != run_id:
-            return f"holds a record of run {record.get('run_id')}", []
+            return f"holds a record of run {record.get('run_id')}", [], []
         if record.get("tree") != tree:
-            return f"holds a record of tree {record.get('tree')}, not the commit's {tree}", []
+            return f"holds a record of tree {record.get('tree')}, not the commit's {tree}", [], []
     attempt = run.get("run_attempt")
     if not isinstance(attempt, int):
-        return "names no attempt", []
-    refusals, advisory = _release_findings(records, attempt)
+        return "names no attempt", [], []
+    flakes = _one_order_flakes(records)
+    if len(flakes) > 1:
+        named = ", ".join(sorted({f"{key} on attempt {n}" for n, key, _ in flakes}))
+        return f"holds {len(flakes)} one-order reds ({named}): a release passes over one", [], []
+    passed_over = frozenset((n, key) for n, key, _ in flakes)
+    refusals, advisory = _release_findings(records, attempt, passed_over=passed_over)
     if refusals:
-        return f"does not satisfy a release: {'; '.join(refusals[:8])}", []
+        return f"does not satisfy a release: {'; '.join(refusals[:8])}", [], []
     owned: list[str] = []
     for leg in sorted(advisory):
         issue = _owning_issue(repository, leg, get)
@@ -463,9 +679,18 @@ def _breadth_red(
                 f"has advisory {leg} red with no open issue titled "
                 f"'{breadth_evidence.issue_title(leg)}' to own it",
                 [],
+                [],
             )
         owned.append(f"{leg} {issue}")
-    return None, owned
+    said: list[str] = []
+    if flakes:
+        if repo is None:
+            return "holds a one-order red, which only the gate with main's checkout reads", [], []
+        why, line = _flake_findings(repository, run, flakes[0][2], commit, get, download, repo=repo)
+        if why:
+            return why, [], []
+        said.append(line)
+    return None, owned, said
 
 
 def breadth_green(repository: str, commit: str, get: Get, download: Download, *, repo: Path) -> str:
@@ -514,7 +739,9 @@ def breadth_green(repository: str, commit: str, get: Get, download: Download, *,
             f"the newest breadth run of {commit} ({url}) is a {event} on {branch}, not a "
             "rehearsal tag's push: rehearse the tag, and tag once that run is green"
         )
-    why, owned = _breadth_red(repository, newest, tree, get, download)
+    why, owned, flaked = _breadth_red(
+        repository, newest, tree, get, download, commit=commit, repo=repo
+    )
     if why:
         raise trust.Refused(
             f"the newest breadth run of {commit} ({url}) {why}: a release rests only on every "
@@ -525,7 +752,7 @@ def breadth_green(repository: str, commit: str, get: Get, download: Download, *,
     for run in sorted(runs, key=lambda r: int(r.get("id") or 0)):
         if run is newest:
             continue
-        why, _ = _breadth_red(repository, run, tree, get, download)
+        why, _, _ = _breadth_red(repository, run, tree, get, download, commit=commit, repo=repo)
         if not why:
             continue
         reds += 1
@@ -541,9 +768,9 @@ def breadth_green(repository: str, commit: str, get: Get, download: Download, *,
             f"the newest breadth run of {commit} ({url}) is a dispatch, which decides only as a "
             "re-measure of an earlier red run the owner's record names; there is none"
         )
-    if owned:
-        return f"{url} (advisory reds, each owned: {', '.join(owned)})"
-    return url
+    said = [f"advisory reds, each owned: {', '.join(owned)}"] if owned else []
+    said += flaked
+    return f"{url} ({'; '.join(said)})" if said else url
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

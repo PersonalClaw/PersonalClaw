@@ -1039,35 +1039,21 @@ jobs:
         uses: ./.github/actions/setup
         with:
           programs: tmux
-      # Each order is its own step, so the second runs whatever the first did; the shard is red
-      # when either order was. Each has its own basetemp, outside the runner's home: in pytest's
-      # shared one, a nested pytest a test starts in the second order deletes the first order's
-      # whole finished tree at its end (pytest keeps 3 sessions), one unlink at a time through the
-      # real-home guard, which ran the registry-accessor test's child past its 30 s (run
-      # 40199713134, seed 2).
-      - name: pytest (random-order shard ${{ matrix.shard }}, first order)
-        id: pytest-1
+      # The entry's two seeded orders, through run-job (the catalogue's random-order), one after
+      # the other: the shard is red when either order was. Each has its own basetemp, outside
+      # the runner's home: in pytest's shared one, a nested pytest a test starts in the second
+      # order deletes the first order's whole finished tree at its end (pytest keeps 3 sessions),
+      # one unlink at a time through the real-home guard, which ran the registry-accessor test's
+      # child past its 30 s (run 40199713134, seed 2). Each order's state-leak report lands beside
+      # its order files (tests/state_leak_guard.py). A test that fails in one order has its
+      # worker's whole order replayed once, in one worker, after both orders ran (the entry's
+      # rerun = "replay-order"); what the replay found is in run-job's replays/ folder, and the
+      # shard stays red.
+      - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})
+        id: pytest
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --random-order-seed ${{ github.run_number }}1 --basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}1" --junitxml=reports/junit-random-order-1.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-random-order-${{ matrix.shard }}.txt"
-      # The next order writes its own state-leak report where this one's is.
-      - name: the first order's state-leak report, beside its order files
-        if: always()
-        run: |
-          mkdir -p reports/random-order
-          if [ -f reports/state-leaks.json ]; then
-            mv reports/state-leaks.json "reports/random-order/state-leaks-${{ github.run_number }}1.json"
-          fi
-      - name: pytest (random-order shard ${{ matrix.shard }}, second order)
-        id: pytest-2
-        continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --random-order-seed ${{ github.run_number }}2 --basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}2" --junitxml=reports/junit-random-order-2.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-random-order-${{ matrix.shard }}.txt"
-      - name: the second order's state-leak report, beside its order files
-        if: always()
-        run: |
-          mkdir -p reports/random-order
-          if [ -f reports/state-leaks.json ]; then
-            mv reports/state-leaks.json "reports/random-order/state-leaks-${{ github.run_number }}2.json"
-          fi
+        run: >-
+          "$(uv python find "$PY")" -m tools.ci run-job random-order --shard ${{ matrix.shard }}/4 --out "$RUNNER_TEMP/run-job"
       # The ids this shard collected, for the union check (`shard-union`). None is uploaded
       # when pytest wrote none, and the union reads that as red.
       - name: Upload the test ids this shard collected (random-order · shard ${{ matrix.shard }})
@@ -1104,11 +1090,18 @@ jobs:
       # Green only when both orders were: a skipped or cancelled order is red too. The seeds sit
       # beside the inputs, not in them: a red order is the tree's, so a green on the next
       # night's seeds is no changed input, and the leg's issue stays open until one changes.
-      # The issue names the red shards' seeds.
+      # The issue names the red shards' seeds. A red shard whose one failed test failed under
+      # one seed alone keeps, beside its red, what its other seed and the replay found
+      # (breadth_evidence one_order_red), which only the release gate reads; a green one keeps
+      # a digest of each file's tests that passed under both seeds (passed_by_file).
       - name: record what this shard ran
         if: always()
         env:
-          OUTCOME: ${{ steps.pytest-1.outcome == 'success' && steps.pytest-2.outcome == 'success' && 'success' || 'failure' }}
+          OUTCOME: ${{ steps.pytest.outcome }}
+          # What `ran` reads its two orders' evidence from (breadth_evidence.py `_orders`).
+          BREADTH_ORDER_REPORTS: reports/junit-random-order-1.xml reports/junit-random-order-2.xml
+          BREADTH_REPLAY: ${{ runner.temp }}/run-job/replays/random-order-${{ matrix.shard }}-4.json
+          BREADTH_SHARD_LIST: ${{ runner.temp }}/shard.txt
         run: |
           "$(uv python find "$PY")" tools/ci/breadth_evidence.py ran --inputs "$RUNNER_TEMP/inputs.json" --outcome "$OUTCOME" --attempt "$GITHUB_RUN_ATTEMPT" --seeds "${{ github.run_number }}1,${{ github.run_number }}2" --out "$RUNNER_TEMP/entry/random-order__${{ matrix.shard }}.json"
       - name: Upload this shard's entry

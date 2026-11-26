@@ -432,7 +432,9 @@ command = [
 # share twice, seeded the run's number times 10 plus 1 and plus 2, so a rerun of the run repeats
 # the orders. It runs the suite, so the security-marked modules: security posture, and never
 # reused, as its seeds change every run ({run_number}). Both orders write the shard's ids, which
-# shard-union holds to planned-ids-random-order.
+# shard-union holds to planned-ids-random-order. A failed test is rerun by replaying, in one
+# worker, the whole order of the worker it failed in (rerun = "replay-order"): breadth's record
+# keeps what that replay found, and the shard stays red.
 [[job]]
 id = "random-order"
 tiers = ["breadth"]
@@ -448,6 +450,7 @@ workers = "auto"
 shards = 4
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-random-order-1.xml", "reports/junit-random-order-2.xml"]
+rerun = "replay-order"
 command = [
   { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "random-order", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
   { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}1", "--basetemp", "/var/tmp/pytest-random-order-{run_number}1", "--junitxml=reports/junit-random-order-1.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },

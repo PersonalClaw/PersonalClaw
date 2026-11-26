@@ -230,9 +230,14 @@ _KEYS = frozenset(
         "nightly",
         "lint_feedback",
         "prepush",
+        "rerun",
     }
 )
 _STEP_KEYS = frozenset({"argv", "workdir", "env"})
+#: ``rerun``: how run-job's diagnostic rerun reruns a failed test (:attr:`Job.rerun`).
+RERUN_ALONE = "alone"
+RERUN_REPLAY = "replay-order"
+RERUNS = (RERUN_ALONE, RERUN_REPLAY)
 _EXEMPTION_KEYS = frozenset({"install", "reason"})
 _ID = re.compile(r"[a-z][a-z0-9-]*")
 _TTL = re.compile(r"ttl:([1-9][0-9]*)")
@@ -426,6 +431,11 @@ class Job:
     #: ``scripts/run_prepush.sh``). ``false`` leaves it to CI, for a job too slow for a push:
     #: the contract holds each change-tier job that runs a test suite to ``false``.
     prepush: bool = True
+    #: How run-job's diagnostic rerun reruns a failed test (:data:`RERUNS`): ``alone``, in a new
+    #: process, or ``replay-order``, the failing worker's whole order replayed in one worker, for
+    #: a job whose pytest steps run seeded orders (``tests/random_order.py``). Either way the job
+    #: stays red.
+    rerun: str = "alone"
 
     def placeholders(self) -> set[str]:
         """Every placeholder the job names: in a step's argv or env, or in its own env, which
@@ -781,6 +791,10 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
             fields.fault("install_exemptions", "entries each name an install and a reason")
             continue
         exemptions.append(Exemption(item["install"], item["reason"]))
+    rerun = fields.string("rerun", RERUN_ALONE) or RERUN_ALONE
+    if rerun not in RERUNS:
+        fields.fault("rerun", f"is one of {', '.join(RERUNS)}")
+        rerun = RERUN_ALONE
     retiring = fields.string("retiring")
     if retiring is not None and not _RETIRING.fullmatch(retiring):
         fields.fault("retiring", "names the issue that retires the job, as #<number>")
@@ -816,7 +830,12 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
         install_exemptions=tuple(exemptions),
         retiring=retiring,
         nightly=fields.string("nightly"),
+        rerun=rerun,
     )
+    if job.rerun == RERUN_REPLAY and not any(
+        "--random-order-seed" in step.argv for step in job.command
+    ):
+        fields.fault("rerun", "is replay-order, but no step of the job runs a seeded order")
     return job if len(problems) == before and job_id else None
 
 

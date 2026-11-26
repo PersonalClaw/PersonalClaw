@@ -830,7 +830,9 @@ the `breadth.yml` jobs it maps to, in both directions, and every entry to the re
   eight legs #5600 moves through run-job (the four suite legs, rails-macos, collection-parses and
   the two security legs), with the same verdict on every plant both ways. The rows that hold the
   run-job line itself, the two above and the catalogue row, read workflows as written; their
-  plants on a written-out leg read random-order's, which #5600 leaves written out.
+  plants on a written-out leg read planned-ids-random-order's collection, which stays written
+  out. random-order's own rows hold it in either form: its two orders written out, or its entry
+  run through run-job, where a plant edits the entry or the run-job step.
 - The harness's `replay` and `exemplars` profiles are local shortcuts, not catalogue
   entries: the merge tier already runs what they gate. `python-suite` collects
   `tests/test_harness_replay.py` (every replay scenario against its baseline),
@@ -960,7 +962,10 @@ retires the job, as `"#<number>"` (see "Main's copy reads a pull request's catal
 `lint_feedback`: a failed step's output is the pull request's lint remediation, which
 `pr-feedback.yml` posts. One job sets it, of the change tier. `prepush = false` leaves a
 change-tier job out of `run change --pre-push`, the pre-push hook's run, for a test suite CI
-gates; every other change-tier job runs in it. A key the reader does not know is refused, so a
+gates; every other change-tier job runs in it. `rerun` is how run-job's diagnostic rerun reruns
+a failed test: `alone`, the default, or `replay-order`, for a job whose pytest steps run seeded
+orders (see "The one-order flake"); `replay-order` on an entry with no step that runs
+`--random-order-seed` is refused. A key the reader does not know is refused, so a
 misspelt field fails rather than being ignored.
 
 Every pytest step writes a JUnit report (`--junitxml`) unless it only collects (`--collect-only`),
@@ -3552,9 +3557,10 @@ it ran, in its order, with its real worker and position, to
 `breadth.yml`'s `random-order` leg runs it every night: four shards of the run's plan on
 Ubuntu 24.04 and 3.13, each running its share in two orders, seeded `run number × 10 + 1` and
 `+ 2` (`${{ github.run_number }}1` and `...2`), so a rerun of the run repeats the same orders.
-Each order is its own step, so the second runs whatever the first did, and the shard is red
-when either was. The catalogue's `random-order` entry holds its steps, token for token: it runs
-the suite, so the security-marked modules, and is security posture. It is never reused
+The leg runs the catalogue's `random-order` entry through run-job, in one step: the entry's two
+command steps are the two orders, run-job runs the second whatever the first did, and the shard
+is red when either was. The entry runs the suite, so the security-marked modules, and is
+security posture. It is never reused
 (`NON_REUSABLE`): a green is about tonight's orders alone. Both orders write the shard's ids
 (`--shard-ids`), and `shard-union` holds them to `planned-ids-random-order`, the planned suite
 collected on the leg's own runner and Python, so the leg runs every test the suite runs; the
@@ -3565,13 +3571,53 @@ the tree's, so a green on the next night's seeds is no changed input. A red stay
 security corpus's does, until one of its inputs changes, and the leg's issue
 (`breadth: random-order is red`) names the seeds of its red shards. Each shard uploads, whatever
 its result, `random-order-<shard>`: every worker's order file for each seed, the state-leak
-report for each seed (taken before any fence restored), and the shard's file list. A failing
+report for each seed (`reports/random-order/state-leaks-<seed>.json`, taken before any fence
+restored), and the shard's file list. A failing
 worker's own sequence is its order file. Under `--dist worksteal` a worker runs a share of the
 seed's order and then tests it steals from the tail of another's, so
 `pytest -n 0 tests --shard-list <shard.txt> --random-order-seed <seed>`, which reruns the
 seed's whole order in one process, runs no one worker's sequence. `--replay-order <file>` runs
 one: exactly the tests the file lists, in its order, in one process. The file is a worker's
 order file or one node id a line, and a listed test the run did not collect stops it.
+
+### The one-order flake
+
+A test that fails in one of the two orders and passes in the other is a flake or an order
+dependence. The entry's `rerun = "replay-order"` tells them apart for the release gate alone:
+the shard stays red, and no other reader takes it for a flake.
+
+- **The replay** (`tools/ci/jobs.py`, `diagnose_replay`). When an order's step failed exactly one
+  test, run-job replays that test's worker's whole order once, after both orders ran:
+  `--replay-order` on its order file, in one xdist worker (`-n 1 --dist load`), with the step's
+  other options as they were, inside the job's remaining time. Every test that ran before it in
+  that worker runs before it again, a rail and a security-marked test too, and a test that fails
+  only in a worker fails there too. The file is the one order file of that seed naming the test,
+  exactly once, at positions 1 to n. A case a crashed or replaced worker left, a security-marked
+  test, a second order file, a replay that did not finish, or a report that does not name the
+  test exactly once is `the replay didn't run`, with why. Its word, `passed replayed in its
+  worker's order` or `failed again ...`, goes to `replays/<job>-<shard>.json` in run-job's
+  `--out`; the job record's `rerun_result` stays null, so neither the verdict nor the weekly
+  report reads it.
+- **Breadth's evidence** (`breadth_evidence.one_order_red`). `ran` reads both orders' JUnit
+  reports, the replay and the shard's list (`BREADTH_ORDER_REPORTS`, `BREADTH_REPLAY`,
+  `BREADTH_SHARD_LIST`). A red shard keeps `one_order_red` beside its red: `accepted` only when one
+  seed failed exactly one test, the other collected the same tests and passed it, the replay of
+  the red seed passed it, and neither the replay nor the security census (read with `ast`, never
+  imported) names it security-marked. A green shard keeps `passed_by_file`: for each test file, a
+  digest of its tests that passed under both seeds. A shard whose step was green is green only
+  when both reports show their orders ran its tests: each holds a test that ran, passed or failed,
+  and both hold the same tests. A collect-only order, one whose tests were all deselected or
+  skipped, one that ran a part of the shard, and a report not named or not read are red, with
+  `orders_not_run` saying why.
+- **The release gate** (`release_tag.breadth_green`) passes over one accepted one-order red at
+  most, across every shard and attempt of its run, and only when: no run among the last 10 breadth
+  runs before it, nor of the last 14 days, passed over the same test, and a run whose records do
+  not read rules none out; the last green breadth among the last 30 ran the test's file at the
+  blob the commit holds, with the digest of that file's passing tests the red's other seed has;
+  and an open `Flaky test: <id>` issue, filed by the flaky-tests workflow's account or a
+  maintainer, owns it. The gate prints the flake beside the run: both seeds, the replay's word,
+  the green run and the issue. A carried one-order red is red: a release rests on what its own
+  run measured.
 
 ### Finding the test that left another failing
 

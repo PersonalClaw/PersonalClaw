@@ -30,7 +30,8 @@ What it reads, each against the reading taken as the test began:
 
 The environment is ``env_guard``'s, which already fails a leak, so it is not read twice.
 
-**Report mode** is the default: every leak goes to ``reports/state-leaks.json`` with the test's
+**Report mode** is the default: every leak goes to ``reports/state-leaks.json`` (under
+``--random-order-seed N``, ``reports/random-order/state-leaks-N.json``) with the test's
 real xdist worker (``PYTEST_XDIST_WORKER``, ``main`` without xdist) and its position in that
 process's order, and nothing fails. **``--strict-state``** fails the leaking test in its teardown
 with what changed, unless :data:`ALLOWLIST` names it with an issue (at most :data:`CAP` entries).
@@ -57,6 +58,20 @@ import pytest
 
 #: The report, under the run's root directory.
 REPORT = "reports/state-leaks.json"
+#: A seeded order's report, beside that order's files (``tests/random_order.py``), so two orders
+#: run one after another each keep their own.
+SEEDED_REPORT = "reports/random-order/state-leaks-{seed}.json"
+
+
+def report_path(config) -> str:
+    """Where this run's report goes: :data:`SEEDED_REPORT` under ``--random-order-seed``, else
+    :data:`REPORT`."""
+    try:
+        seed = config.getoption("--random-order-seed")
+    except ValueError:  # a pytest that never loaded this suite's options
+        seed = None
+    return REPORT if seed is None else SEEDED_REPORT.format(seed=seed)
+
 
 #: The known leakers: ``[[entry]]`` tables of exactly ``nodeid`` and ``issue``.
 ALLOWLIST = Path(__file__).resolve().parent / "state_leak_allowlist.toml"
@@ -686,7 +701,7 @@ class Plugin:
                 "seconds": self.guard.seconds,
             }
             return
-        out = Path(session.config.rootpath) / REPORT
+        out = Path(session.config.rootpath) / report_path(session.config)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(self._summary(), indent=1, sort_keys=True) + "\n")
 
@@ -696,10 +711,14 @@ class Plugin:
         summary = self._summary()
         tests = summary["tests"]
         per = 1000 * summary["guard_seconds"] / tests if tests else 0.0
-        terminalreporter.write_line(summary_line(summary["leaks"], tests, per))
+        terminalreporter.write_line(
+            summary_line(summary["leaks"], tests, per, report=report_path(self.config))
+        )
 
 
-def summary_line(leaks: Sequence[Mapping], tests: int, per_ms: float) -> str:
+def summary_line(
+    leaks: Sequence[Mapping], tests: int, per_ms: float, *, report: str = REPORT
+) -> str:
     """The terminal's line: the leaks recorded, and how many of them ``--strict-state`` fails
     (strict and not allowlisted) and of how many kinds, so a run's log says it with no
     download."""
@@ -708,5 +727,5 @@ def summary_line(leaks: Sequence[Mapping], tests: int, per_ms: float) -> str:
     return (
         f"state leaks: {len(leaks)} recorded over {tests} tests, "
         f"{len(failing)} strict ({kinds} kind{'' if kinds == 1 else 's'}), "
-        f"{per_ms:.2f} ms a test ({REPORT})"
+        f"{per_ms:.2f} ms a test ({report})"
     )
