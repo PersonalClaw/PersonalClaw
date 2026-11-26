@@ -91,6 +91,15 @@ register_scanner("tts", _voice)
 
 def create(config):
     return None
+
+
+def _sketches(entries):
+    return [_Adapter("media-kit:sketch")]
+
+
+def create_sketch(config):
+    register_scanner("image_gen", _sketches)
+    return None
 """
 
 
@@ -160,7 +169,7 @@ def models(tmp_path, monkeypatch) -> _Models:
     app_code.release(APP)
 
 
-def _install(root: Path) -> None:
+def _install(root: Path, providers: list[dict[str, Any]] | None = None) -> None:
     d = root / "bundle" / APP
     d.mkdir(parents=True)
     manifest = {
@@ -168,7 +177,7 @@ def _install(root: Path) -> None:
         "version": "1.0.0",
         "displayName": "Media Kit",
         "description": "A demo model app with pictures and embeddings.",
-        "providers": CAPABILITIES,
+        "providers": providers or CAPABILITIES,
     }
     (d / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
     (d / "provider.py").write_text(_PROVIDER_PY, encoding="utf-8")
@@ -294,3 +303,58 @@ def test_a_capability_torn_down_outside_the_switch_route_is_a_change(
     registry_module.get_provider_registry().enable(APP, "talk")
     fn, _ref = bound.current()
     assert fn is not None and fn("a heron") == [1.0, 0.0], "and a build is one too"
+
+
+#: A capability that declares no media kind but whose build registers an image scanner.
+SKETCH = _model("sketch", "Sketch with the model", ["vision"]) | {
+    "implementation": "provider:create_sketch"
+}
+
+
+def test_a_scanner_a_build_registered_follows_that_capability_not_the_kinds(
+    tmp_path, models, monkeypatch
+) -> None:
+    """A scanner a capability's build registered is that capability's, beside another that
+    declares its kind: it acts while its own capability runs, whatever the declaring one does.
+    The capabilities are held by the availability check, since a teardown would take the build's
+    scanner back."""
+    from personalclaw.apps import capability_switches
+
+    _install(tmp_path, [*CAPABILITIES, SKETCH])
+    assert _built("image_gen") == {"media-kit:pictures", "media-kit:sketch"}
+    cannot_run: set[str] = {"sketch"}
+    monkeypatch.setattr(
+        capability_switches,
+        "_unavailable",
+        lambda rec: "it needs a graphics card here" if rec.capability in cannot_run else "",
+    )
+    assert _built("image_gen") == {
+        "media-kit:pictures"
+    }, "sketch is held: images running is not its"
+    cannot_run.clear()
+    cannot_run.add("images")
+    assert _built("image_gen") == {"media-kit:sketch"}, "images is held, sketch runs: sketch's acts"
+
+
+def test_a_hand_registration_after_an_unregister_stays_when_the_scanner_stops(
+    tmp_path, models
+) -> None:
+    """The speech registries drop a scanner's adapter once its app stops building it, and only
+    that: one registered by hand under the same name after the scanner's was unregistered is not
+    the scanner's."""
+
+    class _Hand:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    _install(tmp_path)
+    assert speech.provider_named("media-kit:ears") is not None
+    assert voices.provider_named("media-kit:voice") is not None
+    ears, voice = _Hand("media-kit:ears"), _Hand("media-kit:voice")
+    speech.unregister_provider("media-kit:ears")
+    speech.register_provider(ears)  # type: ignore[arg-type]
+    voices.unregister_provider("media-kit:voice")
+    voices.register_provider(voice)  # type: ignore[arg-type]
+    registry_module.get_provider_registry().disable(APP, "talk")
+    assert speech.provider_named("media-kit:ears") is ears
+    assert voices.provider_named("media-kit:voice") is voice
