@@ -101,6 +101,13 @@ def test_the_resolution_classifier_on_a_planted_call(snippet: str, expected: str
             'model_axis="orchestration")',
             "guarded",
         ),
+        ('acquire = sessions.get_or_create; await acquire("cron:digest")', ""),
+        ('again = bind(sessions.get_or_create, "cron:digest", model_axis="orchestration")', ""),
+        ('await getattr(sessions, "get_or_create")("cron:digest")', ""),
+        ('await run_later(sessions.get_or_create, "cron:digest")', ""),
+        ('await operator.attrgetter("get_or_create")(sessions)("cron:digest")', ""),
+        ('await operator.methodcaller("get_or_create", "cron:digest")(sessions)', ""),
+        ('await sessions.__getattribute__("get_or_create")("cron:digest")', ""),
     ],
     ids=[
         "no axis",
@@ -109,15 +116,36 @@ def test_the_resolution_classifier_on_a_planted_call(snippet: str, expected: str
         "bound for later, no axis",
         "bound for later, replaying what it was asked",
         "bound for later, a guarded axis",
+        "an alias",
+        "a bind under another name",
+        "getattr",
+        "the bound method as a callback",
+        "attrgetter",
+        "methodcaller",
+        "__getattribute__",
     ],
 )
 def test_the_classifier_on_a_planted_call(snippet: str, expected: str):
     """The rail's teeth, on code that is not in the tree: an unnamed axis and the chat axis are
     both unmetered, and only a guarded one passes. An acquisition bound for a later call
-    (``functools.partial``) is one, read by what the bind holds: binding it hides no axis."""
+    (``functools.partial``) is one, read by what the bind holds: binding it hides no axis. Any other
+    way to reach `get_or_create` (an alias, a bind under another name, `getattr`, the bound method
+    handed on) is one too, whose keywords nothing reads: it counts as naming no axis."""
     tree = ast.parse(f"async def run_the_nightly_digest(sessions):\n    {snippet}\n")
     (site,) = census(tree, "planted.py")
     assert verdict(site, guarded_axes()) == expected
+
+
+def test_a_method_named_at_import_for_a_later_getattr_is_an_unmetered_acquisition():
+    """The name is the acquisition, its module's, and names no axis; a docstring names nothing."""
+    tree = ast.parse(
+        'NAME = "get_or_create"\n'
+        "async def run_the_nightly_digest(sessions):\n"
+        '    "get_or_create"\n'
+        '    await getattr(sessions, NAME)("cron:digest")\n'
+    )
+    (site,) = census(tree, "planted.py")
+    assert verdict(site, guarded_axes()) == ""
 
 
 # ── the one session a person answers on a metered axis ─────────────────────────────────────

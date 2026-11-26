@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from session_acquisitions import acquires
+from session_acquisitions import acquires, parents
 
 #: Surfaces a person is working in. The daily cap is for automations; these stay on the chat
 #: binding, as a chat does. Keyed by (file under ``src/personalclaw``, function qualname).
@@ -103,9 +103,13 @@ class Site:
 class _Census(ast.NodeVisitor):
     """Every call *counted* answers for, with the function it sits in."""
 
-    def __init__(self, path: str, counted: Callable[[ast.Call], bool]) -> None:
+    def __init__(self, path: str, counted: Callable[[ast.Call], bool], tree: ast.AST) -> None:
         self.path = path
         self.counted = counted
+        self.tree = tree
+        #: Each node's parent, mapped only when a node that names the method needs its own:
+        #: a map of every tree cost more than the rest of the census together.
+        self.up: dict[int, ast.AST] | None = None
         self.stack: list[str] = []
         self.funcs: list[ast.AST] = []
         self.sites: list[Site] = []
@@ -124,17 +128,47 @@ class _Census(ast.NodeVisitor):
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
+    def _parent(self, node: ast.AST) -> ast.AST | None:
+        if self.up is None:
+            self.up = parents(self.tree)
+        return self.up.get(id(node))
+
     def visit_Call(self, node: ast.Call) -> None:
         if self.counted(node):
             func = self.funcs[-1] if self.funcs else None
             self.sites.append(Site(self.path, ".".join(self.stack), node.lineno, node, func))
         self.generic_visit(node)
 
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        # Any other read of `….get_or_create` (an alias, a bind under another name, a callback):
+        # an acquisition whose keywords nothing here reads, so it is read as a call with none.
+        named = node.attr == "get_or_create"
+        if named and self.counted is _acquires and acquires(node, self._parent(node)):
+            func = self.funcs[-1] if self.funcs else None
+            bare = ast.Call(
+                func=node, args=[], keywords=[], lineno=node.lineno, col_offset=node.col_offset
+            )
+            self.sites.append(Site(self.path, ".".join(self.stack), node.lineno, bare, func))
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        # The method named by a string (`attrgetter`, `methodcaller`, `__getattribute__`, a name a
+        # later getattr reads): an acquisition whose keywords nothing reads, as a read is.
+        named = node.value == "get_or_create"
+        if named and self.counted is _acquires and acquires(node, self._parent(node)):
+            func = self.funcs[-1] if self.funcs else None
+            bare = ast.Call(
+                func=node, args=[], keywords=[], lineno=node.lineno, col_offset=node.col_offset
+            )
+            self.sites.append(Site(self.path, ".".join(self.stack), node.lineno, bare, func))
+
 
 def _acquires(call: ast.Call) -> bool:
-    """A runtime acquisition: ``….get_or_create(…)``, or a bind of it for later
-    (``functools.partial(….get_or_create, …)``), read by the keywords the bind holds
-    (``session_acquisitions.acquires``)."""
+    """A runtime acquisition by a call: ``….get_or_create(…)``, a bind of it for later
+    (``functools.partial(….get_or_create, …)``), read by the keywords the bind holds, or
+    ``getattr(…, "get_or_create")`` (``session_acquisitions.acquires``). Every other read of the
+    attribute is one too, and so is the method named by a string, which the census counts beside
+    the calls (``_Census.visit_Attribute``, ``_Census.visit_Constant``)."""
     return acquires(call)
 
 
@@ -143,7 +177,7 @@ def _resolves(call: ast.Call) -> bool:
 
 
 def census(tree: ast.AST, path: str, counted: Callable[[ast.Call], bool] = _acquires) -> list[Site]:
-    visitor = _Census(path, counted)
+    visitor = _Census(path, counted, tree)
     visitor.visit(tree)
     return visitor.sites
 

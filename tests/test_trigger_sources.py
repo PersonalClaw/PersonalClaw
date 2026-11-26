@@ -825,7 +825,7 @@ def test_the_API_creates_and_edits_an_app_event_trigger(_store):
         "event_glob": glob,
         # A client-supplied source is ignored: it could contradict the pattern.
         "source": "memory",
-        "action": {"provider": "notify", "config": {}},
+        "action": {"provider": "notify", "config": {"title_template": "x"}},
     }
     resp = asyncio.run(handlers.api_trigger_create(_req("POST", "/api/triggers", body=body)))
     assert resp.status == 201

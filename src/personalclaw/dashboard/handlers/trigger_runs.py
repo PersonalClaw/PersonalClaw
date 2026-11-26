@@ -44,6 +44,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.request_validation import bool_field, json_object_body, require_bool
 from personalclaw.security import redact_values_for_display
 from personalclaw.triggers import held_secrets
+from personalclaw.triggers.inflight import CutAtDeadline, acting
 
 logger = logging.getLogger(__name__)
 
@@ -613,6 +614,9 @@ _RUNS_ELSEWHERE = (
 )
 #: A process that runs no automations.
 _NOT_RUNNING = "This PersonalClaw is not running its automations, so this request fired nothing."
+#: What a run of yours answers when the deadline reaper ended its action (`reaper.reap_one`, which
+#: writes the run's row).
+_CUT_AT_THE_DEADLINE = "cut off: it ran past its deadline, so its action was ended"
 
 
 def _why_not_firing(trigger: Any) -> str:
@@ -970,12 +974,19 @@ async def _dispatch_store_action(
             egress_held_to(unattended_dispatch_key(f"trigger:{trigger_id}")),
             handed(filled),
         ):
-            result = await provider.execute(config, ctx, timeout=action_timeout(provider_name))
+            # As a task of its own, as a fire's is, so the deadline reaper can end it alone
+            # (`triggers.inflight`).
+            result = await acting(
+                trigger_id, provider.execute(config, ctx, timeout=action_timeout(provider_name))
+            )
     except asyncio.CancelledError:
         # A stop or a restart cut it off. A cancellation is not an `Exception`, so the branch below
         # never saw it and the run was recorded nowhere; recorded now, before it goes on its way.
         _record_stopped_run(trigger_id, started=started)
         raise
+    except CutAtDeadline:
+        # The deadline reaper ended it (`reaper.reap_one`), and wrote the run's one row.
+        return False, _CUT_AT_THE_DEADLINE
     except Exception as exc:  # noqa: BLE001 - a failed manual run is RECORDED, not raised (#308)
         said = masked(f"{type(exc).__name__}: {exc}", filled)
         await _record_hand_run(trigger, started=started, exc=exc, error=said, state=state)

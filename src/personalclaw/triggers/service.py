@@ -1114,10 +1114,16 @@ async def _fires_in_window(trigger: Any, *, now: float, base_dir: Any = None) ->
     if not any(gates.get(k) for k in ("rate_cap", "max_runs_per_hour", "max_actions_per_hour")):
         return None
     try:
-        return await _run_store(base_dir).count_since(trigger.id, now - 3600.0)
+        recorded = await _run_store(base_dir).count_since(trigger.id, now - 3600.0)
     except Exception:  # noqa: BLE001 - an unreadable ledger must not break the tick
         logger.debug("could not read the rate window for %s", getattr(trigger, "id", "?"))
         return None
+    # With its fires under way, which have no row yet: each runs beside the tick (`loop.tick_once`),
+    # and one that may run beside itself would otherwise start fire after fire before the first
+    # one's row is written.
+    from personalclaw.triggers.inflight import fires_under_way
+
+    return recorded + fires_under_way(trigger.id)
 
 
 def _unpark_ready(

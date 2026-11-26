@@ -133,23 +133,16 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
             # Only a REAL answer of this chat's is variant-worthy. An error bubble is no
             # alternative response, so a retry stashes nothing, and a row taken in from outside
             # (turn_source.FROM_OUTSIDE, a run's result) answers nothing here: a variant keeps no
-            # meta, so one kept as a variant came back as the agent's reply. What is kept is the
-            # turn's last answer of its own; a turn with none keeps nothing.
-            ai_msg = next(
-                (
-                    m
-                    for m in reversed(msgs[u_idx + 1 : anchor_idx + 1])
-                    if m.get("role") == "assistant"
-                    and (provenance(m).get("meta") or {}).get(FROM_OUTSIDE) is None
-                ),
-                None,
-            )
-            if ai_msg is not None:
-                _rv = ai_msg.get("variants")
-                variants = list(_rv) if isinstance(_rv, list) else []  # type: ignore[arg-type]
-                current_entry = {"content": ai_msg.get("content", ""), "ts": ai_msg.get("ts", "")}
-                if not any(v.get("content") == current_entry["content"] for v in variants):
-                    variants.append(current_entry)
+            # meta, so one kept as a variant came back as the agent's reply. A turn with no answer
+            # of its own keeps nothing.
+            own = [
+                m
+                for m in msgs[u_idx + 1 : anchor_idx + 1]
+                if m.get("role") == "assistant"
+                and (provenance(m).get("meta") or {}).get(FROM_OUTSIDE) is None
+            ]
+            if own:
+                variants = _versions_with(own)
                 if len(variants) > _MAX_VARIANTS:
                     variants = variants[-_MAX_VARIANTS:]
 
@@ -202,6 +195,28 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
         task.add_done_callback(lambda _t: retakes.close_retakes(retake_key))
     state.push_sessions_update()
     return web.json_response({"ok": True})
+
+
+def _versions_with(own: list[dict]) -> list[dict]:
+    """The versions a fresh answer takes, the answer it replaces among them (uncapped; the caller
+    keeps the last ``_MAX_VARIANTS``): *own* is that answer's messages, a tool-using answer's
+    segments around its calls included.
+
+    The versions are kept on the first message that holds them, the one a fresh answer's first
+    settled segment took them on (``chat_runner._flush_segment``), and the answer replaced is kept
+    whole, its segments' text joined. When it is the version written last, it takes that place,
+    which held only its first segment; when an earlier version is on screen (switched to), every
+    version is already kept as it was written."""
+    holder = next((m for m in own if isinstance(m.get("variants"), list)), own[0])
+    versions = list(holder.get("variants") or [])
+    whole = "\n\n".join(text for text in (str(m.get("content") or "") for m in own) if text)
+    answer = {"content": whole, "ts": own[0].get("ts", "")}
+    at = holder.get("variant_idx")
+    if not versions:
+        versions = [answer]
+    elif not isinstance(at, int) or at == len(versions) - 1 or not 0 <= at < len(versions):
+        versions[-1] = answer
+    return versions
 
 
 async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
@@ -303,6 +318,36 @@ def _resent(repeat: chat_intake.Receipt | chat_intake.Refusal) -> web.Response:
     return web.json_response({"ok": True, "rewound": 0, **repeat.answer()})
 
 
+#: What a message carries that its text does not say, kept when she edits it: the files she
+#: attached, the knowledge items and artifacts she @-mentioned (each read by the turn off her row:
+#: ``chat_runner._turn_attachments``, ``referenced_content``), and how she said it.
+_CARRIED = ("files", "knowledge", "artifacts", "input_origin")
+#: What the chat writes of a message as it takes it in, which the new row gets of its own.
+_TAKEN_IN = (chat_intake.MESSAGE_ID, chat_intake.RECEIPT)
+
+
+def _in_its_place(
+    stored: dict, same: bool, text: str, pastes: list, from_a_widget: bool
+) -> tuple[str, list, dict]:
+    """What is sent in a stored row's place: its words, its pasted blocks, and its row's meta.
+
+    Sent again as it is (*same*), her message is sent as its row was stored: its own words (a
+    widget's payload, an optimized message's text, which her bubble does not show) and all it
+    carried, its pasted blocks among them. Edited, it is *text* and *pastes*, and keeps only what
+    it carries that its text does not say (:data:`_CARRIED`): the widget's label, the words before
+    an optimize and ``own_words`` describe the old text. A widget's message keeps its marker."""
+    meta = stored.get("meta")
+    kept = {k: v for k, v in (meta if isinstance(meta, dict) else {}).items() if k not in _TAKEN_IN}
+    if same:
+        own = str(stored.get("content") or text)
+        text, pastes = redact_credentials(redact_exfiltration_urls(own)[0])[0], []
+    else:
+        kept = {k: kept[k] for k in _CARRIED if k in kept}
+    if from_a_widget:
+        kept[WIDGET_ACTION] = True
+    return text, pastes, kept
+
+
 def _resend_taken(
     state: DashboardState,
     session: _ChatSession,
@@ -310,17 +355,14 @@ def _resend_taken(
     message_id: str,
     digest: str,
     pastes: list,
-    *,
-    from_a_widget: bool = False,
+    carried: dict,
 ) -> chat_intake.Receipt:
     """Take the message a resend sends in the edited one's place in, the one way a message enters
     a chat, as a new message: its row's time is when the chat took it in, which its receipt says.
     Checked for a repeat just before, under the chat's lock, with the chat idle, so it starts the
-    turn the caller starts. *from_a_widget*: the edited message came from a widget, and its new
-    row keeps the marker (``own_words.WIDGET_ACTION``)."""
-    meta: dict = _redact_meta({PASTES: pastes}) if pastes else {}
-    if from_a_widget:
-        meta[WIDGET_ACTION] = True
+    turn the caller starts. *carried* is what its row keeps of the one it replaces
+    (:func:`_in_its_place`), a widget's marker among it (``own_words.WIDGET_ACTION``)."""
+    meta: dict = {**carried, **(_redact_meta({PASTES: pastes}) if pastes else {})}
     taken = chat_intake.take_in(
         state,
         session,
@@ -475,12 +517,12 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         # A widget's message sent again (as it is, edited, or by Rewind's genui label) stays one:
         # none of its links become the user's, and the new row keeps the marker.
         from_a_widget = came_from_a_widget(msgs[index].get("meta")) or page_says_widget
+        # Sent again as it is, her message is sent as its row was stored (`_in_its_place`).
+        _bc, pastes, carried = _in_its_place(msgs[index], same, _bc, pastes, from_a_widget)
         del session.messages[index:]
         session._dirty = True
 
-        taken = _resend_taken(
-            state, session, _bc, message_id, digest, pastes, from_a_widget=from_a_widget
-        )
+        taken = _resend_taken(state, session, _bc, message_id, digest, pastes, carried)
         if not from_a_widget:
             take_in_the_users_links(request.get("app", ""), session.key, _bc)
         if rewind and carried_rewound:

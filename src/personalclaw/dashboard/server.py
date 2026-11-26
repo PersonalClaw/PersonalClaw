@@ -1206,6 +1206,6 @@ async def start_dashboard(
         folders_only=not cfg.dashboard.restore_sessions,
     )
     if restored:
-        logger.info("Restored %d session(s)", restored)
+        logger.info("Restored %d chat(s), %d untitled", restored, chat.owe_untitled_chats(state))
 
     return runner, state

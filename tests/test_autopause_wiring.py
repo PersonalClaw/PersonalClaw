@@ -231,7 +231,9 @@ def test_the_fire_path_RECORDS_the_outcome():
 
     src = inspect.getsource(GatewayOrchestrator._fire_store_trigger)
     assert "run_record.record_run" in src
-    assert "result = await provider.execute" in src, "the result must be CAPTURED, not discarded"
+    # The action runs as a task of its own (`triggers.inflight.acting`), its result still taken.
+    assert "result = await acting(" in src, "the result must be CAPTURED, not discarded"
+    assert "provider.execute(config, ctx, timeout=timeout)" in src
 
 
 def test_a_RECORDING_FAILURE_does_not_crash_the_fire(tmp_path, monkeypatch):

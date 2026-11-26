@@ -384,7 +384,7 @@ async def say_moved(
     session: _ChatSession,
     session_key: str,
     answered: bool,
-    send_again: Callable[[], None],
+    send_again: Callable[[list[str]], None],
     attempt: Callable[[], tuple[dict[str, Any], list[dict[str, Any]]]],
     *,
     told: bool = True,
@@ -395,12 +395,13 @@ async def say_moved(
 
     An answer the turn gave (*answered*: its runtime ended it with an answer, not a cancel) stands,
     and the change applies from her next message. Otherwise her message is asked again on the new
-    runtime as the same turn (*send_again*), once: a retry the turn already queued for itself is
-    that one. Not when the attempt it made (*attempt*: the row that started the turn and the rows
-    it wrote) finished a call that may have changed something, or ended while one was still
-    running (``repeated_steps.ask_first``): the turn ends in the error that says so, which carries
-    Retry. The chat says which, and its linked
-    channel hears the same line.
+    runtime as the same turn (*send_again*), once, with each steer the attempt took, in order: their
+    rows follow her message, so the conversation a fresh runtime is handed leaves them out. A retry
+    the turn already queued for itself is that one. Not when the attempt it made (*attempt*: the
+    row that started the turn and the rows it wrote) finished a call that may have changed
+    something, or ended while one was still running (``repeated_steps.ask_first``): the turn ends
+    in the error that says so, which carries Retry. The chat says which, and its linked channel
+    hears the same line.
     """
     change = session._rebinding
     if change is None:
@@ -418,7 +419,7 @@ async def say_moved(
             if told:
                 _tell_channel(state, session_key, note)
             return True
-        send_again()
+        send_again([r.get("content") or "" for r in rows if (r.get("meta") or {}).get(STEERED)])
     note = (
         turn_endings.moved_turn_notice(to) if owed else turn_endings.moved_after_answer_notice(to)
     )

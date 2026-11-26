@@ -20,16 +20,25 @@ Three halves.
 * Every chore named in :data:`CHORES` reaches its model through the chore helper.
 
 An acquisition bound for a later call (``functools.partial(….get_or_create, …)``) counts where it
-is bound. What the census cannot see: a session acquired through a name other than
-``get_or_create``.
+is bound, and so does every other way to reach it: an alias, a bind under another name,
+``getattr(…, "get_or_create")``, the bound method handed on as a callback. What the census cannot
+see: a session acquired through a name other than ``get_or_create``, spelled at run time.
 """
 
 from __future__ import annotations
 
 import ast
 
+import pytest
 import source_index
-from session_acquisitions import REACQUIRES, SRC, _census, _functions, _parsed, acquisitions
+from session_acquisitions import (
+    REACQUIRES,
+    SRC,
+    _census,
+    _functions,
+    _parsed,
+    acquisitions,
+)
 
 #: Sessions that keep their turns because the turns are one conversation, by (file under
 #: ``src/personalclaw``, function), with what the conversation is.
@@ -211,6 +220,79 @@ def test_the_census_fails_a_chore_that_binds_a_session_for_later():
     (site,) = [("planted.py", q) for q in acquisitions(planted)]
     assert site == ("planted.py", "title_the_chat")
     assert not _accounted(site)
+
+
+@pytest.mark.parametrize(
+    "reach",
+    [
+        "acquire = state.sessions.get_or_create\n    client, _, _ = await acquire('chores')",
+        "again = bind(state.sessions.get_or_create, 'chores')\n    client, _, _ = await again()",
+        "client, _, _ = await getattr(state.sessions, 'get_or_create')('chores')",
+        "client, _, _ = await later(state.sessions.get_or_create, 'chores')",
+        "client, _, _ = await operator.attrgetter('get_or_create')(state.sessions)('chores')",
+        "client, _, _ = await operator.methodcaller('get_or_create', 'chores')(state.sessions)",
+        "client, _, _ = await state.sessions.__getattribute__('get_or_create')('chores')",
+    ],
+    ids=[
+        "an alias",
+        "a bind under another name",
+        "getattr",
+        "the bound method as a callback",
+        "attrgetter",
+        "methodcaller",
+        "__getattribute__",
+    ],
+)
+def test_the_census_fails_a_chore_that_reaches_a_session_another_way(reach):
+    """Every way to reach `get_or_create` is an acquisition where it is reached, once: a chore that
+    takes its session through an alias, a renamed `partial`, `getattr` or a callback is caught as
+    one that calls it is."""
+    planted = (
+        "from functools import partial as bind\n"
+        "async def title_the_chat(state, prompt, later=None):\n"
+        f"    {reach}\n"
+        "    async for event in client.stream(prompt):\n"
+        "        pass\n"
+    )
+    (site,) = [("planted.py", q) for q in acquisitions(planted)]
+    assert site == ("planted.py", "title_the_chat")
+    assert not _accounted(site)
+
+
+def test_the_census_fails_a_module_that_names_the_method_for_a_later_getattr():
+    """Named at import and read inside a function by `getattr(…, NAME)`: the name is the
+    acquisition, and it is its module's. A docstring that says the name acquires nothing."""
+    planted = (
+        "NAME = 'get_or_create'\n"
+        "async def title_the_chat(state, prompt):\n"
+        "    'get_or_create'\n"
+        "    client, _, _ = await getattr(state.sessions, NAME)('chores')\n"
+    )
+    from session_acquisitions import MODULE
+
+    (site,) = [("planted.py", q) for q in acquisitions(planted)]
+    assert site == ("planted.py", MODULE)
+    assert not _accounted(site)
+
+
+@pytest.mark.parametrize(
+    ("planted", "owner"),
+    [
+        ("class Chores:\n    take = sessions.get_or_create\n", "<module>"),
+        (
+            "def make_chores(sessions):\n"
+            "    class Chores:\n"
+            "        take = sessions.get_or_create\n"
+            "    return Chores\n",
+            "make_chores",
+        ),
+    ],
+    ids=["at-import", "inside-a-function"],
+)
+def test_a_class_bodys_acquisition_is_the_code_around_the_classs(planted, owner):
+    """A class body runs where the class is defined: at import its module's, inside a function
+    that function's, never a function of its own."""
+    assert acquisitions(planted) == [owner]
 
 
 def test_a_one_turn_session_nothing_ends_is_caught():

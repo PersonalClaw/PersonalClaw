@@ -42,6 +42,11 @@ rather than as still-running-forever, and the trigger's stamps and health. The s
 at all, only the health, so a reaped run was in no history and its trigger's last run stayed the
 one before it.
 
+The ACTION a run of this process still has under way is the reaper's to end, though: it is the
+run itself, not a process another reaper owns, and a claim released while it ran let the next fire
+start a second run beside it. So `reap_one` ends it (`triggers.inflight`, the action alone, never
+the tick loop it runs in), and leaves a claim another live process holds to that claim's expiry.
+
 **🔴 THE SECOND TERMINALIZER: the BOOT ORPHAN PASS.** Everything above is bounded by a
 CLOCK, and that is the wrong first answer after a restart. `overdue` waits 1800s and claim expiry
 waits 3600s, so a run whose owning process died one second ago reads as IN FLIGHT for half an hour —
@@ -149,9 +154,19 @@ def reap_one(
     *,
     store: Any = None,
     now: float = 0.0,
+    deadline_secs: float = RUN_DEADLINE_SECS,
     base_dir: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Release one overdue run's claim and record it. NEVER raises — returns what it managed to do.
+    """End one overdue run, release its claim and record it. NEVER raises — returns what it
+    managed to do.
+
+    🔴 A reaped run used to go on running: the claim was released and the run recorded, and its
+    action kept running in the gateway that started it, so the next fire started a second run
+    beside it, and the first wrote a second row as it ended. So the action of a run this process
+    has under way is ended (`inflight.cut`, the action alone, never the tick loop it runs in), and
+    its one row says it was cut off at the deadline. A run beside it that started since is left
+    running. A claim another live process holds is left to that claim's expiry: this process
+    cannot end that run, and freeing its claim would only let a second run start beside it.
 
     Never raises because this runs inside a background sweep: one trigger whose store row is
     unreadable must not stop the sweep from freeing the others. The returned dict is the audit
@@ -164,28 +179,41 @@ def reap_one(
 
     The claim is read before it is released: it says when the run started, and whose it was.
     """
-    from personalclaw.triggers import claims
+    from personalclaw.triggers import claims, inflight
 
     now = now or time.time()
     held = claims.read_claim(trigger_id, now=now, base_dir=base_dir)
-    released = claims.release_claim(trigger_id, base_dir=base_dir)
     record: dict[str, Any] = {
         "trigger_id": trigger_id,
         "elapsed": int(elapsed),
-        "released": bool(released),
+        "released": False,
+        "ended": 0,
         "deadline_secs": int(RUN_DEADLINE_SECS),
         "recorded": False,
     }
+    if _held_elsewhere(held):
+        logger.debug("Reaper: trigger %s is past its deadline in another process", trigger_id)
+        return record
+    record["released"] = claims.release_claim(trigger_id, base_dir=base_dir)
+    # Between the release and the record, the order the docstring gives; each on its own loop.
+    record["ended"] = inflight.cut(trigger_id, older_than=now - deadline_secs)
     logger.warning(
-        "Reaper: trigger %s exceeded %ds (ran %.0fs), releasing its claim",
+        "Reaper: trigger %s exceeded %ds (ran %.0fs), releasing its claim%s",
         trigger_id,
         int(RUN_DEADLINE_SECS),
         elapsed,
+        " and ending its action" if record["ended"] else "",
+    )
+    reason = (
+        f"Cut off at the {int(RUN_DEADLINE_SECS)}s deadline after {int(elapsed)}s: its action "
+        "was still running, and was ended."
+        if record["ended"]
+        else f"Reaped after {int(elapsed)}s (exceeded {int(RUN_DEADLINE_SECS)}s deadline)"
     )
     record["recorded"] = _close(
         trigger_id,
         status=DEADLINE_STATUS,
-        reason=f"Reaped after {int(elapsed)}s (exceeded {int(RUN_DEADLINE_SECS)}s deadline)",
+        reason=reason,
         started_at=held.claimed_at if held is not None else now - elapsed,
         now=now,
         source=_claimed_by(store, trigger_id, held),
@@ -194,6 +222,14 @@ def reap_one(
     )
     _audit(trigger_id, tool_name="reaper_force_kill", outcome="reaped", elapsed=elapsed)
     return record
+
+
+def _held_elsewhere(held: Any) -> bool:
+    """Whether *held* is a claim a process other than this one holds, and is still running."""
+    from personalclaw.gateway_base import pid_is_alive
+
+    pid = int(getattr(held, "owner_pid", 0) or 0)
+    return pid > 0 and pid != os.getpid() and pid_is_alive(pid)
 
 
 def _close(
@@ -347,7 +383,16 @@ def sweep_once(
     """
     records: list[dict[str, Any]] = []
     for trigger_id, elapsed in overdue(now=now, deadline_secs=deadline_secs, base_dir=base_dir):
-        records.append(reap_one(trigger_id, elapsed, store=store, now=now, base_dir=base_dir))
+        records.append(
+            reap_one(
+                trigger_id,
+                elapsed,
+                store=store,
+                now=now,
+                deadline_secs=deadline_secs,
+                base_dir=base_dir,
+            )
+        )
     return records
 
 

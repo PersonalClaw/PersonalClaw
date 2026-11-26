@@ -23,7 +23,7 @@ from personalclaw.action_providers.base import (
     ActionResult,
 )
 from personalclaw.action_providers.services import get_action_services
-from personalclaw.action_providers.template import render_for_a_person
+from personalclaw.action_providers.template import render_for_a_person, title_template_problem
 
 _ALLOWED_KINDS = {
     notification_kinds.INFO,
@@ -31,6 +31,13 @@ _ALLOWED_KINDS = {
     notification_kinds.WARNING,
     notification_kinds.ERROR,
 }
+
+
+def config_problem(config: dict[str, Any]) -> str:
+    """Why an automation's notify action can't be saved, as each fire refuses it: it has no
+    ``title_template`` to raise its notification with (`template.title_template_problem`); ""
+    when it can."""
+    return title_template_problem(config, what="A notification")
 
 
 class NotifyActionProvider(ActionProvider):

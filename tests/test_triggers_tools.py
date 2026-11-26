@@ -655,7 +655,7 @@ class TestCreateHonorsEnabled:
             name="Nightly report",
             kind="clock",
             spec={"kind": "interval", "interval_secs": 3600},
-            workflow={"provider": "notify", "config": {"message": "x"}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
             enabled=False,
         )
         assert result.ok
@@ -673,7 +673,7 @@ class TestCreateHonorsEnabled:
             name="Nightly report",
             kind="clock",
             spec={"kind": "interval", "interval_secs": 3600},
-            workflow={"provider": "notify", "config": {"message": "x"}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
             enabled=False,
         )
         assert store.get(result.data["trigger"]["id"]).trigger.next_fire_at == ""
@@ -687,7 +687,7 @@ class TestCreateHonorsEnabled:
             name="Nightly report",
             kind="clock",
             spec={"kind": "interval", "interval_secs": 60},
-            workflow={"provider": "notify", "config": {"message": "x"}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
             enabled=False,
         )
         triggers = [r.trigger for r in store.load()]
@@ -701,7 +701,7 @@ class TestCreateHonorsEnabled:
             name="Nightly report",
             kind="clock",
             spec={"kind": "interval", "interval_secs": 3600},
-            workflow={"provider": "notify", "config": {"message": "x"}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
         )
         trigger = store.get(result.data["trigger"]["id"]).trigger
         assert trigger.enabled is True
@@ -715,7 +715,7 @@ class TestCreateHonorsEnabled:
             name="Off one",
             kind="clock",
             spec={"kind": "interval", "interval_secs": 3600},
-            workflow={"provider": "notify", "config": {"message": "x"}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
             created_by="agent",
             enabled=False,
         )
@@ -724,7 +724,7 @@ class TestCreateHonorsEnabled:
             name="On one",
             kind="clock",
             spec={"kind": "interval", "interval_secs": 3600},
-            workflow={"provider": "notify", "config": {"message": "x"}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
             created_by="agent",
         )
         assert "active now" not in off.text
@@ -762,7 +762,7 @@ class TestRegistrationRefusesWhatCouldNeverRun:
             name="Inert",
             kind="clock",
             spec={"kind": "cron", "expr": "99 99 * * *"},
-            workflow={"provider": "notify", "config": {}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
         )
         assert not result.ok
         assert "99 99 * * *" in result.text
@@ -776,7 +776,7 @@ class TestRegistrationRefusesWhatCouldNeverRun:
             name="Fine",
             kind="clock",
             spec={"kind": "cron", "expr": "0 9 * * *"},
-            workflow={"provider": "notify", "config": {}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
         )
         assert result.ok, result.text
         assert store.get(result.data["trigger"]["id"]).trigger.next_fire_at
@@ -805,7 +805,7 @@ class TestRegistrationRefusesWhatCouldNeverRun:
             name="Fine",
             kind="clock",
             spec={"kind": "cron", "expr": "0 9 * * *"},
-            workflow={"provider": "notify", "config": {}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
         )
         tid = created.data["trigger"]["id"]
 
@@ -829,7 +829,7 @@ class TestRegistrationRefusesWhatCouldNeverRun:
             name="Fine",
             kind="clock",
             spec={"kind": "cron", "expr": "0 9 * * *"},
-            workflow={"provider": "notify", "config": {}},
+            workflow={"provider": "notify", "config": {"title_template": "x"}},
         )
         tid = created.data["trigger"]["id"]
         assert T.update(

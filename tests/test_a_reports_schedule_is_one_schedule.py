@@ -273,7 +273,7 @@ async def test_the_triggers_page_says_which_automation_is_a_reports_schedule(hom
     [
         ({"name": "Something else"}, "Rename the report"),
         (
-            {"workflow": {"provider": "notify", "config": {"message": "hi"}}},
+            {"workflow": {"provider": "notify", "config": {"title_template": "hi"}}},
             "runs the report",
         ),
         (

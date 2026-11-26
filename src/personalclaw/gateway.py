@@ -116,6 +116,7 @@ from personalclaw.subagent import (
     resolve_max_subagents,
 )
 from personalclaw.task_modes import resolve_effective_risk
+from personalclaw.triggers.inflight import CutAtDeadline
 from personalclaw.triggers.models import Outcome
 from personalclaw.triggers.nudge import (
     AutoNudgeService,
@@ -1871,8 +1872,15 @@ class GatewayOrchestrator:
             # this, a ceiling that gives no run on this machine any network let a fire's
             # webhook or fetch go out. What it writes itself as it runs (an audit row, a log
             # line) is masked of each value filled in (`filled_secrets.handed`).
+            # As a task of its own (`triggers.inflight`), so the deadline reaper can end the
+            # action alone: this runs in the tick loop's own task, which must go on ticking.
+            from personalclaw.triggers.inflight import acting
+
             with run_scope(trigger), egress_held_to(dispatch_key), handed(filled):
-                result = await provider.execute(config, ctx, timeout=timeout)
+                result = await acting(
+                    str(getattr(trigger, "id", "") or ""),
+                    provider.execute(config, ctx, timeout=timeout),
+                )
             running, result = False, masked_answer(result, filled)
             # The run's audit row at the rung it took, and at `auto_with_undo` its undo. Only for
             # an action that succeeded — a failed action has nothing to take back.
@@ -1933,6 +1941,12 @@ class GatewayOrchestrator:
             if running:
                 self._record_stopped_fire(trigger, started_at=fire_started, source=source)
             raise
+        except CutAtDeadline:
+            # The deadline reaper ended the action (`reaper.reap_one`) and wrote the run's one
+            # row, saying it was cut off: nothing more is recorded or said here, and nothing runs
+            # after it, as after a run a stop cut off.
+            running, cut_off = False, True
+            logger.warning("trigger %s: its action was cut off at its run's deadline", trigger.id)
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
             # A provider that RAISES (rather than returning a failed result) is wrapped in the
             # shared WHAT/WHY/FIX envelope here — the same wrap the hook seam (`hooks.py`) applies —
@@ -1971,27 +1985,38 @@ class GatewayOrchestrator:
             # cutover a SCHEDULED fire updated no open view: the user watched a stale page until
             # navigating. In a `finally` because a FAILED fire is the one someone is watching for.
             self._push_trigger_refresh()
-            # 🔴 THE CHAIN. `run_completed` was a declared kind with NO firing path: measured,
-            # a `run_completed` trigger pointed at a real clock trigger was reached by nothing — not
-            # the tick, not either poller. So "when my nightly backup finishes, notify me" was
-            # creatable, listed in the UI, and permanently silent.
-            #
-            # Chained HERE because this is the single point every store-backed run completes, so a
-            # chain inherits the same dispatch — and therefore the same gates, including the kill
-            # switch and the capability fence. A chain with its own dispatch path would be a second
-            # place for those controls to be forgotten, which is exactly how the `web_watch` gap
-            # happened. After the refresh, so a slow chain never delays the view update.
-            #
-            # Not after a run a stop cut off: it did not complete, and a `run_completed` chain
-            # started while the gateway stops would be one more run cut off. Nor after an action
-            # that only started its work: what runs after it runs when that work ends.
-            if not cut_off and not started_only:
-                await self._fire_chained_triggers(source_trigger=trigger.id, payload=payload)
-            elif started_only:
-                from personalclaw.triggers.chain import hold_chain
-
-                hold_chain(trigger.id, payload)
+            await self._chain_after_fire(
+                trigger, payload, cut_off=cut_off, started_only=started_only
+            )
         return run_id
+
+    async def _chain_after_fire(
+        self, trigger: Any, payload: dict[str, Any], *, cut_off: bool, started_only: bool
+    ) -> None:
+        """Start what runs after *trigger*'s fire (`run_completed`), once its run has ended.
+
+        🔴 THE CHAIN. `run_completed` was a declared kind with NO firing path: measured,
+        a `run_completed` trigger pointed at a real clock trigger was reached by nothing — not
+        the tick, not either poller. So "when my nightly backup finishes, notify me" was
+        creatable, listed in the UI, and permanently silent.
+
+        Chained from the fire's `finally` (`_fire_store_trigger`) because that is the single point
+        every store-backed run completes, so a chain inherits the same dispatch — and therefore
+        the same gates, including the kill switch and the capability fence. A chain with its own
+        dispatch path would be a second place for those controls to be forgotten, which is exactly
+        how the `web_watch` gap happened. After the refresh, so a slow chain never delays the view
+        update.
+
+        Not after a run a stop or its deadline cut off: it did not complete, and a `run_completed`
+        chain started while the gateway stops would be one more run cut off. Nor after an action
+        that only started its work: what runs after it runs when that work ends.
+        """
+        if not cut_off and not started_only:
+            await self._fire_chained_triggers(source_trigger=trigger.id, payload=payload)
+        elif started_only:
+            from personalclaw.triggers.chain import hold_chain
+
+            hold_chain(trigger.id, payload)
 
     def _record_stopped_fire(self, trigger: Any, *, started_at: float, source: str) -> None:
         """Record a fire a stop or a restart cut off. Never raises.

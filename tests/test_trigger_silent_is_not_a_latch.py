@@ -135,7 +135,10 @@ def _body(**extra) -> dict:
     return {
         "name": "nightly",
         "every": 3600,
-        "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+        "action": {
+            "provider": "notify",
+            "config": {"title_template": "hi", "body_template": "there"},
+        },
         **extra,
     }
 

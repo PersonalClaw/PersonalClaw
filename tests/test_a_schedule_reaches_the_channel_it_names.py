@@ -141,7 +141,10 @@ async def _create(body: dict) -> tuple[int, dict]:
     base = {
         "name": "nightly",
         "every": 3600,
-        "action": {"provider": "notify", "config": {"title": "hi", "body": "there"}},
+        "action": {
+            "provider": "notify",
+            "config": {"title_template": "hi", "body_template": "there"},
+        },
     }
     resp = await handlers._create_schedule(_State(), {**base, **body}, _request(body))
     return resp.status, json.loads(resp.body.decode())
