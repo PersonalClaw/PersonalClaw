@@ -8642,8 +8642,10 @@ export const api = {
   // The editor saves the WHOLE profile it painted, so the save names the revision the list reported
   // for it (`SavedAgent.revision`) — the consent resend too — and a stale copy is refused with
   // `409 stale_write` instead of reverting a change made since (`lib/staleWrite.ts`).
+  // `warnings`: entries of the tool list of an agent on an agent CLI that match no PersonalClaw tool
+  // a CLI is offered, so they let it call nothing (the save stands).
   updateAgent: (name: string, body: Record<string, unknown>, base: string) =>
-    withSecurityConsent((c) => put<{ ok: boolean; revision: string }>(`/api/agents/${encodeURIComponent(name)}`,
+    withSecurityConsent((c) => put<{ ok: boolean; revision: string; warnings?: string[] }>(`/api/agents/${encodeURIComponent(name)}`,
       c ? { ...body, confirm: true } : body, basedOn(base))),
   // One field alone — the reserved agents' model picker — is the edit the user made, so the gateway
   // takes it with no base: there is no copy of anything else in it to go stale.

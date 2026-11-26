@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from personalclaw.llm.base import ModelProvider  # noqa: F811
@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from aiohttp import web
 
 from personalclaw import approval_answer, session_keys, subagent_endings
+from personalclaw.agents.tool_list import POLICY_KEY
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
@@ -517,6 +518,10 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
     or 400/404 when the session cannot be identified (deny-by-default:
     callers that cannot prove identity get an error, not an empty policy).
     Authenticated via X-Internal-Secret + X-Session-Key.
+
+    With the agent's tool list too, when it has one (``agents.tool_list.POLICY_KEY``): the agent
+    the session runs as, a chat that names none running as the default agent. An agent CLI's
+    PersonalClaw tools are then the ones its list allows (``mcp_shared.agent_tool_list``).
     """
     state: DashboardState = request.app["state"]
     session_key = approval_answer.work_of_request(request)
@@ -533,6 +538,10 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
 
     # Resolve agent name from session
     agent_name = ""
+    # Whether the session is one this gateway knows. One that names no agent runs as the default
+    # agent, whose list holds its turns too (`agents.tool_list.agent_tools`), as PersonalClaw's
+    # own runtime holds it; a key it does not know is answered 404, the startup race.
+    known = False
 
     # Dashboard session
     if session_key.startswith("dashboard:"):
@@ -540,6 +549,7 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
         session = state.get_session(session_name)
         if session:
             agent_name = session.agent
+            known = True
     # Subagent — look up in SubagentManager
     elif session_key.startswith("subagent:"):
         if state.subagents:
@@ -547,6 +557,7 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
             info = state.subagents.get(subagent_id)
             if info:
                 agent_name = info.agent
+                known = True
     # Cron — fall through to session manager lookup below
     elif session_key.startswith("cron:"):
         pass
@@ -554,8 +565,9 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
     # Also check session manager for agent name
     if not agent_name and state.sessions:
         agent_name = state.sessions.get_agent(session_key)
+        known = known or bool(state.sessions.has_session(session_key))
 
-    if not agent_name:
+    if not agent_name and not known:
         await sel_log_async(
             _sel().log_api_access,
             caller=session_key,
@@ -578,18 +590,12 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": "invalid agent name"}, status=400)
 
-    # Read agent config from disk
-    agent_path = config_loader.config_dir() / "agents" / f"{agent_name}.json"
-    if not agent_path.is_file():
-        return web.json_response({})
-
-    try:
-        config = json.loads(agent_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return web.json_response({})
-
-    policy = config.get("managedToolPolicy", {})
-    if not isinstance(policy, dict):
+    managed = await asyncio.to_thread(_managed_tool_policy, agent_name) if agent_name else None
+    listed = await asyncio.to_thread(_agent_tool_list_policy, agent_name)
+    policy: dict[str, Any] = dict(managed or {})
+    if listed is not None:
+        policy[POLICY_KEY] = listed
+    if managed is None and listed is None:
         return web.json_response({})
 
     await sel_log_async(
@@ -598,9 +604,36 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
         operation="session_tool_policy",
         outcome="ok",
         source="dashboard",
-        resources=f"agent={agent_name}",
+        resources=f"agent={agent_name or 'default'}",
     )
     return web.json_response(policy)
+
+
+def _managed_tool_policy(agent_name: str) -> dict[str, Any] | None:
+    """The ``managedToolPolicy`` of the agent runtime file ``agents/<agent_name>.json``, or
+    ``None`` when there is none to read."""
+    agent_path = config_loader.config_dir() / "agents" / f"{agent_name}.json"
+    if not agent_path.is_file():
+        return None
+    try:
+        config = json.loads(agent_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    policy = config.get("managedToolPolicy", {}) if isinstance(config, dict) else None
+    return policy if isinstance(policy, dict) else None
+
+
+def _agent_tool_list_policy(agent_name: str) -> dict[str, Any] | None:
+    """The tool list of the agent *agent_name* (the default agent for ``""``) as the session tool
+    policy carries it (``AgentTools.as_policy``), or ``None`` when it has none."""
+    from personalclaw.agents.tool_list import agent_tools
+
+    try:
+        cfg: config_loader.AppConfig | None = config_loader.AppConfig.load()
+    except Exception:  # noqa: BLE001 — a configuration that cannot be read holds every list
+        logger.debug("session tool policy: configuration not loaded", exc_info=True)
+        cfg = None
+    return agent_tools(agent_name, cfg).as_policy()
 
 
 async def _reset_all_sessions(request: web.Request) -> int:

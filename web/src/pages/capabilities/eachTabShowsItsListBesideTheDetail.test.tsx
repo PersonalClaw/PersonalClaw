@@ -434,11 +434,11 @@ describe('the right pane says what the selected item may do', () => {
     expect(permissions(detail('probe')!)).toEqual({ Approval: 'Default (hook-based)', Tools: 'bash, read_file', Skills: 'All available skills' })
   })
 
-  it('an agent on an agent CLI: its lists do not hold there', async () => {
+  it("an agent on an agent CLI: its tool list holds for PersonalClaw's tools, its skill list not", async () => {
     (answers.agents as { agents: Record<string, unknown>[] }).agents[0].provider = 'acp:kiro-cli'
     await open(withOpen('agents', 'native:scout'))
     const rows = permissions(detail('scout')!)
-    expect(rows.Tools).toMatch(/^Not applied: .* runs its own tools, and a tool list holds only on PersonalClaw's own agent\.$/)
+    expect(rows.Tools).toMatch(/^All of PersonalClaw's tools\. .*'s own built-in tools follow its permission mode\.$/)
     expect(rows.Skills).toMatch(/^Not applied: .* loads its own skills, and a skill list holds only on PersonalClaw's own agent\.$/)
   })
 

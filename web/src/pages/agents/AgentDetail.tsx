@@ -49,13 +49,19 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
   const [draft, setDraft] = useState<AgentDraft>(() => base.value)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  // What the last save warned of: tool-list entries an agent CLI is not offered (the save stood).
+  const [warnings, setWarnings] = useState<string[]>([])
   const guard = useStaleWriteGuard<AgentDraft>({
     read: async () => {
       const stored = (await api.agents()).agents.find((a) => a.name === agent.name)
       if (!stored) throw new Error(`the agent “${agent.name}” is no longer configured`)
       return baseOf(stored)
     },
-    write: (next, revision) => api.updateAgent(agent.name, draftToPayload(next), revision),
+    write: async (next, revision) => {
+      const saved = await api.updateAgent(agent.name, draftToPayload(next), revision)
+      setWarnings(saved.warnings ?? [])
+      return saved
+    },
     onSaved: () => { onSaved(); setEditing(false) },
     // Dropping the change leaves the editor on what is stored: the list re-reads, and the next Edit
     // seeds from it.
@@ -147,6 +153,11 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
         {isDefault && <span className="ml-auto inline-flex items-center gap-1 text-primary text-[0.75rem]"><Star size={12} fill="currentColor" /> Default</span>}
       </div>
       {err && <FieldError>{err}</FieldError>}
+      {warnings.length > 0 && (
+        <div role="status" className="flex flex-col gap-1 text-[0.8125rem] leading-relaxed" style={{ color: 'var(--color-warning)' }}>
+          {warnings.map((w) => <p key={w}>{w}</p>)}
+        </div>
+      )}
 
       {reserved && <p className="text-on-surface-low text-[0.8125rem] leading-relaxed">This is a built-in system agent (the background-chore worker, the goal-loop worker, or the goal-planner). Its definition is fixed, but you can swap which model it runs on.</p>}
 

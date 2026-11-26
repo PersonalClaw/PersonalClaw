@@ -19,6 +19,7 @@ from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
 from personalclaw.sel import sel
 
 if TYPE_CHECKING:
+    from personalclaw.agents.tool_list import AgentTools
     from personalclaw.subagent_tier import SubagentTier
 
 
@@ -37,9 +38,19 @@ logger = logging.getLogger(__name__)
 _use_content_length = False
 
 # ── Managed tool policy cache ──────────────────────────────────────────────
-# Resolved once per MCP server process lifetime.  The MCP server is spawned
-# per ACP agent session, so the policy is stable for the process.
+# Read again once it is :data:`_POLICY_FRESH_SECS` old. The MCP server is spawned per ACP agent
+# session and lives as long as its CLI does, across turns, so a policy read once would keep the
+# agent's tool list as it was when the CLI started, after the owner narrowed it.
 _excluded_tools: set[str] | None = None
+#: When the gateway last answered the policy (``time.monotonic``).
+_resolved_at: float = 0.0
+#: How old an answered policy may be before a request reads it again: a list the owner narrowed
+#: holds this server's calls within this many seconds, and no more than one read is made in that
+#: time. A read again that fails keeps the answer held (:func:`_resolve_excluded_tools`).
+_POLICY_FRESH_SECS: float = 5.0
+#: The tool list of the agent this server runs for, read with that policy (``agentTools``):
+#: ``None`` until the gateway answers, as every tool is offered while it has not.
+_agent_list: "AgentTools | None" = None
 # Two separate negative caches with different TTLs so the long-TTL
 # HTTP-error path doesn't keep fail-open active when only a brief
 # startup race triggered the failure.
@@ -90,18 +101,36 @@ def _resolve_excluded_tools() -> set[str]:
     2. The gateway's approval layer provides the authoritative deny gate.
     3. This MCP-level filtering is defense-in-depth for non-ACP-agent
        clients (Claude Code, custom MCP hosts) that skip disabledTools.
-    """
-    global _excluded_tools, _last_failure_time, _last_startup_race_time, _failure_count
-    if _excluded_tools is not None:
-        return _excluded_tools
 
+    Neither of the first two holds the agent's tool list (``agentTools``, read here with the
+    policy): this server, where PersonalClaw's tools run, is the one place it is held on an agent
+    CLI. While the read is unresolved (no session key, a session the gateway does not know yet,
+    no answer) the list is not held, and it is from the first call after the read resolves: a
+    startup race within :data:`_STARTUP_RACE_CACHE_TTL`, an unreachable gateway within
+    :data:`_NEGATIVE_CACHE_TTL`. A call is not refused meanwhile, since a host with no session key
+    (a CLI run outside PersonalClaw with this server configured) has no agent and no list.
+    """
+    global _excluded_tools, _agent_list, _resolved_at
+    global _last_failure_time, _last_startup_race_time, _failure_count
     now = time.monotonic()
+    # An answer held is read again once it is `_POLICY_FRESH_SECS` old, so a list the owner
+    # narrowed holds the next call. A read again that does not answer keeps what was held: the
+    # list held until now, and nothing says it changed. None of the fail-open below applies to it.
+    refreshing = _excluded_tools is not None
+    if refreshing and now - _resolved_at < _POLICY_FRESH_SECS:
+        return _held()
+    if refreshing:
+        _resolved_at = now
+
     # Negative cache: avoid hammering gateway on persistent failures.
     # Silent during the cache window — only the structured audit event is
     # emitted to keep gateway.log readable.  Two windows: a long one for
     # genuine HTTP/network failure, a short one for benign startup races.
-    if (_last_failure_time and (now - _last_failure_time) < _NEGATIVE_CACHE_TTL) or (
-        _last_startup_race_time and (now - _last_startup_race_time) < _STARTUP_RACE_CACHE_TTL
+    # Never on a read again: an answer clears both windows and no read again sets them, and the
+    # guard keeps a later change from opening a refresh through this fail-open.
+    if not refreshing and (
+        (_last_failure_time and (now - _last_failure_time) < _NEGATIVE_CACHE_TTL)
+        or (_last_startup_race_time and (now - _last_startup_race_time) < _STARTUP_RACE_CACHE_TTL)
     ):
         sel().log_api_access(
             caller=os.environ.get("PERSONALCLAW_SESSION_KEY", "mcp"),
@@ -158,6 +187,8 @@ def _resolve_excluded_tools() -> set[str]:
                     break
                 pid = _get_ppid(pid)
 
+        if not session_key and refreshing:
+            return _held()
         if not session_key:
             # No session key resolvable (startup race — ACP agent hasn't
             # written PID file yet, or process is from the warm pool).
@@ -196,6 +227,8 @@ def _resolve_excluded_tools() -> set[str]:
             # seconds once the session is registered.  Critically, do
             # NOT log a stack trace for 404 — it floods gateway.log on
             # every fresh subagent spawn.
+            if http_exc.code == 404 and refreshing:
+                return _held()
             if http_exc.code == 404:
                 _last_startup_race_time = now
                 sel().log_api_access(
@@ -208,13 +241,23 @@ def _resolve_excluded_tools() -> set[str]:
                 return set()
             raise
 
+        from personalclaw.agents.tool_list import POLICY_KEY, AgentTools
+
+        _agent_list = AgentTools.from_policy(policy.get(POLICY_KEY))
         exclude = policy.get("exclude", [])
         if isinstance(exclude, list):
             _excluded_tools = {t for t in exclude if isinstance(t, str)}
         else:
             _excluded_tools = set()
+        # Answered: no failure before it holds a later read back (none sets these once answered).
+        _resolved_at, _last_failure_time, _last_startup_race_time = time.monotonic(), 0.0, 0.0
         return _excluded_tools
     except Exception as exc:
+        if refreshing:
+            logger.debug(
+                "Tool policy read again failed; the policy held before holds", exc_info=True
+            )
+            return _held()
         # Policy call failed (network error, timeout, non-404 HTTP) —
         # use the LONG negative cache to avoid repeated 5s urlopen
         # blocks across many MCP servers when the gateway is genuinely
@@ -469,6 +512,35 @@ def _declaration(tool: Mapping[str, Any]) -> tuple[Any, bool, Any]:
         meta.get(PROPOSES_META_KEY) is True,
         meta.get(TELLS_OWNER_META_KEY),
     )
+
+
+def _held() -> set[str]:
+    """The exclusions held (:func:`_resolve_excluded_tools`): its answer while fresh, and after a
+    read again that did not answer."""
+    return _excluded_tools if _excluded_tools is not None else set()
+
+
+def agent_tool_list() -> "AgentTools":
+    """The tool list of the agent this server runs for, as the gateway last answered it with the
+    session's tool policy, read by :func:`_resolve_excluded_tools`, which each request resolves
+    once before asking this: the server offers, and answers, only the tools it allows
+    (``agents.tool_list``). Every tool while the gateway has not answered, as that read fails
+    open; a list it answered that cannot be read allows only the tool every list keeps."""
+    from personalclaw.agents.tool_list import AgentTools
+
+    return _agent_list if _agent_list is not None else AgentTools()
+
+
+def _list_refusal(held: "AgentTools", tool_name: str) -> str:
+    """The answer to a call to *tool_name*, which the agent's list *held* does not allow: the
+    refusal a call a policy blocks is answered with, in the list's own words, as PersonalClaw's
+    own runtime answers it (``AgentTools.refuse``)."""
+    from personalclaw import security
+
+    _, observation = security.classify_denial(
+        security.DENY_KIND_POLICY, held.refusal(tool_name), tool_name
+    )
+    return observation
 
 
 def offered_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -733,6 +805,9 @@ def run_mcp_stdio_loop(
             tools = offered_tools(list_tools_fn())
             if excluded:
                 tools = [t for t in tools if t.get("name") not in excluded]
+            # Only the tools the agent's own list allows, as PersonalClaw's own runtime shows it.
+            held = agent_tool_list()
+            tools = [t for t in tools if held.allows(str(t.get("name") or ""))]
             respond(req_id, {"tools": tools})
         elif method == "tools/call":
             params = req.get("params", {})
@@ -743,6 +818,7 @@ def run_mcp_stdio_loop(
             # Defense-in-depth: reject calls to excluded tools even if
             # the LLM somehow attempts to call them (hallucination).
             excluded = _resolve_excluded_tools()
+            held = agent_tool_list()
             if tool_name in excluded:
                 sel().log_tool_invocation(
                     session_key=os.environ.get("PERSONALCLAW_SESSION_KEY", "mcp"),
@@ -760,6 +836,22 @@ def run_mcp_stdio_loop(
                         is_error=True,
                     ),
                 )
+            elif not held.allows(tool_name):
+                # A call outside the agent's list, refused before it runs, as the list holds on
+                # PersonalClaw's own runtime: a model that names a tool it was not shown cannot
+                # reach it.
+                from personalclaw.agents.tool_list import REFUSED_BY
+
+                sel().log_tool_invocation(
+                    session_key=os.environ.get("PERSONALCLAW_SESSION_KEY", "mcp"),
+                    source="mcp",
+                    tool_name=tool_name,
+                    tool_kind=server_name,
+                    tool_input=tool_args,
+                    outcome="refused",
+                    error=REFUSED_BY,
+                )
+                respond(req_id, build_tool_response(_list_refusal(held, tool_name), is_error=True))
             else:
                 from personalclaw.security import redact_for_model
                 from personalclaw.tool_providers.base import ToolFailure
