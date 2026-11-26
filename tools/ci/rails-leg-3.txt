@@ -37,6 +37,7 @@ tests/rails/test_session_key_census_tree.py
 tests/rails/test_shared_contracts_doc_tree.py
 tests/rails/test_spawn_env_audit_tree.py
 tests/rails/test_structural_baseline_tree.py
+tests/rails/test_the_claims_reader_imports_nothing_of_the_gateway_tree.py
 tests/rails/test_the_documents_tests_import_only_the_documents_package_tree.py
 tests/rails/test_the_home_fence_holds_its_names_tree.py
 tests/rails/test_the_page_signs_addresses_in_requests_the_route_takes.py
