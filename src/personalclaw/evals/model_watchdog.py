@@ -80,15 +80,19 @@ def state_path() -> Path:
     return store.evals_root() / "model_watchdog.json"
 
 
+#: Why every standing autonomy grant is revoked on a tick that cannot read the watchdog's record.
+UNREADABLE_CAUSE = (
+    "The model watchdog's record of the model bindings could not be read, so whether they changed "
+    "is not known; every standing autonomy grant is revoked until its evidence is taken again."
+)
+
+
 def load_state() -> dict:
-    path = state_path()
-    if not path.is_file():
-        return {"model_fp": "", "fingerprint": {}, "mtime": 0.0, "checked_at": ""}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {"model_fp": "", "fingerprint": {}, "mtime": 0.0, "checked_at": ""}
-    if not isinstance(data, dict):
+    """The bindings the watchdog last saw. No file, or one that holds nothing, is a first run.
+    Raises ``record_files.Unreadable`` for one that is there and cannot be read, after keeping a
+    copy of it: that is no first run, and :func:`check` reads it as a rebind it cannot see."""
+    data = record_files.read(state_path(), dict)
+    if data is None:
         return {"model_fp": "", "fingerprint": {}, "mtime": 0.0, "checked_at": ""}
     data.setdefault("model_fp", "")
     data.setdefault("fingerprint", {})
@@ -322,6 +326,17 @@ class WatchdogResult:
         }
 
 
+def _queued_lines(entries: list[dict]) -> list[str]:
+    """The digest's lines for the re-benchmarks a tick queued."""
+    lines = [f"Queued {len(entries)} small-budget re-benchmark(s):"]
+    for entry in entries:
+        lines.append(
+            f"  • {entry['kind']}: {entry['subject']} "
+            f"({entry['trials']} trial(s), ≤${entry['budget_usd']:.2f})"
+        )
+    return lines
+
+
 def digest_body(result: WatchdogResult) -> str:
     """The ONE digest's body: what moved, what was queued, what baseline exists.
 
@@ -340,12 +355,7 @@ def digest_body(result: WatchdogResult) -> str:
             f"→ {change['after'] or '(unbound)'}"
         )
     lines.append("")
-    lines.append(f"Queued {len(result.queued)} small-budget re-benchmark(s):")
-    for entry in result.queued:
-        lines.append(
-            f"  • {entry['kind']}: {entry['subject']} "
-            f"({entry['trials']} trial(s), ≤${entry['budget_usd']:.2f})"
-        )
+    lines.extend(_queued_lines(result.queued))
     lines.append("")
     lines.append(
         f"{result.baseline_scenarios} scenario baseline(s) exist for the previous "
@@ -353,6 +363,56 @@ def digest_body(result: WatchdogResult) -> str:
         "not a re-run."
     )
     return "\n".join(lines)
+
+
+def _record_unreadable(
+    unread: record_files.Unreadable, *, moment: datetime, notifier, top_n: int
+) -> WatchdogResult:
+    """The tick that finds the watchdog's record there and unreadable. Whether the bindings changed
+    is not known, so it takes the fail-safe direction a rebind takes: every standing autonomy grant
+    is revoked (a re-grant is a click; a grant left standing runs on evidence that may be void),
+    every watched use case's re-benchmark is queued, and the one digest names the record and its
+    kept copy. A fresh record is written then, so the next tick is ordinary: the copy is kept beside
+    it (``record_files``), and once every grant is revoked the old bindings decide nothing."""
+    fingerprint, model_fp = fingerprint_now()
+    try:
+        from personalclaw.guardrails.ladder import revoke_granted_scopes
+
+        revoke_granted_scopes(
+            cause=UNREADABLE_CAUSE, evidence_id="model_watchdog:unreadable", source="model_watchdog"
+        )
+    except Exception:  # noqa: BLE001 - the queue and digest must survive a revocation failure
+        logger.warning("watchdog: autonomy revocation failed", exc_info=True)
+    changes = changed_bindings({}, fingerprint)
+    entries = build_queue_entries(model_fp=model_fp, changes=changes, top_n=top_n, now=moment)
+    save_queue(load_queue(strict=True) + entries)
+    result = WatchdogResult(
+        changed=True,
+        reason="state_unreadable",
+        model_fp=model_fp,
+        changes=[c.to_dict() for c in changes],
+        queued=entries,
+    )
+    if notifier is not None:
+        try:
+            notifier(
+                NOTIFY_KIND,
+                f"Model watchdog record unreadable: autonomy grants revoked, {len(entries)} "
+                "re-benchmark(s) queued",
+                "\n".join([str(unread), "", UNREADABLE_CAUSE, "", *_queued_lines(entries)]),
+            )
+            result.notifications = 1
+        except Exception:  # noqa: BLE001 - a dead notifier must not lose the queue
+            logger.debug("watchdog digest notification skipped", exc_info=True)
+    save_state(
+        {
+            "model_fp": model_fp,
+            "fingerprint": fingerprint,
+            "mtime": _mtime(),
+            "checked_at": moment.isoformat(),
+        }
+    )
+    return result
 
 
 def check(
@@ -373,7 +433,10 @@ def check(
     a tick that found nothing must not look like a tick that never ran.
     """
     moment = now or datetime.now(tz=timezone.utc)
-    state = load_state()
+    try:
+        state = load_state()
+    except record_files.Unreadable as unread:
+        return _record_unreadable(unread, moment=moment, notifier=notifier, top_n=top_n)
     fingerprint, model_fp = fingerprint_now()
     mtime = _mtime()
     previous_fp = str(state.get("model_fp") or "")

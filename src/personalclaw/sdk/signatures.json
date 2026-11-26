@@ -1841,7 +1841,7 @@
    "lint": {
     "kind": "method",
     "params": [
-     {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "purge"}
+     {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "purge"}
     ],
     "returns": "dict"
    },

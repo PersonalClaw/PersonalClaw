@@ -61,7 +61,7 @@ from aiohttp import web
 
 from personalclaw import session_keys
 from personalclaw.http_errors import HTTP_ERROR_CODES
-from personalclaw.inbound import auth, tokens
+from personalclaw.inbound import auth, clients, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
 from personalclaw.providers.failure_copy import sentence_with_detail
@@ -307,6 +307,7 @@ def _rate_refusal(route: str, client: Any, client_id: str) -> web.Response | Non
         # anyone else's ceiling.
         effective = caps.caps_for(client)
         if caps.check_rate_for_client(OPENAI_SURFACE, client_id, caps=effective):
+            clients.admitted(client)
             return None
         retry = caps.retry_after_for_client(OPENAI_SURFACE, client_id, caps=effective)
     except Exception:  # noqa: BLE001 — a broken limiter must not become an open door
@@ -962,6 +963,7 @@ async def handle_models(request: web.Request) -> web.StreamResponse:
     refusal, client, client_id = _admit(request, ROUTE_MODELS)
     if refusal is not None:
         return refusal
+    clients.admitted(client)
     from personalclaw.config.loader import AppConfig
 
     names = visible_agents(client, AppConfig.load())
@@ -1363,6 +1365,7 @@ async def handle_voices(request: web.Request) -> web.StreamResponse:
     refusal, client, client_id = _admit(request, ROUTE_VOICES)
     if refusal is not None:
         return refusal
+    clients.admitted(client)
     params = resolve_voice()
     voices: list[dict[str, str]] = []
     if params is not None:

@@ -62,7 +62,7 @@ from aiohttp import web
 
 from personalclaw import cancellation
 from personalclaw.http_errors import json_error
-from personalclaw.inbound import auth, tokens
+from personalclaw.inbound import auth, clients, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
 from personalclaw.net.guard import evaluate
@@ -220,6 +220,7 @@ def _admit(request: web.Request, route: str) -> tuple[web.Response | None, str, 
             why,
             "",
         )
+    clients.admitted(client)
     return None, "", getattr(client, "client_id", "") or CAPTURE_SURFACE
 
 

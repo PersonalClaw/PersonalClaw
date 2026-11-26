@@ -2372,6 +2372,15 @@ class SubagentManager:
         logger.info("Stopped %d/%d subagent(s): %s", stopped, len(victims), because)
         return stopped
 
+    def _fanout_of(self, fanout_key: str) -> list[SubagentInfo]:
+        """The children of the fan-out *fanout_key* still going (running, queued, or waiting to be
+        approved): what :meth:`cancel_fanout` stops."""
+        return [
+            info
+            for info in list(self._agents.values())
+            if not info.done and _fanout_key(info) == fanout_key
+        ]
+
     async def cancel_fanout(
         self, fanout_key: str, *, reason: str = "", by_you: bool = False
     ) -> int:
@@ -2393,11 +2402,7 @@ class SubagentManager:
         if not fanout_key:
             return 0
         self._fanout_stops.setdefault(fanout_key, reason or "fan-out cancelled by user")
-        victims = [
-            info
-            for info in list(self._agents.values())
-            if not info.done and _fanout_key(info) == fanout_key
-        ]
+        victims = self._fanout_of(fanout_key)
         for info in victims:
             info.cancelled = True
         ended = {"reason": reason} if reason else {}

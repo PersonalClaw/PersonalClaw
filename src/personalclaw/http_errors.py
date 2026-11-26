@@ -1165,6 +1165,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "approval_owner_only": (
         "Only the owner answers an approval, in PersonalClaw or on their paired chat channel."
     ),
+    # A 404: no approval waits under the id `POST /api/approvals/{id}/{action}` was given, in
+    # either form it takes (the registry id, or the `approval:<id>` the waiting list gives): it was
+    # answered, it expired, or there never was one.
+    "approval_not_found": (
+        "No approval is waiting under this id: it was answered, it expired, or there never was one."
+    ),
+    # A 409: the approval is still waiting, and this answer decided nothing (the work it belongs to
+    # holds it in a way this door does not answer).
+    "approval_not_answered": "This approval is still waiting, and nothing was decided here.",
     # A 403: how far a chat has been seen is the owner's to say (`chat_seen_routes`), never an
     # app's token nor an agent's tool, which could clear a mark the owner has not seen.
     "seen_owner_only": "Only you can mark a chat as seen.",

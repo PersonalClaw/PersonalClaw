@@ -1086,29 +1086,49 @@ async def api_loop_action(request: web.Request) -> web.Response:
     return web.json_response(_loop_view(cid))
 
 
-async def _reap_loop_sessions(state, loop_id: str) -> None:
-    """Remove a deleted loop's dashboard sessions + their on-disk transcripts: the
-    worker (loop-<id>), the stepwise planner (loop-plan-<id>), and a code design
-    planner (code-plan-<id>). Reuses the chat session-delete primitives so the
-    in-memory _sessions entry AND the history .jsonl both go — no orphan leak."""
-    from personalclaw.dashboard.chat_utils import persisted_history_key
-    from personalclaw.dashboard.handlers.sessions import _remove_session_for_history_key
+async def _loop_chats(state, loop_id: str) -> list[str]:
+    """Every chat loop *loop_id* made, by its bare name: each one open here and each one whose
+    transcript is kept on disk (as after a restart) that the loop's own key reader maps to it
+    (``manager.session_loop``), its stage worker, each of its task workers and its planner.
 
-    keys = [f"loop-{loop_id}", f"loop-plan-{loop_id}", f"code-plan-{loop_id}"]
-    for k in keys:
+    The transcripts are listed off the gateway's event loop, as the history route lists them
+    (``chat_handlers._disk_listing``): a listing is a stat of every transcript and a read of each
+    one that changed, seconds on a home with many chats."""
+    from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
+    from personalclaw.dashboard.chat_handlers import _disk_listing
+    from personalclaw.history import RECORDED_KEY
+
+    names = [
+        k for k in list(getattr(state, "_sessions", {}) or {}) if manager.session_loop(k) == loop_id
+    ]
+    log = state.conversation_log
+    listed: list[tuple[dict, Any]] = []
+    if log is not None:
         try:
-            await _remove_session_for_history_key(state, k)  # in-memory session (+ cancels task)
+            listed = await asyncio.to_thread(_disk_listing, log)
         except Exception:
-            logger.debug("reap: in-memory session drop failed for %s", k, exc_info=True)
-        if state.conversation_log is not None:
-            try:
-                # Through the one owner of on-disk identity — a hand-formed prefix leaves
-                # the transcript behind whenever the file is not under that shape.
-                state.conversation_log.delete_session(
-                    persisted_history_key(state.conversation_log, k)
-                )  # the .jsonl
-            except Exception:
-                logger.debug("reap: transcript delete failed for %s", k, exc_info=True)
+            logger.debug("loop delete: transcripts not listed for %s", loop_id, exc_info=True)
+    for entry, meta in listed:
+        # The key its transcript records, else its file's name: either form reads as the bare one.
+        kept_as = str(meta.get(RECORDED_KEY) or entry.get("key") or "")
+        name = dashboard_history_key(kept_as).removeprefix(DASHBOARD_SESSION_PREFIX)
+        if manager.session_loop(name) == loop_id:
+            names.append(name)
+    return list(dict.fromkeys(names))
+
+
+async def _reap_loop_sessions(state, loop_id: str, *, by: str) -> tuple[str, ...]:
+    """Delete every chat a deleted loop made (:func:`_loop_chats`) through the one chat delete
+    (``chat_forget.delete_chats``), as a chat's own Delete does: each leaves the gateway with its
+    turn stopped, and its transcript, tool results, file backups and what memory drew from it alone
+    go, with one audit row per chat naming who deleted it (*by*). Returns the chats whose
+    transcript could not be removed."""
+    from personalclaw.dashboard.chat_forget import delete_chats
+
+    chats = await _loop_chats(state, loop_id)
+    if not chats:
+        return ()
+    return (await delete_chats(state, chats, by=by)).failed
 
 
 async def _run_backed_delete(request: web.Request, run: Any) -> web.Response:
@@ -1164,14 +1184,14 @@ async def api_loop_delete(request: web.Request) -> web.Response:
             approval_seals.forget(approval_seals.loop_scope(cid))  # its plan's approvals
         except Exception:
             logger.debug("loop plan approvals not forgotten for %s", cid, exc_info=True)
-    # Reap the loop's dashboard sessions + their transcripts. teardown_for_delete stops
-    # the autonudge WORKER loop + cleans worktrees, but the worker/planner chat sessions
-    # (and their .jsonl history) lingered registered after delete — orphans that pile up
-    # over create/delete churn. Drop the worker (loop-<id>), the stepwise planner
-    # (loop-plan-<id>), and a code design-planner (code-plan-<id>) the same way the chat
-    # session-delete does: remove the in-memory session + delete the history file.
+    # Its chats go after its workers stopped (`teardown_for_delete`), so no worker turn saves a
+    # transcript again once it is gone: the stage worker, each task worker and the planner, live
+    # or kept on disk, through the one chat delete.
+    kept: tuple[str, ...] = ()
     try:
-        await _reap_loop_sessions(request.app["state"], cid)
+        kept = await _reap_loop_sessions(
+            request.app["state"], cid, by=str(request.get("user") or "dashboard")
+        )
     except Exception:
         logger.debug("loop session reap failed for %s", cid, exc_info=True)
     # No `loops` refresh here: `store.delete` announces the deletion itself.
@@ -1179,6 +1199,8 @@ async def api_loop_delete(request: web.Request) -> web.Response:
         request.app["state"].loop_sse().publish(registry_key(cid), "deleted", {"loop_id": cid})
     except Exception:
         logger.debug("loop delete publish failed", exc_info=True)
+    if kept:  # their transcripts are still on disk
+        return web.json_response({"ok": deleted, "chats_kept": list(kept)})
     return web.json_response({"ok": deleted})
 
 

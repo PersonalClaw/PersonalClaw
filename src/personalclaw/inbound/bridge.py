@@ -83,7 +83,12 @@ from personalclaw.inbound import tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.auth import BRIDGE_SURFACE, peer_allowed, token_env_key, verify_bearer
 from personalclaw.inbound.caps import DEFAULT_CAPS, check_rate_for_client
-from personalclaw.inbound.clients import InboundClient, log_binding_violation, lookup_by_token
+from personalclaw.inbound.clients import (
+    InboundClient,
+    admitted,
+    log_binding_violation,
+    lookup_by_token,
+)
 from personalclaw.inbound.framing import fence_payload
 from personalclaw.inbound.gate import admission_problem
 from personalclaw.safety_flags import yes_or_no
@@ -654,6 +659,7 @@ def _admit(
             why,
             None,
         )
+    admitted(client)
     return None, "", client
 
 

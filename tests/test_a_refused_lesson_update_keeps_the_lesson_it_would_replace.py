@@ -324,7 +324,7 @@ def test_a_lesson_taught_again_after_its_replacement_was_removed_stays_through_t
     assert svc.delete_lesson(REFUSED_WORDING) is True  # she removes the update
     assert svc.write_lesson(TAUGHT) is True  # and teaches the first again
 
-    lint_memory(vs, now=datetime.now(tz=timezone.utc) + timedelta(days=120))
+    lint_memory(vs, now=datetime.now(tz=timezone.utc) + timedelta(days=120), purge=True)
 
     row = _row(vs, TAUGHT)
     assert row is not None and row["is_deleted"] == 0

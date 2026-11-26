@@ -134,6 +134,10 @@ _NEEDS_APPROVAL: Any = object()
 #: class writes a failure; ``_invoke`` sets it from a provider's own ``success``.
 _FAILED: dict[str, Any] = {"ok": False}
 
+#: The meta key a call a stop reached while it ran carries until `_run_tool` reads it: a stop is
+#: not evidence about the tool, so such a call feeds neither the breaker nor the outcome list.
+_STOPPED_RUNNING = "_stopped_running"
+
 # Sentinel: this call was dropped by a stop, so it must not be dispatched and must not
 # reach _run_tool's accounting tail. A unique object rather than a string or None, both of
 # which a legitimate result already occupies in the wave's `results` list.
@@ -826,7 +830,8 @@ class NativeAgentRuntime(
         """What the last stop actually reached — the shape the dashboard stop handler consumes.
 
         Keys: ``reason``, ``model_request_aborted``, ``children_reaped``,
-        ``children_escaped``, ``tool_calls_dropped``, ``subagents_stopped``.
+        ``children_escaped``, ``tool_calls_dropped``, ``tool_calls_stopped``,
+        ``tool_calls_escaped``, ``subagents_stopped``.
         Read by the dashboard stop handler so the stop card can state what happened
         instead of implying it.
         """
@@ -1504,6 +1509,16 @@ class NativeAgentRuntime(
         # re-derived here from the text (`startswith("Error:")`), so a provider failure with a
         # WHAT/WHY/FIX envelope counted as a success, a successful `cat error.log` as a failure,
         # and every refusal the runtime wrote went to the card with no bit at all, a green check.
+        if meta.pop(_STOPPED_RUNNING, False):
+            yield AgentEvent(
+                kind=EVENT_TOOL_RESULT,
+                tool_call_id=call.tool_call_id,
+                title=tool_name,
+                tool_output=result_str,
+                tool_meta=meta,
+            )
+            self._messages.append(self._tool_result_msg(call, result_str))
+            return
         failed = meta.get("ok") is False
         # Procedural-memory signal: accumulate this turn's tool outcomes for
         # the after-turn review to mine into how-to-work priors. Bounded.
@@ -1930,7 +1945,10 @@ class NativeAgentRuntime(
             self._dispatch_scope(),
             secret_file_grants.call(self._session_key, tool_name, meta_sink),
         ):
-            result = await prov.invoke(tool_name, args)
+            try:
+                result = await self._cancel.run_call(prov.invoke(tool_name, args), name=tool_name)
+            except cancellation.CallStopped as stopped:
+                return _stopped_running(stopped, meta_sink)
         return observed(result, meta_sink)
 
     @contextlib.contextmanager
@@ -2171,8 +2189,10 @@ class NativeAgentRuntime(
         Order matters. Approvals are released first so a turn parked on a permission
         prompt unblocks; then the provider request is ABORTED (the provider seam owns
         how — an HTTP disconnect, an ACP ``session/cancel``); then every child process
-        this turn started is terminated AND reaped. Dropping the still-queued calls is
-        the loop's job and happens as it observes the signal.
+        this turn started is terminated AND reaped. The in-process call that is running
+        wakes on the signal itself and is cancelled (``CancelScope.run_call``), so the turn
+        ends without waiting for it to return. Dropping the still-queued calls is the loop's
+        job and happens as it observes the signal.
         """
         answer = self._cancel.request(reason=CANCEL_USER)
         if answer == REQUEST_NO_TURN:
@@ -2433,3 +2453,18 @@ def _short_json(value: Any) -> str:
         return json.dumps(value, default=str)
     except (TypeError, ValueError):
         return str(value)
+
+
+def _stopped_running(stopped: cancellation.CallStopped, meta: dict) -> str:
+    """The observation for a call a stop reached while it ran (`CancelScope.run_call`)."""
+    meta.update(_FAILED)
+    meta[_STOPPED_RUNNING] = True
+    left = (
+        " It did not stop when asked and may still be running; what it returns is not read."
+        if stopped.escaped
+        else ""
+    )
+    return (
+        f"Error: {stopped.name} was stopped while it ran, when its turn was stopped.{left} "
+        "What it had done by then is not known: check before running it again."
+    )

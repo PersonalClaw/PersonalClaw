@@ -1793,6 +1793,15 @@ class MaskConflict(ValueError):
         super().__init__(message)
 
 
+#: What an agent's file edit or write answers when the file's masked view cannot be mapped back onto
+#: the file at all (:func:`_mask_segments`): nothing changed underneath the agent, so the conflict
+#: sentence (:data:`MASK_CONFLICT`) would describe something that did not happen.
+MASK_UNWALKABLE = (
+    "This file holds values you were not shown, in a layout PersonalClaw cannot map an edit "
+    "back onto, so it cannot be changed through its masked view. Nothing was written. Ask the "
+    "user to make this change to the file."
+)
+
 #: What an agent's file write answers when it would change, move or copy a value hidden from it.
 HIDDEN_VALUE_KEPT = (
     "A [REDACTED: …] marker stands for a value this file holds that you were not shown. It can "
@@ -1816,20 +1825,44 @@ def mask_markers(text: str) -> list[str]:
 
 def _mask_segments(masked: str, stored: str) -> list[tuple[int, int, int, int]] | None:
     """Where each marker of *masked* sits and the stored span it stands for, in order:
-    ``(masked_start, masked_end, stored_start, stored_end)``. ``None`` when the walk
-    (:func:`_mask_pairs`) cannot account for the whole stored text."""
-    pairs = _mask_pairs(masked, stored)
-    if pairs is None:
-        return None
+    ``(masked_start, masked_end, stored_start, stored_end)``. ``None`` when the walk cannot
+    account for the whole stored text.
+
+    Walked as :func:`_mask_pairs` walks: each unchanged literal is found in turn, and a marker's
+    span runs to where the next one resumes. Markers with nothing between them (two values side by
+    side) are one segment, the run of markers standing for one stored span: no literal tells
+    where one of their values ends and the next begins, and an empty literal read as "the end of
+    the text" swallowed the rest of the file, so no edit of it could be made. An edit outside a
+    run keeps its bytes exactly; one that cuts into a run is refused (:data:`MARKER_CUT`), and one
+    that would set its values down again is too (:data:`HIDDEN_VALUE_KEPT`)."""
     literals = _MASK_RE.split(masked)
+    masks = _MASK_RE.findall(masked)
     segments: list[tuple[int, int, int, int]] = []
     shown = kept = 0
-    for index, (mask, original) in enumerate(pairs):
-        shown += len(literals[index])
-        kept += len(literals[index])
-        segments.append((shown, shown + len(mask), kept, kept + len(original)))
-        shown += len(mask)
-        kept += len(original)
+    i = 0
+    while i < len(masks):
+        prefix = literals[i]
+        if not stored.startswith(prefix, kept):
+            return None
+        shown += len(prefix)
+        kept += len(prefix)
+        last = i
+        while last + 1 < len(masks) and literals[last + 1] == "":
+            last += 1
+        run = "".join(masks[i : last + 1])
+        following = literals[last + 1]
+        if last == i:
+            end = private_key_blocks.masked_span_end(masks[i], stored, kept, following)
+        else:
+            end = stored.find(following, kept) if following else len(stored)
+        if end < kept:
+            return None
+        segments.append((shown, shown + len(run), kept, end))
+        shown += len(run)
+        kept = end
+        i = last + 1
+    if stored[kept:] != literals[-1]:
+        return None
     return segments
 
 
@@ -1870,7 +1903,7 @@ def masked_edit(stored: str, old: str, new: str, *, replace_all: bool = False) -
         return stored.replace(old, new, times), count
     segments = _mask_segments(shown, stored)
     if segments is None:
-        raise MaskConflict()
+        raise MaskConflict(MASK_UNWALKABLE)
     out: list[str] = []
     copied = searched = 0
     for _ in range(times):
@@ -1917,7 +1950,7 @@ def keep_masked_lines(submitted: str, stored: str) -> str:
         return submitted
     segments = _mask_segments(shown, stored)
     if segments is None:
-        raise MaskConflict()
+        raise MaskConflict(MASK_UNWALKABLE)
     import difflib
 
     shown_lines = shown.splitlines(keepends=True)

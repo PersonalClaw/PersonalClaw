@@ -16,6 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **For apps: `personalclaw.sdk.channel.MemoryService.lint()` no longer purges unless asked. It only reads, and counts what its purge would remove under the report's `fixable`. A keyword-only `lint(purge=True)` runs the purge, a permanent delete of memories superseded more than 90 days ago. No shipped app calls it; `slack-channel` uses `MemoryService` only to read lessons.**
 - **An agent's settings say its tool list holds for the PersonalClaw tools an agent CLI is offered, and that the CLI's own built-in tools follow its permission mode.**
 - **Saving the tool list of an agent on an agent CLI warns of each entry that lets the CLI call nothing.**
 
@@ -27,6 +28,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A call you decline in a workflow loop's judge, or in a read-only verifier step, no longer pauses the run. The judge goes on without that call, the loop's next cycle runs as it would have, and the run page still lists what you declined. A call you decline in the loop's work step still ends that cycle and waits for you, since the next cycle would ask you for it again.**
 - **An artifact linked to a file says when it can't follow it: after a restore elsewhere, an upgrade from a release whose workspace was under your home folder, or the file's deletion, the artifact's page names the file and why it shows its last saved copy, and a save or revert that could not change the file says so. Before, both happened without a word.**
 - **A helper in a batch whose file reads were refused says why. A batch of two or more tasks runs its helpers in their run's own folder, and one given no `cwd` reads nothing of the chat's folder; its helper now ends naming that, and that starting the batch with `cwd` set to the chat's folder lets it read there, instead of "it was refused". A file tool's refusal of a path outside its reach names the folder the session works in when that isn't the workspace.**
+- **Settings › Devices shows when each client last used its token on every inbound surface: the OpenAI-compatible endpoint, A2A, the capture proxy and the control bridge, not only MCP and trigger runs. A refused request counts as no use. A last-used time ahead of the clock, from a clock set back or a hand-edited file, is written over at the next use.**
+- **The approvals route answers an approval by the id `GET /api/waiting` lists it under (`approval:<id>`) as well as its own, and an id no approval waits under answers 404 `approval_not_found`, saying it was answered, it expired, or there never was one, where every such id read as expired.**
+- **Stop ends a turn while one of its tool calls is still running. The call is told to stop and the turn ends at once; a call that doesn't stop within a few seconds is left behind, and what it returns is not read. Before, the turn ran until the call returned by itself, so a hung call kept it running, and a `personalclaw run` whose `--timeout` passed during one waited for it too.**
+- **An agent can edit a file that holds two hidden values side by side. Before, every edit of such a file was refused, however far from the hidden values, and the refusal said the file had changed though it hadn't. A file whose masked view still can't be mapped back now says so plainly.**
+- **When the model watchdog's record of your model bindings can't be read, it revokes every standing autonomy grant and queues the re-benchmarks, as a rebind does, and its one notice names the record and the copy kept of it. It used to read the damaged record as a first run and revoke nothing.**
 
 ### Security
 
@@ -34,6 +40,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Downloading a copy of everything PersonalClaw keeps asks for a recent sign-in, as making a pairing code or an integration token does. From a device that signed in more than ten minutes ago, Export in Settings › Import / Export asks you to sign in again, then the download starts. The desktop app's own window never asks, and `personalclaw snapshot` is unchanged.**
 - **Only you publish a workflow to outside A2A clients, with the switch on its page. A workflow a pack brings arrives unpublished.**
 - **An agent on an agent CLI is offered, and may call, only the PersonalClaw tools its tool list allows, and a list you save holds a chat already open on it from its next call.**
+- **An app granted the helper routes stops and clears only the helpers its own work started. Another chat's helper answers as an id that never existed and is left running, a fan-out holding one is not stopped, and an app's stop is recorded as the app's, so the helper's report reaches its chat as usual rather than reading as your own stop.**
+- **Deleting a loop forgets every chat it made, its task workers' included, as deleting a chat does.**
 
 ## [0.4.1] — 2026-11-25
 

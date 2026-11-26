@@ -315,16 +315,6 @@ cap = 50
 reason = "a real gateway started in a child process and driven over its channel; 24 s on CI at worst (breadth's coverage leg, 2026-10-24)"
 
 [[mark]]
-site = "tests/test_a_headless_run_ends_the_work_it_started.py::test_a_read_only_run_whose_timeout_passes_stops_its_turn_and_names_no_grant"
-cap = 70
-reason = "Stop does not end a turn while a tool call runs (#5363): the run waits out the test's own 30 s hold; 31 s on every leg (2026-10-24)"
-
-[[mark]]
-site = "tests/test_a_headless_run_ends_the_work_it_started.py::test_a_run_whose_timeout_passes_stops_its_turn_in_the_gateway"
-cap = 70
-reason = "Stop does not end a turn while a tool call runs (#5363): the run waits out the test's own 30 s hold; 31 s on every leg (2026-10-24)"
-
-[[mark]]
 site = "tests/test_a_test_never_inherits_a_running_gateways_address.py::test_a_run_started_from_a_gateways_shell_does_not_inherit_its_address"
 cap = 50
 reason = "a child pytest run from a gateway's shell; 23 s on CI at worst (breadth's night, 2026-10-24)"

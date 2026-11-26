@@ -1682,35 +1682,6 @@ class TestLifecycle:
         )
         assert _body(d)["ok"] is True
 
-    def test_delete_reaps_worker_and_plan_sessions(self, state, svc):
-        # Deleting a loop must reap its dashboard sessions + transcripts — the worker
-        # (loop-<id>), the stepwise planner (loop-plan-<id>), and a code design planner
-        # (code-plan-<id>). Without this they lingered registered after delete and the
-        # .jsonl files piled up over create/delete churn (a real resource leak).
-        cid = self._make(state)
-        _run(
-            H.api_loop_action(
-                _req(
-                    "PATCH",
-                    f"/api/loops/{cid}",
-                    state,
-                    body={"action": "start"},
-                    match_info={"id": cid},
-                )
-            )
-        )
-        # Seed the three sessions as if the worker + planners had registered them.
-        for k in (f"loop-{cid}", f"loop-plan-{cid}", f"code-plan-{cid}"):
-            state._sessions[k] = _FakeSession(k)
-        _run(H.api_loop_delete(_req("DELETE", f"/api/loops/{cid}", state, match_info={"id": cid})))
-        # In-memory sessions gone …
-        assert f"loop-{cid}" not in state._sessions
-        assert f"loop-plan-{cid}" not in state._sessions
-        assert f"code-plan-{cid}" not in state._sessions
-        # … and their transcripts deleted (history keys are the dashboard:-prefixed form).
-        assert f"dashboard:loop-{cid}" in state.conversation_log.deleted
-        assert f"dashboard:loop-plan-{cid}" in state.conversation_log.deleted
-
     def test_nudge_rejected_pre_launch(self, state, svc):
         # A nudge on a pre-launch loop (ready, never started) has no worker to reach —
         # it would persist an orphan steer (applied_cycle=null) the worker never sees.

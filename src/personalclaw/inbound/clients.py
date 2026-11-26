@@ -449,6 +449,45 @@ def touch_last_seen(client_id: str) -> None:
         logger.debug("inbound: last_seen update failed for %s", client_id, exc_info=True)
 
 
+def admitted(client: InboundClient | None) -> None:
+    """Record that *client*'s request was admitted, once every gate before its work has passed:
+    the one call each inbound surface makes, so Settings › Devices shows when every client last
+    used its token. At most every ``tokens._LAST_SEEN_EVERY_SECS``, as a surface token's use is
+    (the panel shows relative time, and the clients file is rewritten on each write). A
+    surface-token caller has no client and records nothing here. Never raises.
+
+    A use is a request its surface admitted: its token, the surface and the caller's address
+    passed, and its rate where the surface holds one. What a client's record narrows it to is
+    checked per call after that (an MCP tool, an OpenAI-compatible agent, a bridge action), and a
+    call refused there is still a use of its token, logged as a binding violation of its own
+    (:func:`log_binding_violation`)."""
+    if client is None:
+        return
+    try:
+        if _seen_within(str(client.last_seen_at or ""), tokens._LAST_SEEN_EVERY_SECS):
+            return
+        client_id = str(client.client_id)
+    except Exception:  # noqa: BLE001 — bookkeeping must not fail the request it records
+        logger.debug("inbound: a client's use not recorded", exc_info=True)
+        return
+    touch_last_seen(client_id)
+
+
+def _seen_within(last_seen_at: str, secs: float) -> bool:
+    """Whether the ISO time *last_seen_at* is under *secs* ago. An empty or unreadable one is
+    not, so the use is written, and nor is one ahead of now (a clock stepped back, a clients file
+    edited by hand), which would otherwise hold every use off until it passed."""
+    try:
+        seen = datetime.fromisoformat(last_seen_at) if last_seen_at else None
+    except ValueError:
+        return False
+    if seen is None:
+        return False
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    return 0 <= (datetime.now(timezone.utc) - seen).total_seconds() < secs
+
+
 # ── auto-disable on repeat cap breach ───────────────────────────────────────
 # Breach timestamps live in memory: the trigger is "N breaches within an hour", a
 # question about the CURRENT hour, and persisting it would make a restart inherit an

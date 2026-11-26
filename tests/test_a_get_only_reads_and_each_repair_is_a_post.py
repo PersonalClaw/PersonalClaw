@@ -47,7 +47,7 @@ def test_a_report_only_sweep_counts_the_purge_and_deletes_nothing(vs):
     assert _kept(vs) == 1
     assert report.auto_fixed["superseded_purged"] == 0
     assert report.to_dict()["fixable"] == {"superseded_purged": 1}
-    assert lint_memory(vs).auto_fixed["superseded_purged"] == 1  # the purge, as before
+    assert lint_memory(vs, purge=True).auto_fixed["superseded_purged"] == 1  # asked to purge
     assert _kept(vs) == 0
 
 

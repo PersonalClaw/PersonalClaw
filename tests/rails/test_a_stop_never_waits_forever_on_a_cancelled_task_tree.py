@@ -26,6 +26,11 @@ _ALLOWED = {
     "acp/reader.py::FrameRouter.close::self._reader_task": (
         "it reads frames from an agent process that is already running"
     ),
+    "cancellation.py::CancelScope.run_call::task": (
+        "the wait races a tool call against the stop before anything cancels it; once a stop "
+        "cancels the call it is waited for only through cancel_and_wait, and when the caller is "
+        "cancelled the call is cancelled and not waited for"
+    ),
     "browse/transport.py::WebSocketCdpTransport.close::task": (
         "the reader and the dispatcher read and route frames on an open websocket"
     ),

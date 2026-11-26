@@ -403,6 +403,17 @@ async def test_a_helper_that_ran_and_failed_still_reports(tmp_path):
     assert len(w.handed) == 1 and info.id in w.handed[0] and "503" in w.handed[0], w.handed
 
 
+def _hers(app: dict) -> MagicMock:
+    """A request from her signed-in session, as the sign-in middleware leaves it
+    (``approval_answer.of_request``): her stop is her own."""
+    request = MagicMock(spec=web.Request)
+    request.app = app
+    request.headers = {}
+    signed_in = {"user": "owner"}
+    request.get = lambda key, default=None: signed_in.get(key, default)
+    return request
+
+
 @pytest.mark.asyncio
 async def test_a_helper_she_stopped_starts_no_turn_and_is_told(world):
     """She stops a running helper from the background agents list (``DELETE /api/spawn/{id}``).
@@ -412,8 +423,7 @@ async def test_a_helper_she_stopped_starts_no_turn_and_is_told(world):
     info = world.spawn()
     await world._answers.put(ALLOWED)
     await world.until_running(info)
-    request = MagicMock(spec=web.Request)
-    request.app = {"state": world.state}
+    request = _hers({"state": world.state})
     request.match_info = {"agent_id": info.id}
     await api_spawn_delete(request)
     await world.settle()
@@ -431,8 +441,7 @@ async def test_her_stop_fan_out_starts_no_turn(world):
     info = world.spawn()
     await world._answers.put(ALLOWED)
     await world.until_running(info)
-    request = MagicMock(spec=web.Request)
-    request.app = {"state": world.state}
+    request = _hers({"state": world.state})
     request.json = AsyncMock(return_value={"parent_session": CHAT})
     await api_spawn_cancel_fanout(request)
     await world.settle()

@@ -57,6 +57,10 @@ class _Call:
     uses: bool
     asks: dict[str, str] | None = None
     used: dict[str, str] | None = None
+    #: Set as the call ends: a task that copied the binding while the call ran (a call a stop
+    #: left running, a tool's own background task) reaches no secret file after it, so no use of
+    #: a grant goes unlogged.
+    over: bool = False
 
 
 _CALL: ContextVar[_Call | None] = ContextVar("secret_file_call", default=None)
@@ -163,12 +167,14 @@ def call(session: str, tool: str, meta: dict, *, uses: bool = True) -> Iterator[
 
     On the way out, *meta* (the call's sink) gets the secret file the call was refused, which it may
     ask for (:data:`ASKS_META_KEY`), and the one a grant let it reach (:data:`USED_META_KEY`) when
-    *uses* (a pre-flight check reaches nothing, so it passes ``False``)."""
+    *uses* (a pre-flight check reaches nothing, so it passes ``False``). The binding ends with the
+    call, so a task that copied it while the call ran reaches no secret file afterwards."""
     bound = _Call(session=session, op=ASKING_TOOLS.get(tool, ""), uses=uses)
     token = _CALL.set(bound)
     try:
         yield
     finally:
+        bound.over = True
         _CALL.reset(token)
         if bound.asks is not None:
             meta[ASKS_META_KEY] = bound.asks
@@ -180,10 +186,10 @@ def opens(real: str, change: bool) -> bool:
     """Whether the call being made (:func:`call`) may reach the secret file at *real*, which the
     file scope refuses it otherwise (with *change*, to change it): its chat was allowed that file
     for what its tool does with it. A call of a tool that may ask, refused, notes what it may ask
-    for; a call outside :func:`call`, or of another tool, reaches none."""
+    for; a call outside :func:`call`, one that has ended, or one of another tool reaches none."""
     bound = _CALL.get()
     op = WRITE if change else READ
-    if bound is None or not bound.session or bound.op != op or not grantable(real):
+    if bound is None or bound.over or not bound.session or bound.op != op or not grantable(real):
         return False
     if holds(bound.session, real, op):
         if bound.uses:

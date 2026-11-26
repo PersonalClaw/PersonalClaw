@@ -395,8 +395,12 @@ chat, channel thread, loop worker, webhook, subagent).
   for a **temporary** chat's end, which takes its attachments too; a chat named
   again after a deleted one is not
   handed the deleted chat's skill drafts. A chat is deleted one way,
-  `delete_chats`, from the Delete button (`DELETE /api/chat/sessions/{session}`)
-  and both history routes (`DELETE /api/sessions/{key}`, `DELETE /api/sessions`):
+  `delete_chats`, from the Delete button (`DELETE /api/chat/sessions/{session}`),
+  both history routes (`DELETE /api/sessions/{key}`, `DELETE /api/sessions`)
+  and a loop's Delete (`DELETE /api/loops/{id}`), which deletes every chat the
+  loop made, open or kept on disk, that `loop.manager.session_loop` maps to it
+  (its stage worker, each task worker and its planner) and names any it could
+  not remove (`chats_kept`):
   it stops the chat's turn, runs `purge_chat` (the transcript first, so a
   consolidation still waiting on a model keeps nothing more:
   `HistoryConsolidator._was_deleted`), removes from every memory, the global one

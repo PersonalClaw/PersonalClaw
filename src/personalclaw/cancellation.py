@@ -4,8 +4,9 @@ A stop is not a flag each layer checks when convenient. It is a single signal, h
 one place, that every layer of a turn reads — and that carries the obligations a stop
 implies: an in-flight provider request is ABORTED rather than awaited-and-discarded, a
 subprocess a tool started is terminated AND REAPED (so a stopped turn leaves no orphan
-holding a lock or a file handle), and calls still queued behind the running one are
-DROPPED without executing.
+holding a lock or a file handle), an in-process tool call still running is CANCELLED and
+the turn ends without waiting for it to return by itself (:meth:`CancelScope.run_call`), and
+calls still queued behind the running one are DROPPED without executing.
 
 Why one object instead of a boolean per layer. Before this module the native runtime
 carried ``self._cancelled``, each model provider carried its own in-flight future, the
@@ -39,9 +40,11 @@ import os
 import signal
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from typing import Any, Collection, Iterable, Iterator
+from typing import Any, Collection, Coroutine, Iterable, Iterator, TypeVar
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 # ── Cancel causes ──
 # The two are NOT interchangeable: they select the turn's recorded outcome.
@@ -72,6 +75,10 @@ class StopReport:
     children_reaped: int = 0
     children_escaped: int = 0
     tool_calls_dropped: int = 0
+    #: In-process tool calls the stop reached while they ran, and of those, the ones that had
+    #: not finished within the grace after their cancel and were left running.
+    tool_calls_stopped: int = 0
+    tool_calls_escaped: int = 0
     subagents_stopped: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -99,6 +106,9 @@ class CancelScope:
         self._run_mark = ""
         self._run_kept = False
         self._commands = 0
+        # What each running tool call waits on beside the call itself, resolved when the signal
+        # is raised so the call's wait wakes at once (:meth:`run_call`).
+        self._stop_waiters: set[asyncio.Future[None]] = set()
 
     # ── turn lifecycle ──
 
@@ -116,6 +126,7 @@ class CancelScope:
         self._run_mark = run_processes.mark(run_owner)
         self._run_kept = run_owner != run_processes.TURN
         self._commands = 0
+        self._stop_waiters = set()
 
     def end_turn(self) -> None:
         """The turn is over.
@@ -181,7 +192,47 @@ class CancelScope:
             return REQUEST_REPEAT
         self._reason = reason or CANCEL_USER
         self._report.reason = self._reason
+        for waiter in self._stop_waiters:
+            if not waiter.done():
+                waiter.set_result(None)
         return REQUEST_FIRST
+
+    # ── a tool call in flight ──
+
+    async def run_call(self, call: Coroutine[Any, Any, _T], *, name: str) -> _T:
+        """Run one in-process tool call, *call* of the tool *name*, so a stop reaches it while
+        it runs. Returns what the call returns, or raises :class:`CallStopped`.
+
+        The turn awaited the call itself, and a stop woke it only once the tool returned by
+        itself: a provider call that hung kept the turn running for as long as the call did,
+        and the soft stop never escalated. Now the call runs as a task raced against the signal.
+        On a stop the task is cancelled, so the tool sees ``CancelledError`` at its next await,
+        and it is waited for at most :data:`CANCEL_GRACE_SECS`; one that has not finished by
+        then is left running with its result discarded, named in the log, and the turn ends
+        anyway. A call that returned before the stop keeps its result. The caller being
+        cancelled cancels the call too."""
+        task = asyncio.ensure_future(call)
+        if isinstance(task, asyncio.Task):
+            task.set_name(f"tool call {name}")
+        stop: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        if self.cancelled:
+            stop.set_result(None)
+        self._stop_waiters.add(stop)
+        try:
+            await asyncio.wait({task, stop}, return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        finally:
+            self._stop_waiters.discard(stop)
+        if task.done():
+            return task.result()
+        left = await cancel_and_wait([task], what=f"stop: the call of {name}")
+        self._report.tool_calls_stopped += 1
+        if left:
+            self._report.tool_calls_escaped += 1
+            task.add_done_callback(_taken)
+        raise CallStopped(name, escaped=bool(left))
 
     # ── children ──
 
@@ -243,6 +294,23 @@ class CancelScope:
 
     def note_subagents_stopped(self, count: int) -> None:
         self._report.subagents_stopped += count
+
+
+class CallStopped(Exception):
+    """A stop reached a tool call while it ran (:meth:`CancelScope.run_call`). *escaped* when
+    the call had not finished within the grace after its cancel and was left running."""
+
+    def __init__(self, name: str, *, escaped: bool) -> None:
+        super().__init__(name)
+        self.name = name
+        self.escaped = escaped
+
+
+def _taken(task: asyncio.Future[Any]) -> None:
+    """Take the outcome of a call a stop left running once it ends, so it is never reported as
+    unretrieved; it is discarded either way."""
+    if not task.cancelled() and task.exception() is not None:
+        logger.debug("a stopped tool call ended with an error", exc_info=task.exception())
 
 
 # ── the kill path ──

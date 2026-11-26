@@ -399,6 +399,37 @@ async def test_deleting_through_the_history_routes_forgets_the_same(gw) -> None:
 
 
 @pytest.mark.asyncio
+async def test_deleting_a_loop_forgets_what_memory_drew_from_its_chats(gw) -> None:
+    """``DELETE /api/loops/{id}`` deletes the loop's chats as the Delete button deletes a chat:
+    what memory drew from a task worker's turns alone goes, and another chat's stays."""
+    from personalclaw.dashboard.handlers.loop_routes import api_loop_delete
+    from personalclaw.loop import kinds, store
+    from personalclaw.loop.loop import Loop
+
+    kinds.ensure_loaded()
+    cid = store.create(Loop(id="", name="Ski trip", kind="code", task="book the lodge")).id
+    worker = gw.state.get_or_create_session(name=f"loop-{cid}-t-1a2b3c4d")
+    worker.append("user", "Book the lodge for February.", broadcast=False)
+    worker.append("assistant", "Booked, with a six day pass.", broadcast=False)
+    worker.drain()
+    save_session_to_history(gw.state, worker, force=True)
+    ski = _history_key_for(worker.key)
+    gw.answers[ski] = SKI
+    bike, _ = _chat(gw, BIKE)
+    assert await gw.consolidator.consolidate_session(ski)
+    assert await gw.consolidator.consolidate_session(bike)
+    app = web.Application()
+    app["state"] = gw.state
+
+    request = make_mocked_request("DELETE", f"/api/loops/{cid}", match_info={"id": cid}, app=app)
+    assert (await api_loop_delete(request)).status == 200
+
+    for text in (SKI_EPISODE, SKI_FACT, SKI_SUMMARY):
+        assert text not in _all_rows(gw.store), "memory kept what a deleted loop's chat said"
+    assert BIKE_EPISODE in _all_rows(gw.store)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["the Delete button", "the history route"])
 async def test_a_chat_whose_history_cannot_be_removed_is_said_to_stay(gw, monkeypatch, route):
     """A delete that cannot remove the chat's transcript (a file the gateway may not unlink)
