@@ -267,8 +267,8 @@ def _moved_from_her_dm(where_he_writes: str) -> SimpleNamespace:
     in_her_dm = {"meta": {SHOWN_ON_CHANNEL: _shown_on("slack", HER_DM, channel=HER_DM)}}
     return SimpleNamespace(
         messages=[
-            _row("user", "Remind me: therapy is Thursday at four.", **hers),
-            _row("assistant", "Noted: therapy, Thursday at four.", **in_her_dm),
+            _row("user", "Remind me: therapy is at the Larkspur clinic at four.", **hers),
+            _row("assistant", "Noted: therapy, at the Larkspur clinic at four.", **in_her_dm),
             _row("user", "What's the plan for the offsite?", **his),
         ]
     )
@@ -283,7 +283,7 @@ def test_what_was_said_in_her_dm_is_not_in_a_thread_the_chat_moved_to():
 
     view = channel_view(_moved_from_her_dm("1790800000.000100"), "What's the plan for the offsite?")
     said = json.dumps(view)
-    assert "therapy" not in said and "Thursday" not in said, view
+    assert "therapy" not in said and "Larkspur" not in said, view
     assert "A message from another thread this chat ran in was here" in said
     assert "A reply the channel was not shown was here" in said
 
@@ -348,7 +348,11 @@ def test_an_answer_marked_before_marks_named_a_thread_is_a_stub():
     thread = "1790800000.000100"
     session = SimpleNamespace(
         messages=[
-            _row("assistant", "Noted: therapy, Thursday at four.", meta={SHOWN_ON_CHANNEL: True}),
+            _row(
+                "assistant",
+                "Noted: therapy, at the Larkspur clinic at four.",
+                meta={SHOWN_ON_CHANNEL: True},
+            ),
             _row("user", "What's the plan?", **arrived_on(thread, "U0JONAS", "slack")),
         ]
     )

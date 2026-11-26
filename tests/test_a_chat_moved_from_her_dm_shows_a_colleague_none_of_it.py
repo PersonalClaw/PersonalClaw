@@ -45,7 +45,7 @@ HER_DM = "D0OWNERDM1"
 #: The shared thread the chat moves to, as the channel opens it.
 THREAD = "1790800000.000100"
 #: What she said in her DM, and what the answer there repeated.
-PRIVATE = "therapy is Thursday at four"
+PRIVATE = "therapy is at the Larkspur clinic at four"
 
 
 @pytest.fixture(autouse=True)
@@ -137,7 +137,7 @@ async def test_a_colleague_in_the_thread_is_shown_nothing_from_her_dm(
         gw.agent.calls.append([])
         await gw.say(COLLEAGUE, "What's the plan for the offsite?")
         his = json.dumps(gw.agent.handed[-1])
-        assert PRIVATE not in his and "Thursday" not in his, his
+        assert PRIVATE not in his and "Larkspur" not in his, his
         assert "A message from another thread this chat ran in was here" in his
 
 
