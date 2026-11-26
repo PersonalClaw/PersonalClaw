@@ -743,6 +743,7 @@ tiers = ["change", "entry", "merge"]
 inputs = [
   ".nvmrc",
   "CHANGELOG.md",
+  "desktop/appUpdate.js",
   "desktop/package.json",
   "docs/agents/acp-parity.md",
   "docs/architecture/widgets.md",
@@ -760,6 +761,7 @@ inputs = [
   "scripts/lib/app_validate_form.mjs",
   "scripts/spa_dist_freshness.py",
   "src/",
+  "tests/fixtures/version_order.json",
   "web/",
 ]
 external_inputs = []
@@ -797,6 +799,7 @@ inputs = [
   "package-lock.json",
   "package.json",
   "scripts/spa_dist_freshness.py",
+  "tests/fixtures/version_order.json",
   "tools/ci/",
   "web/e2e/fixtures/home/",
   "web/e2e/fixtures/scripted-chat.json",
