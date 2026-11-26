@@ -15,9 +15,14 @@ const WHY: Record<LinkMissed, string> = {
   unwritable: 'it could not be written',
 }
 
-/** The bar over an artifact that no longer follows its file. */
+/** The bar over an artifact that no longer follows its file. A file moved into the workspace, at
+ *  the same place in it, links it again when Files saves it as an artifact (the gateway's
+ *  `find_link_for`), and so does a file put back where it was. */
 export function notFollowedLine(path: string, why: LinkMissed): string {
-  return `This no longer follows ${path}: ${WHY[why]}. It shows its last saved copy, and saving changes only that copy.`
+  const again = why === 'outside' || why === 'missing'
+    ? ' To link it again, save the file from your workspace as an artifact in Files.'
+    : ''
+  return `This no longer follows ${path}: ${WHY[why]}. It shows its last saved copy, and saving changes only that copy.${again}`
 }
 
 /** The notice after a save that kept its text here but did not write the file. */

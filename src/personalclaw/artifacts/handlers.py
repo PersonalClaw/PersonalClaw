@@ -498,7 +498,7 @@ async def _app_save_refusal(
 
     if not request_app():
         return None
-    bumped = prov.find_by_source_path(source_path) if source_path else None
+    bumped = prov.find_link_for(source_path) if source_path else None
     if bumped is not None:
         return await _app_text_refusal(request, bumped.kind, edits=bumped.slug, content=content)
     return await _app_text_refusal(
@@ -578,11 +578,13 @@ async def _save_text(
             return stale
 
     # Dedup by source_path: re-saving a file-backed artifact bumps the existing
-    # one rather than creating a duplicate.
+    # one rather than creating a duplicate. One whose link this home could no longer follow, to
+    # the same file (`find_link_for`), takes it back: it follows *source_path* from this save on.
     if source_path:
-        existing = prov.find_by_source_path(source_path)
+        existing = prov.find_link_for(source_path)
         if existing is not None:
-            if content is None:
+            relink = source_path if existing.source_path != source_path else None
+            if content is None and relink is None:
                 # No text to bump it with: the artifact that already points at this file is the
                 # answer, as it is, and neither it nor the file is written.
                 updated = prov.get(existing.slug)
@@ -595,6 +597,7 @@ async def _save_text(
                         snapshot=False,
                         actor=_actor(),
                         session_id=session_id,
+                        source_path=relink,
                     )
                 except MaskConflict as exc:
                     return web.json_response({"error": str(exc)}, status=409)

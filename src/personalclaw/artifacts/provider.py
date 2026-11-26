@@ -292,6 +292,12 @@ class ArtifactProvider(ABC):
         """Return the artifact whose live-pointer matches ``source_path`` (dedup)."""
         ...
 
+    def find_link_for(self, source_path: str) -> Artifact | None:
+        """The artifact a save of the file ``source_path`` bumps: the one linked to it, or one
+        whose link this home can no longer follow that names the same file. This one names only
+        the first; the native provider knows the second (``NativeArtifactProvider``)."""
+        return self.find_by_source_path(source_path)
+
     @abstractmethod
     def record_impression(
         self,
