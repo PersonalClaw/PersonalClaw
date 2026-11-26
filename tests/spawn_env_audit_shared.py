@@ -87,6 +87,7 @@ _BUILT: dict[str, str] = {
         "a run workspace's git diff read"
     ),
     "triggers/liveness.py::_dirty_git_active::subprocess.run": "workspace git-dirty probe",
+    "turn_claims.py::_git_names::subprocess.run": "a chat folder's staged-files read",
     "selfqa/triage.py::_git::subprocess.run": "read-only git on the watched repo",
     "selfqa/watch.py::_git::subprocess.run": "read-only git on the watched repo",
     "selfqa/fix_branch.py::_git::subprocess.run": "`git branch` on the owner's watched repo",

@@ -42,6 +42,7 @@ from personalclaw.context_engine import assemble_context, check_headroom, headro
 from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.context_parts import assembly_parts
 from personalclaw.dashboard import (
+    chat_claims,
     chat_intake,
     chat_phase,
     chat_questions,
@@ -4753,6 +4754,7 @@ async def run_chat(
             )
 
         if assistant_text:
+            assistant_text += chat_claims.noted(state, session, assistant_text)
             _flush_segment(state, session, assistant_text, broadcast=False)
         # Read the context measurement ONCE, here, and hand the same value to every
         # consumer: the persisted per-turn record below, the `context_usage` frame and

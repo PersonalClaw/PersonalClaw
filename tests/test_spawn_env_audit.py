@@ -65,6 +65,7 @@ _MUST_STAY_BUILT = {
     "dashboard/handlers/files.py::_git::asyncio.create_subprocess_exec",
     "workflows/review_service.py::_git::asyncio.create_subprocess_exec",
     "triggers/liveness.py::_dirty_git_active::subprocess.run",
+    "turn_claims.py::_git_names::subprocess.run",
     "selfqa/triage.py::_git::subprocess.run",
     "selfqa/watch.py::_git::subprocess.run",
     "selfqa/fix_branch.py::_git::subprocess.run",

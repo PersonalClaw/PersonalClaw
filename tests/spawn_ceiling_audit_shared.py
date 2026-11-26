@@ -527,6 +527,8 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "triggers/liveness.py::_dirty_git_active::subprocess.run": (
         "host-fact: workspace git-dirty probe"
     ),
+    # A turn's reply held to its record (#6057): one read of the chat folder's git index.
+    "turn_claims.py::_git_names::subprocess.run": "host-fact: a chat folder's staged files",
     # #2569's TCC principal probe — one `/usr/bin/log show` read of the OS's own log, to name
     # WHICH responsible process macOS resolved this session's Accessibility request against.
     # Operator-exempt rather than ceiling-wrapped, and the reason is that nothing agent-authored
