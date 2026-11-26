@@ -452,3 +452,80 @@ def test_a_note_writes_its_audit_row(home) -> None:
         and row.get("resources") == line["id"]
     ]
     assert [row.get("outcome") for row in rows] == ["ok"], "a note is audited with its incident"
+
+
+def _counted(name: str) -> int:
+    return int(incident.get_incident().suppressed.get(name, {}).get("count", 0))
+
+
+def test_a_hooks_test_during_an_incident_counts_nothing(home) -> None:
+    """A Test press is a rehearsal: during an incident it is skipped like any fire, but nothing
+    was dropped, so the incident counts nothing for it."""
+    from personalclaw.hooks import HOOK_EVENT_PRE_TOOL_USE, ScriptHook, run_script_hook
+
+    hook = ScriptHook(
+        id="on-tool",
+        name="Before a tool",
+        event=HOOK_EVENT_PRE_TOOL_USE,
+        provider="bash",
+        provider_config={"command": "true"},
+        timeout=30,
+        enabled=True,
+        capabilities={"providers": ["bash"]},
+    )
+    incident.activate("Checking a hook", by="owner")
+    assert "incident" in asyncio.run(run_script_hook(hook, "", test=True)).error
+    assert _counted("hooks_dropped") == 0, "a Test of the hook is not a fire the incident dropped"
+    assert "incident" in asyncio.run(run_script_hook(hook, "")).error
+    assert _counted("hooks_dropped") == 1, "its real fire is"
+
+
+def test_a_fire_another_gate_refused_during_an_incident_counts_nothing(home, tmp_path) -> None:
+    """Resume offers Run now for each fire the incident counted, so a fire the injection screen,
+    the budget or the capability fence refused while it was on, one a chain's guard held, or a
+    missed run dismissed, is that gate's and not counted: it would be run as one the incident
+    dropped."""
+    from personalclaw.triggers import chain, firepath, run_source, service
+
+    incident.activate("Checking what is held back", by="owner")
+    now = time.time()
+    for gate in ("screen", "budget", "capability"):
+        row = {
+            "trigger_id": f"clock:{gate}",
+            "outcome": firepath.GATE_OUTCOMES[gate],
+            "reason": f"refused at {gate}",
+            "gate": gate,
+        }
+        asyncio.run(
+            service.persist_suppression(
+                row, now=now, base_dir=tmp_path, source=run_source.SCHEDULE, kind="clock"
+            )
+        )
+    asyncio.run(
+        chain.record_refusals(
+            [{"trigger_id": "event:chained", "reason": "the chain's depth cap"}], base_dir=tmp_path
+        )
+    )
+    asyncio.run(
+        service.record_dismissal(
+            "clock:missed", "skipped_missed", "dismissed", source=run_source.YOU, base_dir=tmp_path
+        )
+    )
+    assert {name: _counted(name) for name in incident.SUPPRESSED_COUNTERS} == {
+        name: 0 for name in incident.SUPPRESSED_COUNTERS
+    }
+    own = {
+        "trigger_id": "clock:nightly",
+        "outcome": firepath.GATE_OUTCOMES["incident"],
+        "reason": "incident mode is active",
+        "gate": "incident",
+    }
+    asyncio.run(
+        service.persist_suppression(
+            own, now=now, base_dir=tmp_path, source=run_source.SCHEDULE, kind="clock"
+        )
+    )
+    assert incident.get_incident().suppressed["runs_skipped"] == {
+        "count": 1,
+        "refs": ["trigger:clock:nightly"],
+    }, "the incident's own refusal is"

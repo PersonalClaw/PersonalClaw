@@ -392,6 +392,34 @@ async def test_a_step_agent_taken_back_keeps_the_run_it_works_for(home, tmp_path
 
 
 @pytest.mark.asyncio
+async def test_a_start_the_incident_refuses_after_a_restart_is_counted(home):
+    """A helper kept through a restart that incident mode refuses at the door never runs later, so
+    the incident counts it, by the id its chat was given, as it counts a new spawn it refuses."""
+    from personalclaw.guardrails import incident
+    from personalclaw.subagent_admission import INCIDENT_REFUSAL
+
+    before = _manager(_Owner())
+    asking = before.spawn("Survey the venues", parent_session_key=CHAT)
+    queued = before.spawn("Draft the agenda", parent_session_key=CHAT)
+    await _settle()
+    await _restart(before)
+
+    incident.activate("Checking what a restart takes back", by="owner")
+    try:
+        after = _manager(_Owner())
+        with patch("personalclaw.subagent_waiting.sel"):
+            taken = {t.agent_id: t for t in take_back(after, lambda _key: "")}
+        assert {(t.now, t.why) for t in taken.values()} == {(ENDED, INCIDENT_REFUSAL)}
+        assert set(taken) == {asking.id, queued.id}
+        held = incident.get_incident().suppressed["spawns_refused"]
+        assert held["count"] == 2
+        assert set(held["refs"]) == {f"subagent:{asking.id}", f"subagent:{queued.id}"}
+        await after.cancel_all()
+    finally:
+        incident.resume(by="owner")
+
+
+@pytest.mark.asyncio
 async def test_a_spawn_the_owner_cancelled_or_declined_stays_ended(home):
     """🔴 Red before on the queue's side: a restart took nothing back, and it must take back none
     of these. A queued spawn she cancelled, a start she cancelled while it asked, and one she
