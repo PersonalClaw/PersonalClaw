@@ -3,9 +3,11 @@
  *
  *  🔑 THE GATEWAY DECIDES WHICH WRITES NEED ONE, NOT THIS FILE (`dashboard/owner_presence.py`):
  *  minting a credential (a device pairing code, a device sign-in code, an integration token, a
- *  channel owner's code), setting the first password, and making sign-in less strict. Sent from a
- *  device that signed in more than ten minutes ago, such a write is answered
- *  `401 fresh_sign_in_required`, with the gateway's sentence and what to ask for in `error.detail`:
+ *  channel owner's code), setting the first password, making sign-in less strict, and downloading
+ *  everything PersonalClaw keeps (`api.durabilityExport`, a raw `fetch` sent through
+ *  `withFreshSignIn` too). Sent from a device that signed in more than ten minutes ago, such a
+ *  write is answered `401 fresh_sign_in_required`, with the gateway's sentence and what to ask for
+ *  in `error.detail`:
  *  `password` (this gateway offers password sign-in) and `second_factor` (an authenticator code is
  *  set up). Every write in `api.ts` goes through `withFreshSignIn`, so a surface never predicts it.
  *  The desktop app's own window is never asked: it signs itself in.

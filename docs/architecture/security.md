@@ -169,7 +169,8 @@ and the address is never logged, since a sign-in page's carries its single-use `
   (Settings → Secrets: the 2FA seed, an inbound surface's token, a channel owner's id, the
   local-network bypass and the other sign-in settings the gateway reads from its environment,
   `secrets_vault.is_sign_in_key`; a connector pack may not name one) each call
-  `require_owner_presence`, which accepts a sign-in from
+  `require_owner_presence`, as does the whole-home export (`POST /api/durability/export`), which
+  mints nothing but hands out as much from one request. It accepts a sign-in from
   the last 10 minutes, the local machine secret (`X-Local-Secret` from this computer), the
   session the gateway handed the process that started it used from this computer (the desktop
   app's own windows, `personalclaw run`, a harness), or authentication being off. Anything else
@@ -180,7 +181,8 @@ and the address is never logged, since a sign-in page's carries its single-use `
   whatever the session; a wrong one is refused, logged and counted toward the sign-in lockout.
   Containment never asks: signing devices out, replacing the key, revoking a token, turning
   incident mode on, tightening sign-in. `tests/rails/test_owner_presence_census.py` fails a route that
-  mints a credential without asking, and one that contains and does.
+  mints a credential, or exports the home, without asking, and one that contains and does.
+  `personalclaw snapshot` runs as the local user and does not ask.
 - **The keys that are not sign-ins have a lifetime too, each the one its job allows.**
   - An app backend's proxy secret (`apps/<app>/.app_secret`, the HMAC key the reverse proxy signs
     with) is minted afresh each time the backend starts (`apps/app_secret.mint_app_secret`), so it

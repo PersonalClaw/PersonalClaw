@@ -6208,6 +6208,9 @@ export interface SecretPresenceWire {
   present: true
   inherited_from_host: boolean
   consumers: SecretConsumerWire[]
+  /** The secret is shorter than the 8 characters a secret now needs, saved before that floor: the
+   *  row is marked with Replace, and nothing deletes it. Told from its length alone. */
+  too_short: boolean
 }
 export interface SecretsVaultState {
   secrets: SecretPresenceWire[]
@@ -9001,16 +9004,20 @@ export const api = {
       if (!r.ok) throw await apiError(r)
       return r.blob()
     }),
-  /** POST because the domain selection is a body. `domains` omitted = the full export. */
+  /** POST because the domain selection is a body. `domains` omitted = the full export. It needs a
+   *  recent sign-in, as minting a credential does: from a device that signed in more than ten
+   *  minutes ago the gateway answers `401 fresh_sign_in_required`, and `withFreshSignIn` asks the
+   *  owner to sign in again and sends it once more. It does not say it asks
+   *  (`X-PersonalClaw-Consent: ask`), so no `200` here is ever a question taken for the zip. */
   durabilityExport: (domains?: string[]) =>
-    pairFetch('/api/durability/export', {
+    refuseIfSignedOut() ?? withFreshSignIn(() => pairFetch('/api/durability/export', {
       method: 'POST',
       headers: { ...SK, 'Content-Type': 'application/json' },
       body: JSON.stringify(domains && domains.length ? { domains } : {}),
     }).then(async (r) => {
       if (!r.ok) throw await apiError(r)
       return r.blob()
-    }),
+    })),
   /** `mode` omitted VALIDATES ONLY and applies nothing — the plan-first contract every
    *  home-writing verb in this API uses. There is no replace here: the gateway refuses one while
    *  it runs (`409 gateway_running`, naming `personalclaw restore … --mode replace`). */

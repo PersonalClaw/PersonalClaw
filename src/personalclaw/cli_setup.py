@@ -359,7 +359,12 @@ def _store_named_credential(credential: str) -> bool:
     Secrets lists and every ``{{secret:NAME}}`` and provider ``credential`` reads. False, with
     the reason on stderr, when nothing was stored."""
     from personalclaw.config.credentials import save_credential
-    from personalclaw.secrets_vault import is_namespaced_key, valid_key_name
+    from personalclaw.secrets_vault import (
+        VALUE_PROBLEMS,
+        is_namespaced_key,
+        valid_key_name,
+        value_problem,
+    )
 
     if "=" in credential:
         cred_name, _, cred_val = credential.partition("=")
@@ -379,6 +384,8 @@ def _store_named_credential(credential: str) -> bool:
         )
     elif not cred_val:
         refusal = f"  ❌ --credential {cred_name!r}: no value given and ${cred_name} is not set"
+    elif problem := value_problem(cred_val, key=cred_name):
+        refusal = f"  ❌ --credential {cred_name!r}: {VALUE_PROBLEMS[problem]}"
     else:
         try:
             save_credential(cred_name, cred_val)

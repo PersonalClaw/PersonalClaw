@@ -320,7 +320,7 @@ Install agent config and configure credentials (interactive wizard).
 | `--clean` | Fresh install — don't merge MCP servers/tools from existing config. |
 | `--mode {docker,service,none}` | Deployment mode: print the README's one-container `docker run`, the system service (systemd/launchd) install, or nothing. |
 | `--provider RUNTIME` | Set the runtime an agent runs on when it names none: `native` (the built-in loop, on the models bound in Settings → Models & Providers → Models), `acp`, or `acp:<cli>` for a connected agent CLI. Any other value is refused. The chat model itself is chosen in Settings → Models & Providers → Models. |
-| `--credential NAME[=VALUE]` | Save a secret under `NAME` in the credential store Settings → Secrets lists, where `{{secret:NAME}}` and a provider's `credential` read it. The value comes after `=`, else from the environment variable `NAME`. |
+| `--credential NAME[=VALUE]` | Save a secret under `NAME` in the credential store Settings → Secrets lists, where `{{secret:NAME}}` and a provider's `credential` read it. The value comes after `=`, else from the environment variable `NAME`. A value under 8 characters or over 16,384 bytes is refused on stderr, with exit 1, and nothing is stored. |
 | `--app NAME` | Run only the named installed app's setup step. |
 
 With `--mode`, `--provider` or `--credential`, `setup` applies those flags and runs none of its

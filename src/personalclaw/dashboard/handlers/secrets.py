@@ -41,6 +41,9 @@ from personalclaw.http_errors import json_error
 from personalclaw.request_validation import require_string
 from personalclaw.secrets_vault import (
     SCOPE_HOST,
+    VALUE_PASSWORD_TOO_SHORT,
+    VALUE_TOO_LARGE,
+    VALUE_TOO_SHORT,
     SecretPresence,
     consumers_for,
     is_namespaced_key,
@@ -49,6 +52,7 @@ from personalclaw.secrets_vault import (
     project_secret_key,
     valid_key_name,
     valid_project_id,
+    value_problem,
 )
 from personalclaw.sel import sel
 
@@ -207,6 +211,16 @@ async def api_secrets_put(request: web.Request) -> web.Response:
         return json_error("secret_project_invalid", status=400)
     if not value:
         return json_error("secret_value_required", status=400)
+    # Too short to mask or too large to match (#4095): nothing is saved, and the value is never in
+    # the error. A global secret takes its own name's floor (`secrets_vault.floor_for`): none for a
+    # sign-in setting ("1" turns the bypass on), the password route's for the sign-in password.
+    problem = value_problem(value, key="" if project_id else name)
+    if problem == VALUE_TOO_SHORT:
+        return json_error("secret_value_too_short", status=400)
+    if problem == VALUE_PASSWORD_TOO_SHORT:
+        return json_error("secret_password_too_short", status=400)
+    if problem == VALUE_TOO_LARGE:
+        return json_error("secret_value_too_large", status=400)
     if not project_id and is_sign_in_key(name):
         refused = require_owner_presence(request, ACTION_SIGN_IN_SECRET)
         if refused is not None:

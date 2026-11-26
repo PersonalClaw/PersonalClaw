@@ -70,6 +70,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -151,6 +152,19 @@ def is_sign_in_key(key: str) -> bool:
     return key in {token_env_key(surface) for surface in client_surfaces()}
 
 
+def is_sign_in_setting(key: str) -> bool:
+    """Whether *key* is one of :func:`is_sign_in_key`'s SETTINGS: a value the gateway reads in its
+    own form, not a credential. The local-network bypass is on only at exactly ``"1"``, sign-in is
+    off at ``"none"``, and a chat platform's owner id can be six digits. The rest of the sign-in
+    keys (the authenticator's seed, an inbound surface's token, the sign-in password) are
+    credentials, and take a floor like any secret (:func:`floor_for`)."""
+    from personalclaw.config.loader import CRED_OWNER_ID
+
+    if key in SIGN_IN_ENVIRONMENT and key != LOGIN_PASSWORD_KEY:
+        return True
+    return key == CRED_OWNER_ID or key.startswith(f"{CRED_OWNER_ID}_")
+
+
 def is_namespaced_key(key: str) -> bool:
     """Whether *key* lies in a namespace the store keeps for keys nobody names by hand: a setting's
     own key (:func:`is_reserved_key`) or a project's (:func:`is_project_key`). A secret is stored,
@@ -170,6 +184,82 @@ SCOPE_HOST = "host"
 #: here means a name that could never be delivered is refused at the boundary rather than stored
 #: and silently useless.
 KEY_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
+#: The floor and cap on a secret's value, read at every door that stores a value work reads by name
+#: (``POST /api/secrets``, a pack's connector, ``setup --credential``; #4095). Every filled secret
+#: is masked out of what work prints, however short, so a three-character one hides ordinary text
+#: wherever it appears and still leaks by elimination. The floor counts characters, the cap UTF-8
+#: bytes. A short PIN belongs in a fill request instead.
+MIN_SECRET_CHARS = 8
+MAX_SECRET_BYTES = 16_384
+#: The wire codes :func:`value_problem` names, and the one sentence each says wherever it refuses.
+VALUE_TOO_SHORT = "secret_value_too_short"
+VALUE_TOO_LARGE = "secret_value_too_large"
+VALUE_PASSWORD_TOO_SHORT = "secret_password_too_short"
+#: The sign-in password a container enrolls (:data:`SIGN_IN_ENVIRONMENT`): stored as a secret, it
+#: takes the password route's own floor (``auth.credentials.MIN_PASSWORD_LEN``), not a secret's.
+LOGIN_PASSWORD_KEY = "PERSONALCLAW_LOGIN_PASSWORD"
+VALUE_PROBLEMS = {
+    VALUE_TOO_SHORT: f"A secret must be at least {MIN_SECRET_CHARS} characters, so PersonalClaw "
+    "can keep it out of what work prints; nothing was saved.",
+    VALUE_TOO_LARGE: f"A secret may be at most {MAX_SECRET_BYTES:,} bytes; nothing was saved.",
+    VALUE_PASSWORD_TOO_SHORT: "The sign-in password must be at least 12 characters; nothing was "
+    "saved.",
+}
+
+
+def floor_for(key: str) -> int:
+    """The fewest characters a GLOBAL secret named *key* may hold.
+
+    * ``0`` for a sign-in setting (:func:`is_sign_in_setting`): the gateway reads it in its own
+      form, so its form decides its length;
+    * the password route's own minimum for :data:`LOGIN_PASSWORD_KEY`, so Settings → Secrets
+      cannot store a password the change-password route would refuse;
+    * :data:`MIN_SECRET_CHARS` for anything else, the other sign-in keys included: a short
+      authenticator seed or surface token is a weak credential, masked like any secret.
+
+    A project's secret always takes :data:`MIN_SECRET_CHARS`: whatever its name, it is handed to
+    its project's work.
+    """
+    if is_sign_in_setting(key):
+        return 0
+    if key == LOGIN_PASSWORD_KEY:
+        from personalclaw.auth.credentials import MIN_PASSWORD_LEN
+
+        return MIN_PASSWORD_LEN
+    return MIN_SECRET_CHARS
+
+
+def value_problem(value: str, *, key: str = "") -> str:
+    """``""`` for a value a door may store, else the refusal's code (a :data:`VALUE_PROBLEMS`
+    key). It never repeats the value: a caller names the credential, never what it holds.
+
+    *key*: the name of a GLOBAL secret, whose own floor applies (:func:`floor_for`). Without it,
+    the secret's floor, :data:`MIN_SECRET_CHARS`. The cap is the same for every value."""
+    floor = floor_for(key) if key else MIN_SECRET_CHARS
+    if len(value) < floor:
+        return VALUE_PASSWORD_TOO_SHORT if key == LOGIN_PASSWORD_KEY else VALUE_TOO_SHORT
+    if len(value.encode("utf-8")) > MAX_SECRET_BYTES:
+        return VALUE_TOO_LARGE
+    return ""
+
+
+def short_names(keys: Iterable[str], *, environment: bool = False) -> set[str]:
+    """Which of *keys* (global or project keys as the store spells them) hold a value under their
+    own floor (:func:`floor_for`): the names only, told from each value's length by
+    ``credentials.names_shorter_than``, which drops each value once it has its length."""
+    from personalclaw.config.credentials import names_shorter_than
+
+    by_floor: dict[int, list[str]] = {}
+    for key in keys:
+        floor = MIN_SECRET_CHARS if is_project_key(key) else floor_for(key)
+        if floor:
+            by_floor.setdefault(floor, []).append(key)
+    short: set[str] = set()
+    for floor, named in by_floor.items():
+        short |= names_shorter_than(named, floor, environment=environment)
+    return short
+
 
 #: Project ids that would make a namespaced key undecodable. A separator inside the id would put
 #: the split in the wrong place; an empty id would produce a key that decodes to a nameless
@@ -283,6 +373,11 @@ class SecretPresence:
     scope: str = SCOPE_GLOBAL
     project_id: str = ""
     consumers: tuple[SecretConsumer, ...] = field(default_factory=tuple)
+    #: The value is shorter than :data:`MIN_SECRET_CHARS`, saved before the floor (#4095): Settings
+    #: marks it with Replace, and nothing deletes it. Told from the length alone
+    #: (``credentials.names_shorter_than``), never from a value this module holds. Each value is
+    #: held to its own floor (:func:`floor_for`), so a sign-in setting is never marked.
+    too_short: bool = False
 
     @property
     def inherited_from_host(self) -> bool:
@@ -306,6 +401,7 @@ class SecretPresence:
             "present": True,
             "inherited_from_host": self.inherited_from_host,
             "consumers": [c.to_dict() for c in self.consumers],
+            "too_short": self.too_short,
         }
 
 
@@ -350,6 +446,7 @@ def list_presence(
 
     consumer_map = consumers or {}
     stored = credential_names()
+    short = short_names([k for k in stored if not is_reserved_key(k)])
     rows: list[SecretPresence] = []
 
     for key in stored:
@@ -364,6 +461,7 @@ def list_presence(
                     name=key,
                     scope=SCOPE_GLOBAL,
                     consumers=consumer_map.get(key, ()),
+                    too_short=key in short,
                 )
             )
             continue
@@ -378,6 +476,7 @@ def list_presence(
                 # A reference names a secret by its own name, and a workflow's runs in this
                 # project read this row for it. An automation runs in no project: it never does.
                 consumers=tuple(c for c in consumer_map.get(name, ()) if c.kind == "workflow"),
+                too_short=key in short,
             )
         )
 
@@ -385,11 +484,20 @@ def list_presence(
     # `save_credential` also put it in `os.environ` — reporting it as inherit-from-host would tell
     # the user the value is outside the vault when the vault is exactly where it is.
     vault_names = {r.name for r in rows if r.scope == SCOPE_GLOBAL}
-    for name in _host_secret_names():
-        if name in vault_names or split_project_key(name) is not None or is_reserved_key(name):
-            continue
+    host = [
+        name
+        for name in _host_secret_names()
+        if name not in vault_names and split_project_key(name) is None and not is_reserved_key(name)
+    ]
+    host_short = short_names(host, environment=True)
+    for name in host:
         rows.append(
-            SecretPresence(name=name, scope=SCOPE_HOST, consumers=consumer_map.get(name, ()))
+            SecretPresence(
+                name=name,
+                scope=SCOPE_HOST,
+                consumers=consumer_map.get(name, ()),
+                too_short=name in host_short,
+            )
         )
 
     rows.sort(key=lambda r: (r.scope, r.project_id, r.name))

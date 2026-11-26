@@ -183,7 +183,7 @@ class TestPresenceIsStructural:
         import dataclasses
 
         fields = {f.name for f in dataclasses.fields(sv.SecretPresence)}
-        assert fields == {"name", "scope", "project_id", "consumers"}, fields
+        assert fields == {"name", "scope", "project_id", "consumers", "too_short"}, fields
         for banned in ("value", "secret", "plaintext", "token"):
             assert banned not in fields
         row = sv.SecretPresence(name="K")
@@ -202,6 +202,7 @@ class TestPresenceIsStructural:
             "present",
             "inherited_from_host",
             "consumers",
+            "too_short",
         }
 
     def test_credential_names_never_reads_a_value(self, vault: Path):
@@ -405,6 +406,9 @@ class TestScopesAndRefusals:
             "secret_absent",
             "secret_host_readonly",
             "secret_name_reserved",
+            "secret_value_too_short",
+            "secret_value_too_large",
+            "secret_password_too_short",
         ):
             assert code in HTTP_ERROR_CODES, f"{code} needs an HTTP_ERROR_CODES row"
             meaning = HTTP_ERROR_CODES[code]
@@ -671,3 +675,135 @@ def test_a_name_that_ends_in_a_line_break_is_not_a_key_name():
     """The whole name is checked: a line break at its end is not a variable name's."""
     assert not sv.valid_key_name("A_TOKEN\n")
     assert sv.valid_key_name("A_TOKEN")
+
+
+# ── a value too short to mask, or too large to match (#4095) ──
+
+
+class TestAValueTooShortToMask:
+    """Every filled secret is masked out of what work prints, so a short one hides ordinary text
+    wherever it appears and still leaks by elimination: the route refuses a value under 8
+    characters or over 16,384 bytes, and a short one saved before the floor is marked, never
+    deleted."""
+
+    @pytest.mark.parametrize(
+        "value,problem",
+        [
+            ("abcdefg", sv.VALUE_TOO_SHORT),
+            ("abcdefgh", ""),
+            ("ééééééé", sv.VALUE_TOO_SHORT),  # 7 characters, 14 bytes: the floor counts characters
+            ("x" * sv.MAX_SECRET_BYTES, ""),
+            ("x" * (sv.MAX_SECRET_BYTES + 1), sv.VALUE_TOO_LARGE),
+            ("é" * (sv.MAX_SECRET_BYTES // 2 + 1), sv.VALUE_TOO_LARGE),  # the cap counts bytes
+        ],
+        ids=[
+            "7 characters",
+            "8 characters",
+            "7 two-byte characters",
+            "the cap",
+            "a byte over",
+            "two-byte characters over the cap",
+        ],
+    )
+    def test_the_value_check(self, value: str, problem: str):
+        assert sv.value_problem(value) == problem
+
+    @pytest.mark.parametrize(
+        "key,value,problem",
+        [
+            # Settings, read by the gateway in their own form: no floor, the cap still.
+            ("PERSONALCLAW_BYPASS_LOCAL_NETWORKS", "1", ""),
+            ("PERSONALCLAW_AUTH_MODE", "none", ""),
+            ("PERSONALCLAW_OWNER_ID_TELEGRAM", "123456", ""),
+            (
+                "PERSONALCLAW_BYPASS_LOCAL_NETWORKS",
+                "x" * (sv.MAX_SECRET_BYTES + 1),
+                sv.VALUE_TOO_LARGE,
+            ),
+            # Credentials among the sign-in keys: the floor like any secret.
+            ("PERSONALCLAW_TOTP_SECRET", "ABCDEFG", sv.VALUE_TOO_SHORT),
+            ("PERSONALCLAW_INBOUND_MCP_TOKEN", "abcdefg", sv.VALUE_TOO_SHORT),
+            ("PERSONALCLAW_INBOUND_MCP_TOKEN", "abcdefgh", ""),
+            # The sign-in password: the password route's own floor.
+            ("PERSONALCLAW_LOGIN_PASSWORD", "x" * 11, sv.VALUE_PASSWORD_TOO_SHORT),
+            ("PERSONALCLAW_LOGIN_PASSWORD", "x" * 12, ""),
+            # Any other global secret, and a project's of any name (no key): the secret's floor.
+            ("GITHUB_TOKEN", "abcdefg", sv.VALUE_TOO_SHORT),
+            ("", "1", sv.VALUE_TOO_SHORT),
+        ],
+        ids=[
+            "the bypass",
+            "the sign-in mode",
+            "a channel owner's id",
+            "a setting over the cap",
+            "a short authenticator seed",
+            "a short surface token",
+            "an 8-character surface token",
+            "an 11-character sign-in password",
+            "a 12-character sign-in password",
+            "any other secret",
+            "a project's secret",
+        ],
+    )
+    def test_each_global_name_takes_its_own_floor(self, key: str, value: str, problem: str):
+        assert sv.value_problem(value, key=key) == problem
+
+    def test_the_names_the_floors_are_told_by_are_the_real_ones(self):
+        """Vacuity: the rows above name the keys the gateway really reads."""
+        from personalclaw.auth.credentials import MIN_PASSWORD_LEN, TOTP_SECRET_KEY
+        from personalclaw.config.credentials import owner_id_credential
+        from personalclaw.inbound.auth import token_env_key
+
+        assert TOTP_SECRET_KEY == "PERSONALCLAW_TOTP_SECRET"
+        assert token_env_key("mcp") == "PERSONALCLAW_INBOUND_MCP_TOKEN"
+        assert owner_id_credential("telegram") == "PERSONALCLAW_OWNER_ID_TELEGRAM"
+        assert sv.floor_for(sv.LOGIN_PASSWORD_KEY) == MIN_PASSWORD_LEN
+        assert (
+            f"at least {MIN_PASSWORD_LEN} characters"
+            in sv.VALUE_PROBLEMS[sv.VALUE_PASSWORD_TOO_SHORT]
+        )
+        for key in (TOTP_SECRET_KEY, token_env_key("mcp"), sv.LOGIN_PASSWORD_KEY):
+            assert sv.is_sign_in_key(key) and not sv.is_sign_in_setting(key), key
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "value,code",
+        [("abc", sv.VALUE_TOO_SHORT), ("x" * (sv.MAX_SECRET_BYTES + 1), sv.VALUE_TOO_LARGE)],
+        ids=["too short", "too large"],
+    )
+    async def test_the_route_refuses_it_and_stores_nothing(
+        self, vault: Path, value: str, code: str
+    ):
+        async with TestClient(TestServer(_make_app())) as c:
+            r = await c.post("/api/secrets", json={"name": "DEMO_SHORT_KEY", "value": value})
+            raw = await r.text()
+        assert r.status == 400, raw
+        assert json.loads(raw)["error"]["code"] == code
+        assert "DEMO_SHORT_KEY" not in cred.credential_names()
+        assert value not in raw
+
+    def test_the_route_says_the_sentence_every_door_says(self):
+        for code, sentence in sv.VALUE_PROBLEMS.items():
+            assert HTTP_ERROR_CODES[code] == sentence, code
+
+    @pytest.mark.asyncio
+    async def test_a_short_value_saved_before_the_floor_is_marked_and_kept(
+        self, vault: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        cred.save_credential("DEMO_OLD_PIN", "1234")
+        monkeypatch.setenv("DEMO_HOST_PIN_TOKEN", "abc")
+        async with TestClient(TestServer(_make_app())) as c:
+            rows = (await (await c.get("/api/secrets")).json())["secrets"]
+            raw = json.dumps(rows)
+            short = {r["name"]: r["too_short"] for r in rows}
+            assert short["DEMO_OLD_PIN"] is True
+            assert short["DEMO_HOST_PIN_TOKEN"] is True
+            assert short["DEMO_GLOBAL_TOKEN"] is False
+            assert short["DEMO_HOST_TOKEN"] is False
+            assert "1234" not in raw
+            assert "DEMO_OLD_PIN" in cred.credential_names(), "nothing deletes a short secret"
+            # Replace, with a value long enough, clears the mark.
+            r = await c.post("/api/secrets", json={"name": "DEMO_OLD_PIN", "value": GLOBAL_VALUE})
+            assert r.status == 200, await r.text()
+            rows = (await (await c.get("/api/secrets")).json())["secrets"]
+        assert {r["name"]: r["too_short"] for r in rows}["DEMO_OLD_PIN"] is False

@@ -462,7 +462,7 @@ The 972 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/durability/archive/{id}/restore` | {mode?, components?, confirm?}. |
 | `GET` | `/api/durability/conflicts` | the review queue. |
 | `POST` | `/api/durability/conflicts/{id}/resolve` | {choice, confirm} — apply one decision. |
-| `POST` | `/api/durability/export` | {domains?} — the DSAR export. |
+| `POST` | `/api/durability/export` | {domains?} — the DSAR export, after a recent sign-in. |
 | `GET` | `/api/durability/history` | per-root repo status for the Time Travel panel. |
 | `GET` | `/api/durability/history/{root}/timeline` | the timeline. |
 | `POST` | `/api/durability/history/{root}/{op}` | {sha, paths?, confirm?, expected_head?, |
