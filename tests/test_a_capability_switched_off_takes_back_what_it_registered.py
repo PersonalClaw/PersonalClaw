@@ -28,11 +28,20 @@ from personalclaw.providers import registry as registry_module
 pytestmark = pytest.mark.security
 
 APP = "agent-kit"
-CLIS = ("kit-a", "kit-b", "kit-c", "kit-body")
+CLIS = ("kit-a", "kit-b", "kit-c", "kit-body", "kit-late")
 
 #: Each capability's factory registers its own runtime; ``create_c`` raises after registering.
-#: The module body registers one more as it is imported, which is the app's.
+#: The module body registers one more as it is imported, which is the app's. ``a`` and ``b`` also
+#: make registrations whose take-back writes its name to ``KIT_UNDO_LOG``, so a row can count how
+#: often, and in what order, each is taken back. ``create_late`` leaves a thread behind that
+#: registers once the build has returned, carrying the build's context as ``asyncio.to_thread``
+#: does.
 _PROVIDER_PY = """
+import contextvars
+import os
+import threading
+
+from personalclaw import app_code
 from personalclaw.sdk.acp import register_acp_cli_entry
 
 
@@ -40,20 +49,35 @@ def _runtime(cli):
     register_acp_cli_entry(cli=cli, dialect="generic", command=["kit-cli"], model="")
 
 
+def _noted(name):
+    def undo():
+        with open(os.environ["KIT_UNDO_LOG"], "a", encoding="utf-8") as log:
+            log.write(name + "\\n")
+
+    app_code.keep(undo)
+
+
 _runtime("kit-body")
 
 
 def create_a(config):
     _runtime("kit-a")
+    _noted("a1")
+    _noted("a2")
 
 
 def create_b(config):
     _runtime("kit-b")
+    _noted("b1")
 
 
 def create_c(config):
     _runtime("kit-c")
     raise RuntimeError("the kit CLI refused its sign-in")
+
+
+def create_late(config):
+    threading.Thread(target=contextvars.copy_context().run, args=(_runtime, "kit-late")).start()
 """
 
 
@@ -75,6 +99,7 @@ def kit(tmp_path, monkeypatch) -> Path:
     reg = registry_module.ProviderRegistry()
     reg.register_type_handler("agent", registry_module.EntitySeamHandler(source_of_truth="test"))
     monkeypatch.setattr(registry_module, "_registry", reg)
+    monkeypatch.setenv("KIT_UNDO_LOG", str(tmp_path / "undone.log"))
     yield tmp_path
     for cli in CLIS:
         get_default_registry().unregister_entry(f"acp:{cli}")
@@ -96,6 +121,11 @@ def _install(root: Path, providers: list[dict[str, Any]]) -> None:
     (d / "provider.py").write_text(_PROVIDER_PY, encoding="utf-8")
     res = app_manager.install(d, confirm=True)
     assert res.ok, res.error
+
+
+def _undone(root: Path) -> list[str]:
+    log = root / "undone.log"
+    return log.read_text(encoding="utf-8").split() if log.exists() else []
 
 
 def _runtimes() -> set[str]:
@@ -160,3 +190,37 @@ def test_a_settings_rebuild_keeps_one_runtime_per_capability(kit) -> None:
     assert _runtimes() == {"kit-a", "kit-b", "kit-body"}
     registry_module.get_provider_registry().disable(APP, "a")
     assert _runtimes() == {"kit-b", "kit-body"}, "the rebuilt one is the one taken back"
+
+
+@pytest.mark.asyncio
+async def test_each_take_back_runs_once_and_newest_first(kit) -> None:
+    """A capability's registrations are taken back once: switching it off takes them, newest
+    first, and the app's release later takes only what is left."""
+    _install(kit, [_agent("a"), _agent("b")])
+    async with TestClient(TestServer(_gateway())) as client:
+        assert (await client.post(f"/api/apps/{APP}/capabilities/a/off")).status == 200
+    assert _undone(kit) == ["a2", "a1"], "newest first"
+    assert app_code.release_capability(APP, "a") == 0, "nothing of a's is left to take back"
+    app_manager.disable(APP)
+    assert _undone(kit) == ["a2", "a1", "b1"], "the app's release took b's alone, once"
+    app_code.release(APP)
+    assert _undone(kit) == ["a2", "a1", "b1"], "and nothing runs twice"
+
+
+@pytest.mark.asyncio
+async def test_a_thread_the_build_left_behind_registers_for_the_app(kit) -> None:
+    """A registration a thread makes after the build returned never meets the build's frame,
+    even when the thread carries the build's context: it is the app's, so switching the
+    capability off leaves it and switching the app off takes it."""
+    import time
+
+    _install(kit, [_agent("a"), _agent("late")])
+    deadline = time.monotonic() + 5
+    while "kit-late" not in _runtimes() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert "kit-late" in _runtimes()
+    async with TestClient(TestServer(_gateway())) as client:
+        assert (await client.post(f"/api/apps/{APP}/capabilities/late/off")).status == 200
+    assert "kit-late" in _runtimes(), "not the capability's: its thread outlived the build"
+    app_manager.disable(APP)
+    assert "kit-late" not in _runtimes(), "the app's: it leaves with the app"
