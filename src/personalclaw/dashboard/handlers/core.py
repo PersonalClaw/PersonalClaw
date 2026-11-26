@@ -1272,8 +1272,10 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
 async def api_incident(request: web.Request) -> web.Response:
     """GET /api/incident — current state. POST /api/incident — activate.
 
-    POST body: ``{reason: str}``, required, 1 to 200 characters: a start without one answers
-    ``400 incident_reason_required`` and changes nothing. Who started it is recorded: an app's
+    POST body: ``{reason: str}``. The owner's start needs one of 1 to 200 characters: without one
+    it answers ``400 incident_reason_required`` and changes nothing. An app's stop always engages:
+    an empty reason is recorded as "(no reason given)" and a longer one is cut to 200 characters
+    ending in "..." (``incident.activate``). Who started it is recorded: an app's
     call (``request["app"]``, set by its token) as ``app`` with its name, else ``owner``.
     Activation is SEL-audited and suspends all unattended work within one poll interval;
     interactive chat is untouched. Both answer who started it and what it has held back

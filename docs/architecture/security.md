@@ -1272,10 +1272,13 @@ the ceiling did not bound.
 Incident mode stops all unattended work at once, at each execution seam (the module docstring says
 what becomes of the work each seam skips). Interactive chat is untouched.
 
-- **A reason on every door.** `POST /api/incident {reason}`, an app's call to it, and
-  `personalclaw incident on --reason` each need a reason of 1 to 200 characters. Without one the
-  route answers `400 incident_reason_required` ("Stopping unattended work needs a reason; nothing
-  was changed.") and the command line exits 1. While it is active, `incident.json` records who
+- **A reason from a person; an app's stop always engages.** The owner's `POST /api/incident
+  {reason}` and `personalclaw incident on --reason` need a reason of 1 to 200 characters. Without
+  one the route answers `400 incident_reason_required` ("Stopping unattended work needs a reason;
+  nothing was changed.") and the command line exits 1. An app's call always stops unattended work,
+  since a safety stop must not fail on a formality: an empty reason is recorded as "(no reason
+  given)", and one over 200 characters is cut to 200 ending in "...". While it is active,
+  `incident.json` records who
   started it: `owner` (the dashboard), `cli`, or `app` with the app's name, from its token. A start
   while one is active keeps the first one, and only the security log hears the second reason.
 - **One line per incident.** Resume (`POST /api/incident/resume {confirm: true}`,

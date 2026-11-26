@@ -118,11 +118,9 @@ def test_an_incident_leaves_one_line_and_its_notes_append(home) -> None:
     assert status == 404 and missing["error"]["code"] == "incident_not_found"
 
 
-def test_starting_without_a_reason_is_refused_on_every_door(home) -> None:
+def test_a_persons_start_without_a_reason_is_refused(home) -> None:
     for body in ({}, {"reason": "   "}, {"reason": "x" * (incident.REASON_MAX + 1)}):
         status, answer = _call("POST", "/api/incident", body)
-        assert status == 400 and answer["error"]["code"] == "incident_reason_required", body
-        status, answer = _call("POST", "/api/incident", body, as_app="example-app")
         assert status == 400 and answer["error"]["code"] == "incident_reason_required", body
     assert incident.get_incident().active is False
     with pytest.raises(incident.IncidentReasonRequired):
@@ -367,3 +365,23 @@ def test_a_count_from_another_process_lands_in_the_same_incident(home) -> None:
     assert held == {"count": 2, "refs": ["trigger:run_child", "trigger:run_parent"]}
     done = incident.resume(by="owner")
     assert done.incident["suppressed"]["runs_skipped"]["count"] == 2, "Resume's line keeps both"
+
+
+def test_an_apps_stop_always_engages(home) -> None:
+    """A safety stop never fails on a formality: an app that sends no reason, or its alert's whole
+    text, stops unattended work all the same, and the reason it is kept with says so."""
+    status, started = _call("POST", "/api/incident", {}, as_app="log-watch")
+    assert status == 200 and started["active"] is True
+    assert (started["reason"], started["activated_by"], started["app"]) == (
+        incident.NO_REASON_GIVEN,
+        "app",
+        "log-watch",
+    )
+    incident.resume(by="owner")
+
+    alert = "Disk at 99% on /var: " + "the log rotation failed again. " * 20
+    status, started = _call("POST", "/api/incident", {"reason": alert}, as_app="log-watch")
+    assert status == 200 and started["active"] is True
+    reason = started["reason"]
+    assert len(reason) <= incident.REASON_MAX and reason.endswith("...")
+    assert alert.startswith(reason[:-3]), "it keeps the alert's start"

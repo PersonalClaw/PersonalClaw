@@ -89,6 +89,8 @@ SUPPRESSED_COUNTERS = (
 REASON_REQUIRED = "Stopping unattended work needs a reason; nothing was changed."
 #: How many work references each counter names; its count keeps counting past them.
 REFS_KEPT = 50
+#: What an app's stop that gave no reason is recorded with: an app's stop always engages.
+NO_REASON_GIVEN = "(no reason given)"
 
 
 class IncidentReasonRequired(ValueError):
@@ -152,6 +154,13 @@ def _read_file() -> IncidentState:
         return IncidentState()
 
 
+def _apps_reason(text: str) -> str:
+    """*text* as an app's stop records it: never empty, never over :data:`REASON_MAX`."""
+    if not text:
+        return NO_REASON_GIVEN
+    return text if len(text) <= REASON_MAX else text[: REASON_MAX - 3].rstrip() + "..."
+
+
 def get_incident() -> IncidentState:
     """Current incident state, refreshing the mirror from the file's mtime.
 
@@ -183,16 +192,21 @@ def activate(reason: str, *, by: str, app: str = "") -> IncidentState:
     """Turn incident mode ON (SEL-audited), for *reason*, started *by* one of :data:`STARTERS`
     (*app* naming the app when an app did).
 
-    Raises :class:`IncidentReasonRequired` for a reason that is empty, or longer than
-    :data:`REASON_MAX` once trimmed, and changes nothing then. A start while one is already active
-    keeps it as it is, its reason and who started it included, and the second reason goes to the
-    security log alone: the incident is the first one's until it is resumed.
+    A person's start (the owner, the command line) raises :class:`IncidentReasonRequired` for a
+    reason that is empty, or longer than :data:`REASON_MAX` once trimmed, and changes nothing then:
+    the person is asked again. An app's stop always engages, since a safety stop must not fail on a
+    formality: an empty reason is recorded as :data:`NO_REASON_GIVEN`, and a longer one is cut to
+    :data:`REASON_MAX` characters ending in "...". A start while one is already active keeps it as
+    it is, its reason and who started it included, and the second reason goes to the security log
+    alone: the incident is the first one's until it is resumed.
     """
-    text = str(reason or "").strip()
-    if not text or len(text) > REASON_MAX:
-        raise IncidentReasonRequired(REASON_REQUIRED)
     if by not in STARTERS:
         raise ValueError(f"{by!r} is not who starts an incident: one of {', '.join(STARTERS)}")
+    text = str(reason or "").strip()
+    if by == "app":
+        text = _apps_reason(text)
+    elif not text or len(text) > REASON_MAX:
+        raise IncidentReasonRequired(REASON_REQUIRED)
     with _locked():
         current = _read_file()
         if current.active:

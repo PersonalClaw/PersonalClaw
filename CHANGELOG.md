@@ -37,6 +37,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **In the desktop app, Settings › Updates shows the desktop app and its gateway in sections of their own, names the gateway the app uses and says what finishing an update does to it.**
 - **In the desktop app, the System status card's update row reads Update App, and a gateway built into the app no longer offers an Update of its own beside it.**
 - **In the desktop app, rolling the gateway back past the app's own version says the app stays on its version, newer than the gateway, before it rolls back.**
+- **Incident mode: a stop an app or alert sends now always engages; an over-long reason is shortened and a missing one recorded as "(no reason given)". Turning it on yourself still asks for a reason.**
 
 ### Removed
 
