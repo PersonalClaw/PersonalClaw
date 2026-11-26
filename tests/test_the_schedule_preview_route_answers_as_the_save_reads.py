@@ -11,10 +11,13 @@ import asyncio
 import time
 from unittest.mock import MagicMock
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.dashboard.handlers.triggers import api_triggers_preview
+
+pytestmark = pytest.mark.security
 
 
 def _app() -> web.Application:
@@ -140,6 +143,34 @@ def test_a_walk_the_stepper_refuses_answers_never(monkeypatch) -> None:
     status, body = _post({"cron": "0 0 30 2 *", "timezone": "UTC"})
     assert status == 200, body
     assert (body["outcome"], body["problem"]) == ("never", cron_clock.NO_DATE)
+
+
+def test_the_walk_runs_off_the_event_loop(monkeypatch) -> None:
+    """The form asks on every pause in typing, and the walk steps a calendar: it runs on a worker
+    thread, never on the loop that serves every other request."""
+    import threading
+
+    from personalclaw.triggers import preview
+
+    real = preview.next_runs
+    seen: list[threading.Thread] = []
+
+    def walked(*args, **kwargs):
+        seen.append(threading.current_thread())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(preview, "next_runs", walked)
+    loop_thread: list[threading.Thread] = []
+
+    async def go():
+        loop_thread.append(threading.current_thread())
+        async with TestClient(TestServer(_app())) as c:
+            resp = await c.post("/api/triggers/preview", json={"cron": "0 9 * * *", "count": 1})
+            return resp.status
+
+    assert asyncio.run(go()) == 200
+    assert len(seen) == 1, "the route walked the calendar once"
+    assert seen[0] is not loop_thread[0], "it walked on the event loop's own thread"
 
 
 def test_the_route_is_the_owner_s_alone() -> None:
