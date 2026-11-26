@@ -57,6 +57,14 @@
     - option "minutes"
     - option "hours" [selected]
     - option "days"
+  - text: Next run Thu # <month> #, #:# Next runs
+  - paragraph: Times are in Etc/UTC.
+  - list "Next runs":
+    - listitem: Thu # <month> #, #:# in <countdown>
+    - listitem: Thu # <month> #, #:# in <countdown>
+    - listitem: Thu # <month> #, #:# in <countdown>
+    - listitem: Thu # <month> #, #:# in <countdown>
+    - listitem: Thu # <month> #, #:# in <countdown>
   - button "Advanced — delivery, timezone, skip dates, missed runs"
   - text: Action · What runs when it fires Action
   - button "Pick an action…"
