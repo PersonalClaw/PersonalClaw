@@ -2242,8 +2242,17 @@ def _children_get_a_temp_of_their_own(config) -> None:
 
     Only ``TMPDIR`` in the environment: this process resolved its own temporary folder as
     conftest was imported, so a test here sees the folder it always did, and the scratch parent
-    of each is its own (``_a_scratch_parent_of_its_own``). In every process, so an xdist
-    worker's children get the worker's, and a child of a child inherits it."""
+    of each is its own (``_a_scratch_parent_of_its_own``). In every process that runs tests, so
+    an xdist worker's children get the worker's, and a child of a child inherits it.
+
+    Never in an xdist controller (``dsession``), which runs no test: its children are its
+    workers, started after this, and each resolves its own temporary folder as it imports
+    conftest, which pytest's basetemp for it and the guards' own folders are read from. Given the
+    controller's children's folder, a worker's basetemp was outside its own temporary folder, and
+    on a runner whose temporary folder is in its home every worker refused it as in the home
+    (run 45786114043)."""
+    if config.pluginmanager.hasplugin("dsession"):
+        return
     own = config._tmp_path_factory.getbasetemp() / "children-tmp"
     own.mkdir(parents=True, exist_ok=True)
     os.environ["TMPDIR"] = str(own)

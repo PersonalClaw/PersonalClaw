@@ -202,6 +202,60 @@ def test_a_child_a_test_starts_keeps_its_scratch_folders_under_the_runs_own_temp
     assert os.path.realpath(child.stdout.strip()).startswith(base + os.sep), child.stdout
 
 
+_A_WORKERS_TEMP = """
+import os
+import tempfile
+
+
+def test_a_workers_temp(tmp_path_factory):
+    own = os.path.realpath(tempfile.gettempdir())
+    base = os.path.realpath(tmp_path_factory.getbasetemp())
+    assert base.startswith(own + os.sep), f"the worker's basetemp {base} is outside its temp {own}"
+    children = os.path.realpath(os.environ["TMPDIR"])
+    assert children.startswith(base + os.sep), f"its children's temp {children} is not under it"
+"""
+
+
+def test_an_xdist_worker_keeps_the_runs_temporary_folder_and_its_children_get_its_own(tmp_path):
+    """A worker resolves its own temporary folder as it imports conftest, and pytest's basetemp for
+    it and the guards' own folders are read from it: the controller, which runs no test, gives its
+    workers the run's ``$TMPDIR`` as it was, and each worker gives its own children a folder under
+    its basetemp. 🔴 Red before: the controller set its children's folder before it started its
+    workers, so a worker's temporary folder was the controller's children's, its basetemp was
+    outside it, and on a runner whose temporary folder is in its home every worker refused its
+    basetemp as in the home (run 45786114043)."""
+    import nested_pytest
+
+    (tmp_path / "test_a_workers_temp.py").write_text(_A_WORKERS_TEMP, encoding="utf-8")
+    (tmp_path / "tmp").mkdir()
+    tests = str(Path(__file__).resolve().parent)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
+    env["PYTHONPATH"] = os.pathsep.join([tests, env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    env["TMPDIR"] = str(tmp_path / "tmp")
+    proc = subprocess.run(
+        [
+            *nested_pytest.argv(tmp_path / "tmp"),
+            "-o",
+            "addopts=",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "conftest",
+            "-q",
+            "--color=no",
+            "-n",
+            "1",
+            "test_a_workers_temp.py",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
+
+
 def test_the_gateways_sweep_runs_as_it_starts_and_stops(tmp):
     stale = _filled(run_bounds.scratch_dir("cron:nightly:run-1"))
     _aged(stale, 3)
