@@ -175,7 +175,7 @@
       - code: name
       - text: +
       - code: message
-      - text: "(what the automation should do). When it is to send the owner words they gave ('message me …: …', 'remind me …: …'), give them in"
+      - text: "(what the automation should do). The result lists its next runs: tell the owner when it will run, and any skipped day. When it is to send the owner words they gave ('message me …: …', 'remind me …: …'), give them in"
       - code: say
       - text: instead of
       - code: message
