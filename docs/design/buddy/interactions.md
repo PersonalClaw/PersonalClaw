@@ -7,13 +7,14 @@ routes: it adds no authority, and anything that acts needs an explicit click or 
 |---|---|---|---|---|---|---|
 | Pointer rests on the top-edge zone | peek | stays | — | — | — | — |
 | Pointer rests on the orb for `hoverExpand` | — | expanded | expanded | stays | a hover card with the line | stays |
-| Click on the orb | — | expanded | expanded | — | opens the card beside it | nothing; only its controls act |
+| Click on the orb | — | expanded | expanded | — | opens the card beside it, and closes it when open | on a floating orb, opens or closes the alert's card; only its controls act |
 | Drag the orb | — | undocks | undocks | undocks, card closed | moves | moves, carrying the alert |
 | Drop near the top centre | — | — | — | — | docks | docks, carrying the alert |
 | Right-click | — | the menu | the menu | the menu | the menu | the menu |
 | ⌘Enter (buddy focused) | — | — | — | — | — | approves the focused request; a broad-reach one asks to confirm first |
 | Enter (buddy focused) | — | — | — | — | — | opens a focused error; never approves |
 | Esc (buddy focused) | — | — | — | compact | closes the card | closes without deciding; the alert stays |
+| Click outside the buddy (buddy focused) | — | — | — | — | closes the card | the alert's card stays until its controls answer it |
 | Tab, Shift-Tab (buddy focused) | — | — | — | moves through the controls | moves through the controls | moves through the brief and controls |
 | Focus shortcut | expanded, focused | expanded, focused | expanded, focused | focused | the card, focused | the alert, focused |
 | Push-to-talk chord | listening | listening | listening | listening | listening | listening (the alert is held) |

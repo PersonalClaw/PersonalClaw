@@ -240,6 +240,14 @@ export function BuddyPage(_: RouteProps) {
   // Here, after the host's own effect, not in the doorbell: a child's effects run first, and a ring
   // held for the page is handed over the moment it listens.
   useEffect(() => bridge?.onOpenAlert?.(() => hostRef.current?.send({ type: 'click' })), [bridge])
+  // In the buddy's own window, a click outside it takes its focus away: an idle card closes (an
+  // alert's stays until its controls answer it).
+  useEffect(() => {
+    if (!bridge) return
+    const onBlur = () => hostRef.current?.send({ type: 'blur' })
+    window.addEventListener('blur', onBlur)
+    return () => window.removeEventListener('blur', onBlur)
+  }, [bridge])
   useEffect(() => {
     if (presentation) bridge?.setPresentation(presentation)
   }, [bridge, presentation])

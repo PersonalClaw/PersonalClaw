@@ -69,7 +69,16 @@ Keys are written for macOS: elsewhere ⌘ is Ctrl.
   buddy agrees with every other surface ([#3888]). The count of the others waiting is always
   visible.
 - A shown alert stays until it is answered here, answered elsewhere, expires or is withdrawn by its
-  work. No timer ever dismisses it.
+  work. No timer ever dismisses an approval or a question.
+- An error is a failure, not a question: it is withdrawn once its work has gone on (the same work
+  running again, or the chat it worked for running a turn begun after it failed, or ending one),
+  and only after it has been on screen for `finishedHold` without a break (hidden, behind listening,
+  with Buddy status off or sent back behind an approval or a question, its hold starts over), so
+  the owner sees every failure once. One that has
+  not shown yet waits for its turn. An approval or a question that arrives while an error shows
+  takes its place, and the error waits behind it.
+- On a floating orb an alert is a one-line bubble, and a click opens its card beside the orb, with
+  its controls (an error's Open and Dismiss among them).
 - Answering takes an explicit click on Allow, Deny, an option or Send, or ⌘Enter while the buddy
   window has keyboard focus and the request is the focused element. Esc closes without deciding,
   and Deny has no key of its own. A broad-reach approval (a delete, an overwrite outside the
@@ -140,7 +149,8 @@ pointer on it unfolds the state's words, which stay at least `badgeDwell`, and s
 5. Listening wins over every other state, and when it ends no queued alert has been lost or
    answered.
 6. Exactly one alert is shown at a time, and the shown alert never leaves except by being answered,
-   answered elsewhere, expiring or being withdrawn.
+   answered elsewhere, expiring or being withdrawn; a shown error also gives way to an approval or a
+   question that arrives, and waits behind it.
 7. While hidden, the buddy's renderer schedules no timer and no animation frame, samples no pointer
    position, and does no polling, media or audio work.
 8. Focus never moves between two pieces of live work except when the focused one ends or an alert

@@ -2293,6 +2293,10 @@ function createWindow({ show = true } = {}) {
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (!mainWindow.isVisible()) mainWindow.show();
+  // On macOS a window's focus() does not bring the app forward while another app is frontmost: the
+  // buddy, the menu bar and a notification each ask for this window from outside it, so the app
+  // takes the front itself, as the owner's click asked.
+  if (process.platform === "darwin") app.focus({ steal: true });
   mainWindow.focus();
 }
 
