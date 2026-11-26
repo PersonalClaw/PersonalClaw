@@ -212,15 +212,15 @@ def test_a_workers_temp(tmp_path_factory):
     base = os.path.realpath(tmp_path_factory.getbasetemp())
     assert base.startswith(own + os.sep), f"the worker's basetemp {base} is outside its temp {own}"
     children = os.path.realpath(os.environ["TMPDIR"])
-    assert children.startswith(base + os.sep), f"its children's temp {children} is not under it"
+    assert children == base, f"its children's temp {children} is not its basetemp"
 """
 
 
 def test_an_xdist_worker_keeps_the_runs_temporary_folder_and_its_children_get_its_own(tmp_path):
     """A worker resolves its own temporary folder as it imports conftest, and pytest's basetemp for
     it and the guards' own folders are read from it: the controller, which runs no test, gives its
-    workers the run's ``$TMPDIR`` as it was, and each worker gives its own children a folder under
-    its basetemp. 🔴 Red before: the controller set its children's folder before it started its
+    workers the run's ``$TMPDIR`` as it was, and each worker gives its own children its basetemp.
+    🔴 Red before: the controller set its children's folder before it started its
     workers, so a worker's temporary folder was the controller's children's, its basetemp was
     outside it, and on a runner whose temporary folder is in its home every worker refused its
     basetemp as in the home (run 45786114043)."""
@@ -247,6 +247,53 @@ def test_an_xdist_worker_keeps_the_runs_temporary_folder_and_its_children_get_it
             "1",
             "test_a_workers_temp.py",
         ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
+
+
+_A_NESTED_RUNS_TEMP = """
+import os
+import tempfile
+
+
+def test_a_nested_runs_temp(tmp_path_factory):
+    own = os.path.realpath(tempfile.gettempdir())
+    base = os.path.realpath(tmp_path_factory.getbasetemp())
+    assert base.startswith(own + os.sep), f"its basetemp {base} is outside its temp {own}"
+"""
+
+
+def test_a_pytest_a_test_starts_has_its_basetemp_in_its_own_temporary_folder(tmp_path):
+    """A test that starts a pytest of its own gives it a basetemp in the test's ``tmp_path``
+    (``nested_pytest``), and the child's temporary folder is the one this run gives its children:
+    the basetemp is in it, so the guard takes it as the nested run's own wherever the temporary
+    folder is. 🔴 Red before: the children's folder was one beside the tests' own, the nested run's
+    basetemp was outside it, and on a runner whose temporary folder is in its home every nested run
+    refused its basetemp as in the home (run 45813078059)."""
+    import nested_pytest
+
+    (tmp_path / "test_a_nested_runs_temp.py").write_text(_A_NESTED_RUNS_TEMP, encoding="utf-8")
+    tests = str(Path(__file__).resolve().parent)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
+    env["PYTHONPATH"] = os.pathsep.join([tests, env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
+    proc = subprocess.run(
+        nested_pytest.argv(
+            tmp_path,
+            "-o",
+            "addopts=",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "conftest",
+            "-q",
+            "--color=no",
+            "test_a_nested_runs_temp.py",
+        ),
         cwd=tmp_path,
         env=env,
         capture_output=True,
