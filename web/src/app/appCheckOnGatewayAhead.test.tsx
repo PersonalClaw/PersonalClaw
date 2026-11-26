@@ -99,6 +99,16 @@ describe('an older desktop app on a newer gateway', () => {
     expect(app.asked).toEqual([])
   })
 
+  it('leaves an app that reports a ready copy to its own rule, whatever version it says', async () => {
+    // Only the old shell, which reports no `ready`, is asked: an app that does checks a gateway ahead
+    // of it by itself, even one that says 0.3.7 or older (a development build, say).
+    gatewayOn('0.3.9')
+    const app = fakeApp(stands({ current: OLD_SHELL_UNTIL, ready: null }))
+    render(<AppCheckOnGatewayAhead />)
+    await settle()
+    expect(app.asked).toEqual([])
+  })
+
   it('goes once the gateway no longer serves windows of the app it is for', () => {
     // The gateway refuses windows of a desktop app older than this floor (`pair_refusals`). While it
     // still serves 0.3.7's, this stays; once the floor passes it, nothing needs it: delete it then.
