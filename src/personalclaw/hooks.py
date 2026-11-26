@@ -1398,7 +1398,8 @@ async def _side_by_side(
     *in_order* says keep their order one after another, in *hooks*' order, beside the rest, which
     run at once. Each hook's result comes back in *hooks*' order, whichever finished first. A copy
     takes the run's status and duration as its own; a run that raised is a result that did not run
-    (exit -1), and the next in order still runs. A stop ends every run under way and starts none."""
+    (exit -1), and the next in order still runs. A stop starts no run and ends every command under
+    way; a ``run-script`` hook's script runs on a worker thread, which runs to its own timeout."""
     groups: dict[str, list[ScriptHook]] = {}
     for hook in hooks:
         groups.setdefault(_the_same_run(hook), []).append(hook)
