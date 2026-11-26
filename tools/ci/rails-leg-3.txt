@@ -25,6 +25,7 @@ tests/rails/test_keychain_namespace_census.py
 tests/rails/test_merge_controller_gate_plants_tree.py
 tests/rails/test_model_reach_census_tree.py
 tests/rails/test_no_await_walks_shared_state_tree.py
+tests/rails/test_no_gate_reads_a_tool_family_tree.py
 tests/rails/test_no_security_log_write_holds_the_event_loop_tree.py
 tests/rails/test_one_request_body_reader.py
 tests/rails/test_only_the_sanitizer_reaches_the_safe_html_entry_tree.py

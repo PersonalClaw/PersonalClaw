@@ -4,16 +4,18 @@ One closed vocabulary, ``turns.Family``, sorts a call for every surface that say
 folded turn's sentence ("edited 3 files, ran 8 commands"), and the approval's. :func:`family_of`
 reads only the call's tool, its kind and its declaration, never a guess that widens anything:
 
-* PersonalClaw's own tools, by :data:`CORE_FAMILIES`, an exact lookup by name. A call an agent CLI
-  makes to one through the tool server it is handed is that tool's
-  (``acp.mcp_servers.core_tool_titled``). Each of core's own tools has a row, so a tool added
-  without one fails ``tests/test_tool_families.py``.
+* PersonalClaw's own tools, by :data:`CORE_FAMILIES`, an exact lookup by name: the native
+  built-ins, the tools of the apps it ships, and the tool server an agent CLI is handed. A call an
+  agent CLI makes to one through that server is that tool's (``acp.mcp_servers.core_tool_titled``).
+  Each of these tools has a row, and each row names one of them, so a tool added without a row,
+  or a row left behind by a renamed tool, fails ``tests/test_tool_families.py``.
 * A shell call (``task_modes.is_shell_invocation``) is a command.
 * An agent CLI's own tool, by the kind it declares (:data:`KIND_FAMILIES`).
-* Everything else, every MCP and app tool included, is ``other``.
+* Everything else, every MCP tool and every installed app's tool included, is ``other``.
 
 A family is words, never a gate: nothing decides whether a call runs, or asks, by it.
-:data:`PHRASES` gives each family's past tense, and :func:`phrase` says it for a count.
+:data:`PHRASES` gives each family's past tense, and :func:`phrase` says it for a count, one call
+in the singular ("read 1 file", "searched once").
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ _READ = (
     "glob",
     "grep",
     "repo_map",
+    "code_map",
+    "code_map_overview",
     "tool_result_get",
 )
 _EDIT = ("write_file", "edit_file", "sheet_create")
@@ -41,6 +45,7 @@ _SEARCH = (
     "chat_search",
     "skill_search",
     "task_search",
+    "ui_search",
 )
 _DELEGATE = ("subagent_run", "best_of_n")
 _SEND = ("notify", "notify_attachment", "post_to_inbox")
@@ -62,8 +67,9 @@ _OTHER = (
     "refiner_evidence",
     "dashboard_tile_propose",
     "prompt_render",
-    # The turn's own pacing and the owner's hooks.
+    # The turn's own pacing, a question to the owner and the owner's hooks.
     "wait",
+    "ask_user",
     "hook_register",
     "loop_nudge_stop",
     # Artifacts and what makes them.
@@ -79,6 +85,10 @@ _OTHER = (
     "deck_create",
     "document_formats",
     "visualize",
+    # The owner's calendar, and the design system's own pages.
+    "calendar_events",
+    "ui_list",
+    "ui_get",
     # Memory that changes, and triage.
     "memory_remember",
     "memory_forget",
@@ -160,8 +170,8 @@ def _all(names: tuple[str, ...], family: Family) -> dict[str, Family]:
     return dict.fromkeys(names, family)
 
 
-#: PersonalClaw's own tools, by name: the native built-ins, the native runtime's discovery tools
-#: and the tool server an agent CLI is handed.
+#: PersonalClaw's own tools, by name: the native built-ins, the native runtime's discovery tools,
+#: the tools of the apps it ships and the tool server an agent CLI is handed.
 CORE_FAMILIES: Mapping[str, Family] = MappingProxyType(
     {
         **_all(_READ, "read"),
@@ -219,10 +229,17 @@ def family_of(tool: str, tool_kind: str, declared: object, tool_input: object) -
     return KIND_FAMILIES.get((tool_kind or "").lower(), "other")
 
 
+#: A family whose one call is said without its count: ``searched once``, not ``searched 1 time``.
+ONCE: Mapping[Family, str] = MappingProxyType({"search": "once"})
+
+
 def phrase(family: Family, count: int) -> str:
-    """What *count* calls of *family* did, in the past tense: ``ran 8 commands``."""
+    """What *count* calls of *family* did, in the past tense: ``ran 8 commands``, ``read 1 file``,
+    ``searched once``."""
     verb, one, many = PHRASES[family]
+    if count == 1 and family in ONCE:
+        return f"{verb} {ONCE[family]}"
     return f"{verb} {count} {one if count == 1 else many}"
 
 
-__all__ = ["CORE_FAMILIES", "KIND_FAMILIES", "PHRASES", "family_of", "phrase"]
+__all__ = ["CORE_FAMILIES", "KIND_FAMILIES", "ONCE", "PHRASES", "family_of", "phrase"]
