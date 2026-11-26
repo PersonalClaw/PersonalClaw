@@ -2401,15 +2401,6 @@ def _register_builtin_probes() -> None:
     )
     register_probe(
         Probe(
-            "incident_history",
-            "security",
-            Tier.CAPABILITY,
-            _probe_incident_history,
-            "Every incident is kept in its history",
-        )
-    )
-    register_probe(
-        Probe(
             "durability.inventory",
             "durability",
             Tier.CAPABILITY,
@@ -2588,6 +2579,17 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_approval_mode,
             "Agents no chat started ask before they act",
+        )
+    )
+    # With the Security card's other checks: a card sits where its first check is registered, and
+    # this one, registered before Durability's, had moved the card from beside Sandbox to second.
+    register_probe(
+        Probe(
+            "incident_history",
+            "security",
+            Tier.CAPABILITY,
+            _probe_incident_history,
+            "Every incident is kept in its history",
         )
     )
     register_probe(

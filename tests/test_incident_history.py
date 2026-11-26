@@ -529,3 +529,21 @@ def test_a_fire_another_gate_refused_during_an_incident_counts_nothing(home, tmp
         "count": 1,
         "refs": ["trigger:clock:nightly"],
     }, "the incident's own refusal is"
+
+
+def test_the_incident_history_check_moves_no_doctor_card() -> None:
+    """Settings › Health draws a card where its capability's first check is registered. The
+    incident history check, registered ahead of Durability's, moved the Security card from beside
+    Sandbox to second on every home, all of its checks passing."""
+    from personalclaw.resilience import doctor
+
+    def cards(probes) -> list[str]:
+        order: list[str] = []
+        for probe in probes:
+            if probe.capability not in order:
+                order.append(probe.capability)
+        return order
+
+    probes = doctor.all_probes()
+    assert "incident_history" in [p.id for p in probes]
+    assert cards(probes) == cards([p for p in probes if p.id != "incident_history"])
