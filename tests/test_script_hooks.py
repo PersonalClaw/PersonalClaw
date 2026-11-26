@@ -604,6 +604,32 @@ class TestTheGatingSeamCombinesTheirAnswers:
         assert said.refused and not said.blocked
         assert said.error == "“late” did not answer in 1 s"
 
+    @pytest.mark.asyncio
+    async def test_a_hook_whose_run_raises_refuses_the_call_and_the_other_still_runs(
+        self, hook_store: ScriptHookStore, tmp_path: Path, monkeypatch
+    ):
+        """A run can raise before its command starts: a damaged action ceiling makes the provider's
+        dispatch raise, and that fails the call closed. Run side by side, the one that raised still
+        refuses the call as a hook that did not run, and the hook beside it ran."""
+        from personalclaw import hooks, pre_tool_hooks
+
+        ran = tmp_path / "ran.txt"
+        broken = _hook(hook_store, "broken", "echo never")
+        other = _hook(hook_store, "other", f"echo ran >> {ran}")
+        real = hooks.run_script_hook
+
+        async def run(hook, *args, **kwargs):
+            if hook.id == broken.id:
+                raise RuntimeError("the action ceiling could not be read")
+            return await real(hook, *args, **kwargs)
+
+        monkeypatch.setattr(hooks, "run_script_hook", run)
+        monkeypatch.setattr(pre_tool_hooks, "bound_hook_ids", lambda agent: [broken.id, other.id])
+        said = await pre_tool_hooks.on_tool("write_file", {}, agent=None, store=hook_store)
+        assert said.refused and not said.blocked
+        assert (said.refusal, said.error) == (pre_tool_hooks.HOOK_FAILED, "it did not run")
+        assert ran.read_text().splitlines() == ["ran"], "the hook beside it still ran"
+
 
 def test_a_hook_from_another_home_arrives_without_its_last_runs_duration() -> None:
     from personalclaw.hooks import HOOK_RUNTIME_FIELDS, hook_arrived_from_another_home
