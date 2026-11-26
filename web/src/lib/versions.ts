@@ -24,7 +24,7 @@ function parse(text: unknown): Parsed | null {
 }
 
 function orderKey(v: Parsed): number[] {
-  if (v.pre) return [...v.release, 1, ...v.pre, v.dev === null ? Infinity : v.dev]
+  if (v.pre) return [...v.release, 1, ...v.pre, v.post === null ? -1 : v.post, v.dev === null ? Infinity : v.dev]
   if (v.post !== null) return [...v.release, 3, v.post, v.dev === null ? Infinity : v.dev]
   if (v.dev !== null) return [...v.release, 0, v.dev]
   return [...v.release, 2]

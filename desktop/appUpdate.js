@@ -99,10 +99,11 @@ function parseVersion(text) {
   };
 }
 
-/** The key that orders *v*: `X.Y.Z.devN < X.Y.ZaN < X.Y.ZbN < X.Y.ZrcN < X.Y.Z < X.Y.Z.postN`, and a
+/** The key that orders *v*: `X.Y.Z.devN < X.Y.ZaN < X.Y.ZbN < X.Y.ZrcN < X.Y.Z < X.Y.Z.postN`, a
+ *  pre-release's own `.postN` after it and before the next one (`rc1 < rc1.post1 < rc2`), and a
  *  `.devN` of any of them just before it. */
 function orderKey(v) {
-  if (v.pre) return [...v.release, 1, ...v.pre, v.dev === null ? Infinity : v.dev];
+  if (v.pre) return [...v.release, 1, ...v.pre, v.post === null ? -1 : v.post, v.dev === null ? Infinity : v.dev];
   if (v.post !== null) return [...v.release, 3, v.post, v.dev === null ? Infinity : v.dev];
   if (v.dev !== null) return [...v.release, 0, v.dev];
   return [...v.release, 2];
