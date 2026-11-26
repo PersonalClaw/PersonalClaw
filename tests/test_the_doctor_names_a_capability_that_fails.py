@@ -94,6 +94,25 @@ async def test_the_doctor_names_the_capability_that_failed(tmp_path, built) -> N
 
 
 @pytest.mark.asyncio
+async def test_the_doctor_names_a_capability_that_cannot_run_on_this_machine(
+    tmp_path, built, monkeypatch
+) -> None:
+    """A capability the availability check found cannot run here is a fault the Doctor reports,
+    named with the check's reason, as a failed build is."""
+    why = "it needs an Apple Silicon Mac"
+    monkeypatch.setattr(
+        capability_switches, "_unavailable", lambda rec: why if rec.capability == "search" else ""
+    )
+    _install(tmp_path)
+    result = await _probe(tmp_path)
+    assert result.ok is False
+    lines = {c["id"]: c["status"] for c in result.evidence["apps"][APP]["capabilities"]}
+    assert lines == {"inbox": "running", "search": "unavailable", "sync": "running"}
+    assert "Search your mail" in result.detail and why in result.detail, result.detail
+    assert result.remedy
+
+
+@pytest.mark.asyncio
 async def test_a_capability_switched_off_reads_as_off_not_as_a_failure(tmp_path, built) -> None:
     _install(tmp_path)
     capability_switches.switch(APP, "sync", False)
