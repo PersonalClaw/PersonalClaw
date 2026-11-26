@@ -85,6 +85,19 @@ describe('the next runs under the When controls', () => {
     expect(h.asked[0]).toEqual({ count: 5, cron: '0 9 * * 1-5', timezone: '', skip_dates: ['2026-12-03'], strict_schedule: false })
   })
 
+  it('keeps its announcer inside a positioned box of its own, so 200% text cannot carry it past the frame', async () => {
+    // `sr-only` is absolute. With no positioned parent the announcer sat where the form would put it, and at
+    // 200% text that was past the app's frame, which then clipped (measured in the browser: the frame
+    // scrolled to exactly the announcer's bottom). jsdom has no layout, so this holds the box it needs.
+    const { container } = render(<ScheduleForm draft={weekday()} onChange={() => {}} />)
+    for (const phase of ['while it works them out', 'once they are shown']) {
+      const announcers = [...container.querySelectorAll('[aria-live="polite"].sr-only')]
+      expect(announcers.length, phase).toBeGreaterThan(0)
+      for (const a of announcers) expect(a.parentElement?.classList.contains('relative'), phase).toBe(true)
+      await settle()
+    }
+  })
+
   it('says the zone when it is not this browser’s', async () => {
     h.answer = () => Promise.resolve(preview({ zone: ZONE === 'Pacific/Chatham' ? 'Asia/Kolkata' : 'Pacific/Chatham' }))
     render(<ScheduleForm draft={weekday()} onChange={() => {}} />)

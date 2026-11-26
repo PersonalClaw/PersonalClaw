@@ -86,7 +86,10 @@ export function NextRuns({ body, cron, readOnly = false, onCadence }: {
 
   if (!hasCadence) return null
 
-  const live = <div aria-live="polite" className="sr-only">{announce}</div>
+  // The announcer sits in a positioned box of its own: `sr-only` is absolute, and with no positioned
+  // parent it lands where the form would put it at the page's scale, which at 200% text is past the
+  // app's frame, so the frame clipped (the matrix's 200% text-zoom step found it).
+  const live = <div className="relative"><div aria-live="polite" className="sr-only">{announce}</div></div>
   if (error && !asking) {
     // `InlineLoadError`'s look, with the sentence that says what failed: the gateway's own message
     // is about a request, and the owner asked when the schedule runs.
