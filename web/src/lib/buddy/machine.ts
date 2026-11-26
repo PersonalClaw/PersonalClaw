@@ -222,6 +222,8 @@ export function reduce(s: BuddyState, input: BuddyInput, now: number): Step {
     n.queue = dropped(n.queue, id)
     n.shown = null
     n.confirming = null
+    // A floating orb's card was the alert's: it closes with it.
+    if (!n.docked) n.card = null
     if (n.queue.length) {
       n.gap = true
       timer('alertGap')
@@ -247,6 +249,13 @@ export function reduce(s: BuddyState, input: BuddyInput, now: number): Step {
     n.queue = queued(n.queue, alert)
     if (n.shown) {
       if (!had) beat('countPop')
+      // An approval or a question takes a shown error's place: a failure is no answer, and nothing
+      // waiting on the owner may wait behind one. The error goes back in line behind it.
+      if (!had && alert.kind !== 'error' && shownAlert(n)?.kind === 'error' && !n.listening && !n.dragging) {
+        n.shown = alert.id
+        n.confirming = null
+        beat('alertEntrance')
+      }
       return
     }
     if (n.listening || n.muted || !n.enabled || n.gap) return
@@ -345,7 +354,8 @@ export function reduce(s: BuddyState, input: BuddyInput, now: number): Step {
         break
       }
       const alert = shownAlert(s)!
-      if (input.how !== 'answered') {
+      // An error is never answered elsewhere: its Dismiss, or its work going on, ends it with no line.
+      if (input.how !== 'answered' && alert.kind !== 'error') {
         n.leaving = { kind: input.how === 'expired' ? 'expired' : 'elsewhere', work: alert.work }
         beat('leave')
         timer('beat')
@@ -359,11 +369,14 @@ export function reduce(s: BuddyState, input: BuddyInput, now: number): Step {
     case 'key':
       if (event === 'answered' && s.shown) answer(s.shown, { kind: 'allow' }, false)
       else if (input.key === 'Escape') {
-        if (s.shown) n.confirming = null
-        else if (situation === 'expanded') {
+        if (s.shown) {
+          // Closes without deciding: the alert stays, a floating one as its bubble.
+          n.confirming = null
+          if (!s.docked) n.card = null
+        } else if (situation === 'expanded') {
           n.presence = nothingUnder(s)
           n.opened = null
-        }
+        } else if (s.card) n.card = null
       }
       break
     case 'connection':
@@ -419,7 +432,12 @@ export function reduce(s: BuddyState, input: BuddyInput, now: number): Step {
           timer('finishedHold', false)
           n.presence = 'expanded'
           break
-        case 'floating': if (input.type === 'click') n.card = 'open'; break
+        // A click opens the floating orb's card, and a click while it is open closes it.
+        case 'floating': if (input.type === 'click') n.card = s.card === 'open' ? null : 'open'; break
+        // A floating orb's alert is a one-line bubble: a click opens its card beside the orb, where
+        // its controls are, and closes it again (a docked one expanded as it arrived). No play, and
+        // nothing answers: the alert stays until its controls answer it.
+        case 'alert': if (input.type === 'click' && !s.docked) n.card = s.card === 'open' ? null : 'open'; break
         case 'sleeping':
           if (input.type === 'click') {
             n.presence = 'floating'
@@ -481,6 +499,11 @@ export function reduce(s: BuddyState, input: BuddyInput, now: number): Step {
         else n.presence = n.shown ? (n.quietHours ? 'peek' : 'expanded') : nothingUnder(n)
         if (n.shown && !n.docked) beat('alertEntrance')
       }
+      break
+    case 'blur':
+      // A click outside the buddy closes its idle card. An alert's card stays until its controls
+      // answer it, its Dismiss included, or Esc or a click on the orb closes it.
+      if ((situation === 'floating' || situation === 'sleeping') && s.card) n.card = null
       break
     case 'hide':
       n.muted = true
@@ -568,8 +591,11 @@ export function reduce(s: BuddyState, input: BuddyInput, now: number): Step {
   // Once no done beat holds it, the focus is the live work's (`focus.ts`).
   if (!n.finished) n.focus = keptFocus(n.focus, n.live)
 
-  // An open card folds on `collapse`; a floating orb with nothing live sleeps after `sleep`.
-  const folds = (x: BuddyState) => situationOf(x) === 'expanded' && !x.countdown
+  // An open card folds on `collapse`, a floating orb's open card included (it had no fold of its
+  // own, so a card opened on a floating orb stayed open); a floating orb with nothing live sleeps
+  // after `sleep`.
+  const folds = (x: BuddyState) =>
+    (situationOf(x) === 'expanded' && !x.countdown) || (situationOf(x) === 'floating' && x.card === 'open')
   if (folds(n) && !folds(s)) timer('collapse')
   if (!folds(n) && folds(s) && !n.countdown) timer('collapse', false)
   const dozes = (x: BuddyState) => situationOf(x) === 'floating' && !x.live.length && !x.card

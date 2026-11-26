@@ -129,6 +129,9 @@ export function alertOf(item: WaitingItem, workName: string, now: number): Alert
   }
 }
 
+/** A chat's own name, as a helper's row names the chat it works for (`session`, no `dashboard:`). */
+const chatName = (session: string): string => session.replace(/^dashboard:/, '')
+
 /** How a piece of work that left the running list ended, from its row among the endings. */
 function howOf(ended: RunningRow | undefined): 'done' | 'error' | 'stopped' {
   return ended?.phase === 'error' ? 'error' : ended?.phase === 'done' ? 'done' : 'stopped'
@@ -166,6 +169,13 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
   /** The request the last `answer` effect started, for the control that asked. */
   let sending: Promise<boolean> | null = null
   const replies = new Map<string, QuestionBody>()
+  /** Each error alert's work's chat (its ending row's `session`), and since when the error has been
+   *  on screen without a break: an error leaves once that work or its chat has gone on, and only
+   *  after it has been on screen for a `finishedHold`, so no failure is dropped unseen. */
+  const errorChat = new Map<string, string>()
+  const firstShown = new Map<string, number>()
+  const goneOn = new Set<string>()
+  let goneOnTimer: unknown = null
 
   const clear = (name: TimerName) => {
     if (timers.has(name)) deps.clearTimer(timers.get(name))
@@ -229,9 +239,19 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
     if (stopped || !possible(input)) return
     const step = reduce(machine, input, deps.now())
     machine = step.state
+    // A hold counts only unbroken time on screen: an alert hidden by the owner, behind listening, with
+    // Buddy status off, or sent back behind one that took its place starts over when it shows again.
+    const shownNow = machine.shown
+    const onScreen = shownNow !== null && machine.enabled && !machine.muted && !machine.listening
+    for (const id of [...firstShown.keys()]) if (!onScreen || id !== shownNow) firstShown.delete(id)
+    if (onScreen && shownNow !== null && !firstShown.has(shownNow)) firstShown.set(shownNow, deps.now())
     steps = keptSteps(stepsOnInput(steps, input), machine)
     for (const e of step.effects) run(e)
-    if (isHidden(machine)) for (const name of [...timers.keys(), ...waitingFolds]) clear(name)
+    if (isHidden(machine)) {
+      for (const name of [...timers.keys(), ...waitingFolds]) clear(name)
+      if (goneOnTimer !== null) deps.clearTimer(goneOnTimer)
+      goneOnTimer = null
+    }
   }
 
   const publish = () => {
@@ -260,6 +280,11 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
     for (const w of machine.live) {
       if (nextRows.has(w.id)) continue
       const end = ended.get(w.id)
+      if (howOf(end) === 'error' && end?.session) errorChat.set(`error:${w.id}`, chatName(end.session))
+      // A chat whose turn ends after one of its helpers failed has said the failure in its answer.
+      if (end?.kind === 'chat') {
+        for (const a of machine.queue) if (a.kind === 'error' && errorChat.get(a.id) === chatName(end.session || w.id)) goneOn.add(a.id)
+      }
       apply({ type: 'finish', id: w.id, how: howOf(end), reason: end?.line || undefined })
     }
     const nameOf = (work: string, item: WaitingItem) =>
@@ -291,6 +316,41 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
       if (a.kind === 'error' || nextItems.has(a.id)) continue
       const was = before.get(a.id)
       apply({ type: 'resolved', id: a.id, how: was && isStale(was, now) ? 'expired' : 'elsewhere' })
+    }
+    settleErrors(now)
+  }
+
+  /** An error alert whose work has gone on (the same work running again, or the chat it worked for
+   *  running a turn begun after it failed, or ending one) leaves once it has shown for a
+   *  `finishedHold`; one not shown yet waits for its turn, so the owner always sees it once. A
+   *  re-read is asked for when the first such hold ends. */
+  const settleErrors = (now: number) => {
+    const live = [...rows.values()]
+    let soonest = Infinity
+    for (const a of machine.queue) {
+      if (a.kind !== 'error') continue
+      const chat = errorChat.get(a.id)
+      const again = rows.has(a.workId)
+        || (chat !== undefined && live.some((r) => r.kind === 'chat' && chatName(r.session || r.work) === chat && epoch(r.started_at, 0) > a.raisedAt))
+      if (again) goneOn.add(a.id)
+      if (!goneOn.has(a.id)) continue
+      const shown = firstShown.get(a.id)
+      if (shown === undefined) continue
+      const due = shown + TIMINGS.finishedHold
+      if (now >= due) apply({ type: 'resolved', id: a.id, how: 'withdrawn' })
+      else soonest = Math.min(soonest, due)
+    }
+    const inQueue = new Set(machine.queue.map((a) => a.id))
+    for (const id of [...firstShown.keys()]) if (!inQueue.has(id)) firstShown.delete(id)
+    for (const id of [...errorChat.keys()]) if (!inQueue.has(id) && !machine.live.some((w) => `error:${w.id}` === id)) errorChat.delete(id)
+    for (const id of [...goneOn]) if (!inQueue.has(id)) goneOn.delete(id)
+    if (goneOnTimer !== null) deps.clearTimer(goneOnTimer)
+    goneOnTimer = null
+    if (soonest < Infinity && !isHidden(machine)) {
+      goneOnTimer = deps.setTimer(() => {
+        goneOnTimer = null
+        ring()
+      }, Math.max(0, soonest - now))
     }
   }
 
@@ -388,10 +448,12 @@ export function createBuddyHost(deps: HostDeps, onChange: (s: HostSnapshot) => v
       publish()
     },
     snapshot: () => ({ machine, steps, rows, items, beats, read: readOnce }),
-    timers: () => timers.size,
+    timers: () => timers.size + (goneOnTimer === null ? 0 : 1),
     stop() {
       stopped = true
       for (const name of [...timers.keys()]) clear(name)
+      if (goneOnTimer !== null) deps.clearTimer(goneOnTimer)
+      goneOnTimer = null
     },
   }
 }

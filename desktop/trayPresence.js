@@ -444,11 +444,15 @@ function endedLabel(r, { word, line } = {}) {
  * @param {object} opts
  * @param {object} opts.presence `summarizePresence()`, carried by `carryPresence()`
  * @param {{supported: boolean, enabled: boolean}} opts.loginItem
- * @param {{enabled: boolean, hidden?: boolean}} [opts.buddy] whether the buddy's window is on for this
- *        machine (#3831), and whether its owner hid it for a while (#3832)
+ * @param {{enabled: boolean, hidden?: boolean, available?: boolean}} [opts.buddy] whether the buddy's
+ *        window is on for this machine (#3831), whether its owner hid it for a while (#3832), and
+ *        whether it can show here at all (false: no gateway of this computer's is in use)
  * @param {{capturing?: boolean, restarting?: boolean}} [opts.flags] what the state's words read
  * @param {object} opts.actions open/deepLink/quickCapture/toggleBuddy/hideBuddy/showBuddyNow/toggleLoginItem/quit
  */
+/** The row under a Show Buddy that can't show: no gateway of this computer's is in use. */
+const BUDDY_NOT_HERE = "Buddy shows only with this computer's gateway";
+
 function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { supported: false, enabled: false }, buddy = { enabled: false }, flags = {}, actions = {} } = {}) {
   const { waiting, waitingRows, running, finished, interrupted, listed, stale } = { ...EMPTY_PRESENCE, ...presence };
   const noop = () => {};
@@ -503,18 +507,23 @@ function buildTrayMenuTemplate({ presence = EMPTY_PRESENCE, loginItem = { suppor
     { label: "Open PersonalClaw", click: () => open() }
   );
 
+  // The buddy is this computer's gateway's page, rung by its doorbell: with no gateway of this
+  // computer's in use (`buddy.available` false, a window on a paired gateway only), the checkbox
+  // says why it can't show rather than flipping a status nothing here can show.
+  const buddyHere = buddy.available !== false;
   template.push(
     { type: "separator" },
     {
       // Buddy status, for this machine: the buddy's own window, off until the owner turns it on.
       label: "Show Buddy",
       type: "checkbox",
-      checked: Boolean(buddy.enabled),
+      checked: buddyHere && Boolean(buddy.enabled),
+      enabled: buddyHere,
       click: (menuItem) => toggleBuddy(menuItem ? Boolean(menuItem.checked) : !buddy.enabled),
     },
     // Hiding it, for a while: the buddy shows nothing but its listening face until then, and the
     // menu bar keeps counting (#3832).
-    ...(!buddy.enabled ? [] : buddy.hidden
+    ...(!buddyHere ? [{ label: BUDDY_NOT_HERE, enabled: false }] : !buddy.enabled ? [] : buddy.hidden
       ? [{ label: "Show Buddy Now", click: () => showBuddyNow() }]
       : [
           { label: "Hide Buddy for an Hour", click: () => hideBuddy("hour") },
@@ -583,6 +592,8 @@ function trayImageFile(platform) {
  * @param {() => boolean} [deps.isDark] the system's appearance (`nativeTheme.shouldUseDarkColors`)
  * @param {{setIcon: Function}} [deps.dock] Electron's `app.dock`, on macOS only
  * @param {string} [deps.appIconPath] the app's own icon, which the dock goes back to
+ * @param {() => boolean} [deps.buddyAvailable] whether a gateway of this computer's is in use, so the
+ *        buddy can show here (`localGatewayUrl`); Show Buddy says why it can't while it is false
  * @param {(msg: string) => void} [deps.log]
  */
 function makeTrayPresence({
@@ -595,6 +606,7 @@ function makeTrayPresence({
   isDark = () => false,
   dock = null,
   appIconPath = null,
+  buddyAvailable = () => true,
   log = () => {},
 } = {}) {
   let tray = null;
@@ -711,7 +723,7 @@ function makeTrayPresence({
     if (!tray) return;
     try {
       const flags = { capturing, restarting };
-      const template = buildTrayMenuTemplate({ presence, loginItem: loginItemState, buddy: buddyState, flags, actions });
+      const template = buildTrayMenuTemplate({ presence, loginItem: loginItemState, buddy: { ...buddyState, available: Boolean(buddyAvailable()) }, flags, actions });
       tray.setContextMenu(MenuCtor.buildFromTemplate(template));
       tray.setTitle(composeTrayTitle({ capturing, waiting: presence.waiting, buddyOn: buddyState.tray }));
       tray.setToolTip(composeTrayTooltip({ capturing, ...presence, buddyOn: buddyState.tray, restarting }));
@@ -800,6 +812,7 @@ module.exports = {
   composeTrayTitle,
   composeTrayTooltip,
   buildTrayMenuTemplate,
+  BUDDY_NOT_HERE,
   shouldHideOnClose,
   shouldQuitOnAllWindowsClosed,
   makeTrayPresence,

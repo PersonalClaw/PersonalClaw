@@ -66,6 +66,8 @@ export type BuddyInput =
   // The desktop shell.
   | { type: 'pointer'; at: 'zone' | 'orb' | 'away' }
   | { type: 'click' } | { type: 'hits' }
+  /** The buddy's window lost the focus: a click outside it. */
+  | { type: 'blur' }
   | { type: 'drag'; phase: 'start' | 'end'; docked?: boolean }
   | { type: 'away' } | { type: 'return' }
   // The owner's controls. An answer comes only from an explicit click on its control, or a key.

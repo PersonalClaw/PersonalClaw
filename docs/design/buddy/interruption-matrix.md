@@ -127,10 +127,10 @@ Every cell below ships in v0.3.0.
 
 | Event | Outcome |
 |---|---|
-| Work starts | the alert stays; the in-sight count grows |
+| Work starts | the alert stays; the in-sight count grows. An error whose work runs again, or whose chat runs a turn begun after it failed, leaves once it has shown for finishedHold |
 | The focused work changes phase | the alert stays (its work is waiting on the owner) |
 | Other work changes phase | the alert stays; only the in-sight line changes |
-| An alert arrives | queued behind it, in the waiting list's order (consequence, then age); the waiting count pops once |
+| An alert arrives | queued behind it, in the waiting list's order (consequence, then age); the waiting count pops once. An approval or a question that arrives while an error shows takes its place, and the error waits behind it |
 | The shown alert is answered here | the answer beat (nod for yes, a small shake for no), then the next alert after alertGap, else what was under it |
 | The shown alert is answered elsewhere, expires or is withdrawn | it leaves with an 'answered elsewhere' line for one beat (or `<work>: the request expired` when it expired), then the next alert or what was under it |
 | The focused work finishes | the alert stays; done work joins the in-sight row only |
@@ -140,7 +140,7 @@ Every cell below ships in v0.3.0.
 | Listening starts | listening holds the alert (never answers it); it returns when listening ends |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | no change |
-| A click on the orb | no play during an alert; only its controls act |
+| A click on the orb | no play during an alert; only its controls act, and on a floating orb a click opens the alert's card beside it, where they are, and closes it again |
 | Quick repeated hits on the orb | nothing: no play during an alert |
 | The owner goes idle for absence | the alert stays (alerts are sticky) |
 | The owner returns | the alert is still there |
@@ -188,7 +188,7 @@ Every cell below ships in v0.3.0.
 | Listening starts | listening |
 | Listening ends | cannot occur here |
 | The pointer rests on it for hoverExpand | a hover card with the line and the in-sight count |
-| A click on the orb | the card opens beside the orb |
+| A click on the orb | the card opens beside the orb, and a click while it is open closes it |
 | The owner goes idle for absence | sleeping (dozing: still and dimmed), never hidden |
 | The owner returns | cannot occur here |
 | No interaction for collapse | the open card closes; the orb stays |

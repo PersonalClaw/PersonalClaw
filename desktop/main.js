@@ -63,6 +63,8 @@ const {
   confirmEndpoint,
   rememberLocalGateway,
   forgetEndpoint,
+  isThisHomesGateway,
+  foldIntoThisComputer,
   switchTo,
   probeEndpoint,
   probeAll,
@@ -2291,6 +2293,10 @@ function createWindow({ show = true } = {}) {
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (!mainWindow.isVisible()) mainWindow.show();
+  // On macOS a window's focus() does not bring the app forward while another app is frontmost: the
+  // buddy, the menu bar and a notification each ask for this window from outside it, so the app
+  // takes the front itself, as the owner's click asked.
+  if (process.platform === "darwin") app.focus({ steal: true });
   mainWindow.focus();
 }
 
@@ -2365,6 +2371,8 @@ const trayPresence = makeTrayPresence({
   isDark: () => nativeTheme.shouldUseDarkColors,
   dock: process.platform === "darwin" ? app.dock : null,
   appIconPath: path.join(__dirname, "icon.png"),
+  // The buddy is this computer's gateway's page: with none in use, Show Buddy says why it can't show.
+  buddyAvailable: () => Boolean(localGatewayUrl),
   log: (msg) => console.warn(`tray: ${msg}`),
   actions: {
     open: () => showMainWindow(),
@@ -2815,6 +2823,11 @@ function connectHandlers() {
     confirm: async ({ input, label }) => {
       const plan = await prepareEndpoint(input);
       if (!plan.ok) return plan;
+      // This home's own gateway, typed as an address or pasted as a pairing link: no paired row.
+      if (await useAsThisComputer(plan.origin, mainWindow)) {
+        connectDialog.close();
+        return { ok: true, id: LOCAL_ENDPOINT_ID, origin: localGatewayUrl, navigateTo: localGatewayUrl };
+      }
       const { id } = confirmEndpoint(shellStore, plan, { label });
       syncPaired();
       startupWarnings = [];
@@ -2826,6 +2839,11 @@ function connectHandlers() {
       // Resolve the row's host BEFORE deciding, so the confirmation's host-moved check has
       // something to compare against. Passing nothing here skips that check silently.
       const row = loadRegistry(shellStore).endpoints.find((e) => e.id === id);
+      // A paired row that is this home's own gateway opens as This computer, and folds into it.
+      if (row && row.id !== LOCAL_ENDPOINT_ID && row.kind !== "local" && (await useAsThisComputer(row.base_url, mainWindow))) {
+        connectDialog.close();
+        return { ok: true, id: LOCAL_ENDPOINT_ID };
+      }
       const fingerprint = row && row.kind !== "local" ? await currentFingerprintFor(row.base_url) : "";
       const result = switchTo(shellStore, id, { localBaseUrl: localGatewayUrl || "", currentFingerprint: fingerprint });
       if (!result.ok) {
@@ -3002,6 +3020,42 @@ async function useRunningHere() {
   const used = await useRunningGateway();
   if (used.ok && !hadGateway) await setUpFirstGateway();
   return used;
+}
+
+/**
+ * *origin*, a gateway address saved as a paired gateway or typed in the Gateways window, when it is
+ * this home's own gateway (`isThisHomesGateway`): used as this computer's, so its window has the
+ * app's bridge, the buddy and the app's own update, and every paired row of it folds into This
+ * computer (`foldIntoThisComputer`). The gateway this app started or already uses is switched to;
+ * one it found running is used as Use It uses it (`useRunningHere`: proven and signed in to on the
+ * way, and refused when it is older than the app or has no window door). Resolves whether *win* is
+ * now on this computer's gateway; false leaves *origin* to be opened as the paired gateway it was
+ * saved as.
+ */
+async function useAsThisComputer(origin, win) {
+  let port = 0;
+  try {
+    port = Number(new URL(String(origin)).port || 80);
+  } catch {
+    return false;
+  }
+  // A remote address, or not plain http, is never this home's gateway: nothing is looked for.
+  if (!isThisHomesGateway(origin, port)) return false;
+  if (localGatewayUrl) {
+    if (!isThisHomesGateway(origin, Number(new URL(localGatewayUrl).port))) return false;
+  } else {
+    const found = await findHomeGateway();
+    if (!found.ok || !isThisHomesGateway(origin, found.gateway.port)) return false;
+    const used = await useRunningHere();
+    if (!used.ok || !localGatewayUrl) return false;
+  }
+  const folded = foldIntoThisComputer(shellStore, Number(new URL(localGatewayUrl).port));
+  syncPaired();
+  const result = switchTo(shellStore, LOCAL_ENDPOINT_ID, { localBaseUrl: localGatewayUrl });
+  if (!result.ok) return false;
+  console.log(`desktop: ${origin} is this home's own gateway, so it is used as this computer's${folded.length ? ` (${folded.length} paired row folded into This computer)` : ""}`);
+  startupWarnings = [];
+  return navigateToEndpoint(win, result.navigateTo, { isLocal: true });
 }
 
 /** The first gateway the windows have, set up as the app's start sets one up. */
@@ -4011,7 +4065,9 @@ if (!app.requestSingleInstanceLock()) {
       activeRow && activeRow.kind !== "local" ? await currentFingerprintFor(activeRow.base_url) : "";
     const startup = describeStartup({ store: shellStore, currentFingerprint: activeFingerprint });
     startupWarnings = startup.warnings || [];
-    if (startup.mode === "connect") {
+    if (startup.mode === "connect" && (await useAsThisComputer(startup.origin, win))) {
+      // This home's own gateway, saved as a paired one: the window is on it as this computer's.
+    } else if (startup.mode === "connect") {
       console.log(`connecting to a paired gateway: ${startup.origin} (${startup.trust})`);
       await navigateToEndpoint(win, startup.origin, { isLocal: false });
     } else {
