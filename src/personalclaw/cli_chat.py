@@ -17,6 +17,13 @@ approvals go to list it and answer it, and the terminal says what is waiting and
 The agent works in the gateway, not in this process, so letting go of the terminal would leave
 it working. A Ctrl-C during a turn stops the turn in the gateway too.
 
+A chat opens as a New chat does unless its flags say otherwise: ``--agent`` and ``--project``
+(by its name or its id) go in the create body, ``--session`` names a chat to go on with (a chat's
+own name, so it is attended, never ``run``'s ``inbound:cli:``), and ``--cwd`` is set through the
+chat's folder route (``POST /api/chat/sessions/{key}/workspace-dir``) right after it opens and
+before its first message, so a folder the route refuses ends the command with its reason and no
+message sent. With no ``--cwd`` the chat works where a New chat does, never the shell's folder.
+
 With no gateway of this home running there is no chat to talk to: it says so, with the command
 that starts one, and exits 1. A port named that is not where this home's gateway answers is
 refused the same way, and nothing is sent to it.
@@ -25,8 +32,12 @@ refused the same way, and nothing is sent to it.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import time
+import urllib.parse
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from personalclaw import cli_run, home_gateway
@@ -69,6 +80,36 @@ def config_path():
     return config_loader.config_path()
 
 
+@dataclass(frozen=True)
+class _Opening:
+    """What a chat is opened with, as ``chat``'s flags name it: each empty when not named, so a
+    chat opens as the dashboard's New chat does. *folder* is absolute, as typed from the shell's
+    folder; *project* is a project's name or its id."""
+
+    model: str = ""
+    agent: str = ""
+    project: str = ""
+    folder: str = ""
+    name: str = ""
+
+
+class _NotOpened(RunError):
+    """The chat was not opened as its flags asked (a project no name or id finds, a name the
+    gateway refuses, a folder its route refuses), so no message is sent and the command ends."""
+
+
+def _chat_name_refusal(name: str) -> str:
+    """Why ``--session`` cannot name *name*, or ``""``: a chat's name is letters, digits, ``-``,
+    ``_`` and ``.``, at least one a letter or digit. So it never takes ``run``'s ``inbound:cli:``
+    form, nor another kind's, nor goes in the chat's routes as a path of its own."""
+    if all(c.isalnum() or c in "-_." for c in name) and any(c.isalnum() for c in name):
+        return ""
+    return (
+        f"--session {name!r}: a chat's name holds only letters, digits, '-', '_' and '.', "
+        "and at least one letter or digit."
+    )
+
+
 def _chat(args) -> None:
     """``personalclaw chat`` — dispatched from ``cli.main``."""
     raise SystemExit(_chat_main(args))
@@ -82,19 +123,30 @@ def _chat_main(args) -> int:
     if message is not None and not message.strip():
         print("personalclaw chat: -m/--message must be a non-empty message.", file=sys.stderr)
         return 2
+    name = (getattr(args, "session", None) or "").strip()
+    if name and (refusal := _chat_name_refusal(name)):
+        print(f"personalclaw chat: {terminal_text(refusal)}", file=sys.stderr)
+        return 2
+    folder = getattr(args, "cwd", None) or ""
+    opening = _Opening(
+        model=getattr(args, "model", None) or "",
+        agent=(getattr(args, "agent", None) or "").strip(),
+        project=(getattr(args, "project", None) or "").strip(),
+        folder=os.path.abspath(os.path.expanduser(folder)) if folder.strip() else "",
+        name=name,
+    )
 
     try:
         gateway = home_gateway.reach(getattr(args, "port", None))
     except home_gateway.GatewayError as exc:
         print(f"personalclaw chat: {terminal_text(str(exc))}", file=sys.stderr)
         return 1
-    model = getattr(args, "model", None) or ""
     sign_in = _SignIn(gateway)
     try:
         sign_in.token()  # the gateway is asked to sign this chat in before anything else
         if message is None:
-            return _interactive(sign_in, model)
-        key = _open_chat(sign_in, model)
+            return _interactive(sign_in, opening)
+        key = _open_chat(sign_in, opening)
         return 0 if _say(sign_in, key, message.strip()) == "complete" else 1
     except RunError as exc:
         _failed(sign_in, exc)
@@ -135,21 +187,69 @@ class _SignIn:
         return self._token
 
 
-def _open_chat(sign_in: _SignIn, model: str) -> str:
-    """Open a chat in the gateway, as the dashboard's New chat does, and return its key. *model*
-    is the model for this chat; empty, the chat model bound in Settings → Models."""
-    created = cli_run._api(
-        sign_in.port, sign_in.token(), "/api/chat/sessions", {"model": model} if model else {}
-    )
+def _open_chat(sign_in: _SignIn, opening: _Opening) -> str:
+    """Open a chat in the gateway, as the dashboard's New chat does, and return its key: on the
+    model, agent and project *opening* names (empty, the ones a New chat gets), or the kept chat
+    its name names, then moved to its folder. Raises :class:`_NotOpened` when the gateway refuses
+    what was named, and nothing is sent to the chat."""
+    project_id = _project_id(sign_in, opening.project) if opening.project else ""
+    body = {
+        field: value
+        for field, value in (
+            ("model", opening.model),
+            ("agent", opening.agent),
+            ("project_id", project_id),
+            ("name", opening.name),
+        )
+        if value
+    }
+    try:
+        created = cli_run._api(sign_in.port, sign_in.token(), "/api/chat/sessions", body)
+    except cli_run.RouteRefused as exc:
+        raise _NotOpened(f"The chat was not opened: {exc.reason}") from exc
     key = str(created.get("key") or "")
     if not key:
         raise RunError("the gateway opened no chat")
+    if opening.folder:
+        path = f"/api/chat/sessions/{urllib.parse.quote(key, safe='')}/workspace-dir"
+        try:
+            cli_run._api(sign_in.port, sign_in.token(), path, {"workspace_dir": opening.folder})
+        except cli_run.RouteRefused as exc:
+            raise _NotOpened(
+                f"The chat can't work in {opening.folder}: {exc.reason}. No message was sent."
+            ) from exc
     return key
 
 
-def _interactive(sign_in: _SignIn, model: str) -> int:
+def _project_id(sign_in: _SignIn, named: str) -> str:
+    """The id of the project *named* names: the one with that id, else the one with that name, else
+    the one whose name it is but for case. Raises :class:`_NotOpened` for none, and for a name two
+    or more projects share, with their ids, so the owner can name one."""
+    listed = cli_run._api(sign_in.port, sign_in.token(), "/api/projects")
+    projects = [p for p in listed.get("projects") or [] if isinstance(p, dict)]
+    if any(str(p.get("id") or "") == named for p in projects):
+        return named
+    exact: Callable[[str], str] = str.strip
+    for same in (exact, lambda name: name.strip().casefold()):
+        ids = [
+            str(p.get("id") or "")
+            for p in projects
+            if same(str(p.get("name") or "")) == same(named)
+        ]
+        if len(ids) == 1:
+            return ids[0]
+        if ids:
+            raise _NotOpened(
+                f"{len(ids)} projects are named {named!r} ({', '.join(ids)}). "
+                "Name the one you mean by its id: --project ID."
+            )
+    raise _NotOpened(f"No project is named {named!r} or has that id.")
+
+
+def _interactive(sign_in: _SignIn, opening: _Opening) -> int:
     """Each line you type is the next turn of one chat. The chat is opened by your first message,
-    so a prompt left without one leaves no empty chat in the dashboard's list."""
+    so a prompt left without one leaves no empty chat in the dashboard's list. A chat that could
+    not be opened as its flags asked (:class:`_NotOpened`) ends the chat, with why."""
     print(BANNER)
     print(DATA_WARNING)
     print()
@@ -167,8 +267,11 @@ def _interactive(sign_in: _SignIn, model: str) -> int:
             print("Bye!")
             return 0
         try:
-            key = key or _open_chat(sign_in, model)
+            key = key or _open_chat(sign_in, opening)
             _say(sign_in, key, message)
+        except _NotOpened as exc:
+            _failed(sign_in, exc)
+            return 1
         except RunError as exc:
             _failed(sign_in, exc)
         print()

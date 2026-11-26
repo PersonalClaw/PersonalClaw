@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **`personalclaw chat` opens on the folder, agent, project or named chat you give it: `--cwd DIR` (set before your first message; a folder the gateway refuses ends the command with its reason, and nothing is sent), `--agent NAME`, `--project` by its name or id, and `--session NAME` to go on with a chat.**
+
 ### Fixed
 
 - **A chat's permission and task mode controls show the mode it runs in when it was set elsewhere: a pick in another tab or on another device, or YOLO turned on, off or running out. An open chat's Execution Boundary reads its sandbox again once a switch of its agent has been taken, and a project's start box never shows a permission mode this computer's operator settings would refuse: it keeps Normal and says why.**

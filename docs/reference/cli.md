@@ -193,6 +193,10 @@ tools, and it stays in the dashboard's chat list, where you can go on with it.
 | *(no flags)* | Chat until you type `exit` (or `quit`) or press Ctrl+D. Your first message opens the chat. |
 | `-m, --message TEXT` | Send one message, print its reply, and exit. An empty or whitespace-only message is refused (exit 2). |
 | `--model NAME` | Model for this chat (default: the chat model bound in Settings → Models & Providers → Models). |
+| `--agent NAME` | Agent to chat with, an agent CLI's included (default: your default agent). |
+| `--project PROJECT` | Project to open the chat in, by its name or its id. A name two projects share is refused with both ids (exit 1). |
+| `--session NAME` | Go on with the chat named `NAME`, or open it under that name the first time. It is an attended chat like any other, never one of `run`'s. A name holds letters, digits, `-`, `_` and `.` (anything else: exit 2). |
+| `--cwd DIR` | Folder the chat works in, set as the chat opens and before your first message (`--cwd .` for the shell's folder). A folder the gateway refuses (not a folder, or a sensitive path) ends the command with its reason and no message sent (exit 1). Without it the chat works where a New chat does. |
 | `--port PORT` | Port of this home's gateway (default: the port it recorded when it started; `PERSONALCLAW_PORT` names one too). A gateway there that is not this home's is refused. |
 
 The reply streams to stdout. A call that asks for approval waits for your answer as it does
@@ -211,8 +215,9 @@ this home), and exits 1. Like `run`, it must share that gateway's `PERSONALCLAW_
 signs in with the home's local secret.
 
 Exit code is `0` when the message's turn completed (or you left the interactive chat), `1`
-when no gateway is running, the turn did not complete (it failed or was stopped) or the
-connection to the gateway failed, and `2` for an empty `-m`.
+when no gateway is running, the chat could not be opened as its flags asked (a project no name
+or id finds, a folder refused), the turn did not complete (it failed or was stopped) or the
+connection to the gateway failed, and `2` for an empty `-m` or a `--session` name it can't take.
 
 ## `personalclaw run`
 
