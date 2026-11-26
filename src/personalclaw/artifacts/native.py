@@ -266,17 +266,25 @@ class NativeArtifactProvider(ArtifactProvider):
         falls back to the artifact's own saved copy. *places* are
         ``source_files.places()`` when the caller already resolved them.
         """
+        return self._read_source_path(source_path, places)[0]
+
+    def _read_source_path(
+        self, source_path: str, places: Sequence[str] | None = None
+    ) -> tuple[str | None, str]:
+        """:meth:`_try_read_source_path`'s text, and why it is None
+        (``Artifact.source_unfollowed``): ``outside`` for a refused pointer, ``missing`` for no
+        regular file, ``unreadable``."""
         admitted = source_files.admitted(source_path, places)
         if admitted is None:
-            return None
+            return None, "outside"
         resolved = Path(admitted)
         if not resolved.is_file():
-            return None
+            return None, "missing"
         try:
             with open(resolved, "r", encoding="utf-8", errors="replace") as f:
-                return f.read(MAX_CONTENT_BYTES + 1)[:MAX_CONTENT_BYTES]
+                return f.read(MAX_CONTENT_BYTES + 1)[:MAX_CONTENT_BYTES], ""
         except (OSError, ValueError):
-            return None
+            return None, "unreadable"
 
     def _try_write_source_path(self, source_path: str, content: str) -> bool:
         """Write back to a file-backed artifact's source path.
@@ -285,18 +293,25 @@ class NativeArtifactProvider(ArtifactProvider):
         targets an existing file) and re-checks the pointer first, as the read does.
         Returns False (degrade to snapshot-only) on any failure.
         """
+        return not self._write_source_path(source_path, content)
+
+    def _write_source_path(self, source_path: str, content: str) -> str:
+        """:meth:`_try_write_source_path`, answering why the file was not written
+        (``Artifact.source_unwritten``): ``outside``, ``missing`` or ``unwritable``; "" when it was.
+        A save keeps its body as the artifact's own copy either way, so the answer is what tells
+        the owner the file did not change."""
         admitted = source_files.admitted(source_path)
         if admitted is None:
-            return False
+            return "outside"
         resolved = Path(admitted)
         if not resolved.is_file():
-            return False  # never create
+            return "missing"  # never create
         try:
             atomic_write(resolved, content[:MAX_CONTENT_BYTES])
-            return True
+            return ""
         except (OSError, ValueError):
             logger.warning("artifact source_path write failed: %s", resolved, exc_info=True)
-            return False
+            return "unwritable"
 
     # ── meta / version I/O ──
 
@@ -356,13 +371,15 @@ class NativeArtifactProvider(ArtifactProvider):
         because a body save's precondition (``update(expect_revision=…)``) must be compared
         against exactly what the read it was built from showed. *places* as
         :meth:`_try_read_source_path` takes them; *sensitive* and *root* as :meth:`_read_meta`
-        takes them, for ``current.html``.
+        takes them, for ``current.html``. Records on *art* why its file could not be followed
+        (``source_unfollowed``), so the read says the body it shows is the saved copy.
         """
         if is_binary_kind(art.kind):
             return self._raw_ref(art.slug, art.version)
-        live = self._try_read_source_path(art.source_path, places) if art.source_path else None
-        if live is not None:
-            return live
+        if art.source_path:
+            live, art.source_unfollowed = self._read_source_path(art.source_path, places)
+            if live is not None:
+                return live
         return self._current_content(art.slug, sensitive=sensitive, root=root)
 
     def _version_content(self, slug: str, version: int) -> str | None:
@@ -712,6 +729,14 @@ class NativeArtifactProvider(ArtifactProvider):
             art.live_dirty = self._live_dirty(live, latest_snap)
             return art
 
+    def _saved_answer(self, slug: str, saved: Artifact) -> Artifact | None:
+        """What a save of *slug* answers: the live read, as :meth:`get`, with whether the save
+        reached the file its link names (``source_unwritten``, which *saved* carries)."""
+        answer = self.get(slug)
+        if answer is not None:
+            answer.source_unwritten = saved.source_unwritten
+        return answer
+
     def raw_bytes(self, slug: str, *, version: int | None = None) -> tuple[bytes, str] | None:
         """Return ``(data, mime)`` for a binary artifact's body, or None.
 
@@ -927,7 +952,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 d = self._artifact_dir(slug)
                 self._write_text(d / "current.html", content)
                 if art.source_path:
-                    self._try_write_source_path(art.source_path, content)
+                    art.source_unwritten = self._write_source_path(art.source_path, content)
                 self._snapshot_version(slug, art.version, content)
             ev = ArtifactEvent(
                 ts=_now(),
@@ -940,7 +965,7 @@ class NativeArtifactProvider(ArtifactProvider):
             self._append_event(art, ev)
             art.updated_at = _now()
             self._write_meta(art)
-            reverted = self.get(slug)
+            reverted = self._saved_answer(slug, art)
         changes.emit(changes.UPSERT, slug)
         return reverted
 
@@ -1167,7 +1192,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 content_changed = content != (self._current_content(slug) or "")
                 self._write_text(d / "current.html", content)
                 if art.source_path:
-                    self._try_write_source_path(art.source_path, content)
+                    art.source_unwritten = self._write_source_path(art.source_path, content)
 
             cut_version = False
             # A binary body changes only through its own writers, each of which cuts the version it
@@ -1215,7 +1240,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 self._write_meta(art)
 
             # Return the live view (content + live_dirty) like get().
-            updated = self.get(slug)
+            updated = self._saved_answer(slug, art)
         # Emitted only when something actually changed — a PATCH that set nothing must not
         # re-index. The name is part of the mirror's title, so a metadata-only rename IS a
         # change worth mirroring; the mirror's own content-hash gate decides whether that

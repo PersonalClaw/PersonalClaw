@@ -1183,7 +1183,7 @@ async def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         art = None
     if art is None:
         return None
-    from personalclaw.artifacts.models import is_binary_kind, redacted
+    from personalclaw.artifacts.models import LINK_WORDS, is_binary_kind, redacted
     from personalclaw.documents.to_markup import READ_KINDS
     from personalclaw.mcp_artifacts import (
         ArtifactTextUnreadable,
@@ -1211,6 +1211,12 @@ async def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         lines.append(f"File-backed — live source: {art.source_path}")
         if art.live_dirty:
             lines.append("The live file currently differs from the latest snapshot.")
+        if art.source_unfollowed:
+            why = LINK_WORDS.get(art.source_unfollowed, art.source_unfollowed)
+            lines.append(
+                f"Its file can't be followed now ({why}), so this is its last saved copy, "
+                "and a save writes only that copy."
+            )
     versions = []
     try:
         versions = prov.list_versions(art.slug) if prov is not None else []

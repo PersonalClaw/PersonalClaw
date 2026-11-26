@@ -106,6 +106,7 @@ def _serialize(art: Artifact, *, include_content: bool = False) -> dict[str, Any
         # flag must take it from a content-bearing response, which every current
         # consumer already does (#630).
         d.pop("live_dirty", None)
+        d.pop("source_unfollowed", None)  # computed by the same read, so absent with it
     return d
 
 
