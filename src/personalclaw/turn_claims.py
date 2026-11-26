@@ -10,7 +10,8 @@ reports, and says each that disagrees in one short line: "Note: this answer says
 staged; the repository shows it is not staged." A reply whose claims match says nothing, and so
 does one that claims nothing this module reads. No model is asked, and nothing runs but a read of
 the repository's index (``git diff --cached``), through the git every PersonalClaw read uses
-(`net.git`).
+(`net.git`). Its caller hands that git in (:class:`Git`), so this module imports nothing of the
+gateway's and stays outside its biggest import cycle; without one, a staged claim is not read.
 
 What it reads, first the claims a record settles:
 
@@ -25,7 +26,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +56,15 @@ _STAGED_BEFORE = re.compile(r"\bstaged\s+`([^`\s]+)`", re.I)
 
 
 @dataclass(frozen=True)
+class Git:
+    """How a repository's index is read: `net.git`'s ``git_argv`` and ``git_env``, as its caller
+    hands them in (`dashboard.chat_claims`)."""
+
+    argv: Callable[[list[str]], list[str]]
+    env: Callable[..., dict[str, str]]
+
+
+@dataclass(frozen=True)
 class Mismatch:
     """One claim the turn's record or its repository does not bear out: what the answer says, and
     what the record shows."""
@@ -78,13 +88,13 @@ class TurnRecord:
         return any(_tool_name(tool) in HELPER_TOOLS for tool in self.tools)
 
 
-def note_for(reply: str, record: TurnRecord) -> str:
+def note_for(reply: str, record: TurnRecord, *, git: Git | None = None) -> str:
     """The note a finished turn's *reply* gets, one line per claim its *record* does not bear out,
-    or "" when every claim this module reads matches."""
-    return "\n".join(found.line() for found in mismatches(reply, record))
+    or "" when every claim this module reads matches. A staged claim is read through *git*."""
+    return "\n".join(found.line() for found in mismatches(reply, record, git=git))
 
 
-def mismatches(reply: str, record: TurnRecord) -> list[Mismatch]:
+def mismatches(reply: str, record: TurnRecord, *, git: Git | None = None) -> list[Mismatch]:
     """Each claim in *reply* that *record* does not bear out, in the order the reply makes them."""
     found: list[Mismatch] = []
     claimed: list[str] = []
@@ -93,8 +103,8 @@ def mismatches(reply: str, record: TurnRecord) -> list[Mismatch]:
             said = f"“{_quoted(sentence)}”"
             found.append(Mismatch(says=said, shows="the turn's record shows no helper ran"))
         claimed += [p for p in _staged_paths(sentence) if p not in claimed]
-    if claimed and record.folder:
-        found += _not_staged(claimed, Path(record.folder))
+    if claimed and record.folder and git is not None:
+        found += _not_staged(claimed, Path(record.folder), git)
     return found
 
 
@@ -111,13 +121,13 @@ def _staged_paths(sentence: str) -> list[str]:
     return [m.group(1) for pattern in patterns for m in pattern.finditer(sentence)]
 
 
-def _not_staged(paths: list[str], folder: Path) -> list[Mismatch]:
+def _not_staged(paths: list[str], folder: Path, git: Git) -> list[Mismatch]:
     """A mismatch for each of *paths* the index of the repository at *folder* does not hold. None
     when the folder is no repository, or its index could not be read: no evidence either way."""
-    staged = _git_names(folder, "diff", "--cached", "--name-only", "--relative")
+    staged = _git_names(folder, git, "diff", "--cached", "--name-only", "--relative")
     if staged is None:
         return []
-    changed = _git_names(folder, "diff", "--name-only", "--relative") or set()
+    changed = _git_names(folder, git, "diff", "--name-only", "--relative") or set()
     out: list[Mismatch] = []
     for path in paths:
         name = path.removeprefix("./")
@@ -128,10 +138,9 @@ def _not_staged(paths: list[str], folder: Path) -> list[Mismatch]:
     return out
 
 
-def _git_names(folder: Path, *args: str) -> set[str] | None:
+def _git_names(folder: Path, git: Git, *args: str) -> set[str] | None:
     """The paths a read-only git command prints in *folder*, or None when it could not say."""
-    from personalclaw.net.git import git_argv, git_env
-
+    git_argv, git_env = git.argv, git.env  # `net.git`'s own, by the names its audits read
     if not (folder / ".git").exists():
         return None
     try:

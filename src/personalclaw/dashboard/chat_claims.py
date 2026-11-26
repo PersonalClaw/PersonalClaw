@@ -4,7 +4,8 @@ The chat runner settles a turn's last answer once its model has finished (``_flu
 Just before, :func:`noted` reads what that answer claims against the calls the turn made, as its
 rows keep them, and the repository the chat works in. A claim they do not bear out gets a short
 note after the answer, streamed like the answer's own words, so the chat shows it as the turn ends
-and keeps it with the answer.
+and keeps it with the answer. The repository is read through `net.git` (:data:`GIT`), handed to
+`turn_claims`, which imports nothing of the gateway's.
 """
 
 from __future__ import annotations
@@ -12,12 +13,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.turn_claims import TurnRecord, note_for
+from personalclaw.net.git import git_argv, git_env
+from personalclaw.turn_claims import Git, TurnRecord, note_for
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
 
 logger = logging.getLogger(__name__)
+
+#: The git a turn's staged claims are read through: the one every PersonalClaw read uses.
+GIT = Git(argv=git_argv, env=git_env)
 
 
 def noted(state: DashboardState, session: _ChatSession, reply: str) -> str:
@@ -25,7 +30,7 @@ def noted(state: DashboardState, session: _ChatSession, reply: str) -> str:
     claim it makes matches the turn's record, and on any failure to read it (a note is never worth
     a turn)."""
     try:
-        note = note_for(reply, record_of(session))
+        note = note_for(reply, record_of(session), git=GIT)
     except Exception:  # noqa: BLE001 - the answer settles as it is
         logger.debug("turn claims: %s could not be read", session.key, exc_info=True)
         return ""

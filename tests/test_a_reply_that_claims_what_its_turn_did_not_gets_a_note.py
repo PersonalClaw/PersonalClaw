@@ -25,6 +25,7 @@ from test_native_runtime import _defn, _ScriptedModel
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.config import AppConfig
 from personalclaw.context import ContextBuilder
+from personalclaw.dashboard.chat_claims import GIT
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
@@ -189,15 +190,22 @@ def test_what_the_record_bears_out_or_cannot_settle_says_nothing(reply: str, rec
 
 
 def test_a_folder_that_is_no_repository_says_nothing(tmp_path):
-    assert note_for("`notes.md` is staged.", TurnRecord(folder=str(tmp_path))) == ""
+    assert note_for("`notes.md` is staged.", TurnRecord(folder=str(tmp_path)), git=GIT) == ""
 
 
 def test_a_file_never_added_is_not_staged(tmp_path):
     repo = _repo(tmp_path, stage=True)
     (repo / "plan.md").write_text("new\n")
-    assert note_for("I staged `plan.md`.", TurnRecord(folder=str(repo))) == (
+    assert note_for("I staged `plan.md`.", TurnRecord(folder=str(repo)), git=GIT) == (
         "Note: this answer says `plan.md` is staged; the repository shows it is not staged."
     )
+
+
+def test_without_a_git_a_staged_claim_is_not_read(tmp_path):
+    """The repository is read only through the git its caller hands in (`chat_claims.GIT`)."""
+    repo = _repo(tmp_path, stage=True)
+    (repo / "plan.md").write_text("new\n")
+    assert note_for("I staged `plan.md`.", TurnRecord(folder=str(repo))) == ""
 
 
 # ── `personalclaw run` offers the check too ──────────────────────────────────────────────────

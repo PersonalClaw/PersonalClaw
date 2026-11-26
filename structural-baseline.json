@@ -305,6 +305,7 @@
       "token_estimate",
       "transcript_heads",
       "transcript_rewrites",
+      "turn_claims",
       "turn_streams",
       "vector_stores",
       "versions",
