@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **Switching off a model app's capability stops the image, video, embedding and speech adapters it served: a media scanner an app registers acts only while a capability that declares its kind is running. No shipped app needs a change.**
+
 ### Changed
 
 - **Hooks on a tool call now run at the same time: the policy commands and scripts bound to an agent start together, so a call waits only for the slowest one, and the first block in the hooks' order still refuses the call in its words. Copies of one hook (the same action, matcher, timeout and grant) run once per fire. A hook that doesn't answer in time refuses the call too, naming itself and how long it had, and each hook keeps how long its last run took. A policy script that writes a file another hook also writes should lock it, or the two should be merged into one hook. A hook that sends a message, writes a store or comes from an app, and every hook on any other event, still runs one after another in its configured order.**

@@ -16,6 +16,12 @@ the registry dedupes by ``provider.name``).
 This keeps core provider-agnostic: Bedrock's image/video/stt/embedding logic
 lives entirely in the bedrock-models app, which calls ``register_scanner`` at
 import for each capability it serves.
+
+A scanner an app's code registered acts only while the app capability it belongs to runs
+(#3843, ``capability_switches.registration_acts``): one a capability's build registered is that
+capability's, and one its modules registered as they loaded belongs to the app's capabilities
+that declare its media kind. A switch changes :func:`generation`, so a registry that keeps what
+it built rebuilds from what acts now. A scanner core registers acts always.
 """
 
 from __future__ import annotations
@@ -29,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 # capability → list of scanner callables. A scanner: (entries) -> [provider, …]
 _scanners: dict[str, list[Callable[[list[dict[str, Any]]], list[Any]]]] = {}
+#: ``(media kind, scanner)`` for each scanner an app's code registered → ``(app, capability)``
+#: (``app_code.owned``).
+_owners: dict[tuple[str, Callable[[list[dict[str, Any]]], list[Any]]], tuple[str, str]] = {}
 
 #: How many times the registered scanners changed: an app's import registered one, or the app's
 #: unload took one back (an update does both). A registry that keeps the adapters it was handed
@@ -48,19 +57,41 @@ def register_scanner(capability: str, scanner: Callable[[list[dict[str, Any]]], 
     if scanner not in lst:
         lst.append(scanner)
         _generation += 1
+        held = app_code.owned()
+        if held is not None:
+            _owners[(capability, scanner)] = held
 
         def _forget() -> None:
             global _generation
             if scanner in lst:
                 lst.remove(scanner)
+                _owners.pop((capability, scanner), None)
                 _generation += 1
 
         app_code.keep(_forget)
 
 
 def generation() -> int:
-    """A number that changes whenever a scanner is registered or taken back."""
-    return _generation
+    """A number that changes whenever a scanner is registered or taken back, or an app's
+    capability is built or torn down (which may change which scanners act)."""
+    from personalclaw.providers.registry import state_changes
+
+    return _generation + state_changes()
+
+
+def _acts(scanner: Callable[[list[dict[str, Any]]], list[Any]], kind: str) -> bool:
+    """Whether *scanner* builds *kind* adapters now: core's always; an app's while its
+    capability runs. A state that cannot be read acts on nothing, as unreadable switches do."""
+    held = _owners.get((kind, scanner))
+    if held is None:
+        return True
+    try:
+        from personalclaw.apps.capability_switches import registration_acts
+
+        return registration_acts(held[0], held[1], kind)
+    except Exception:  # noqa: BLE001 — the app's scanner sits out; the others still run
+        logger.warning("media scanner of %s: its capability's state unreadable", held[0])
+        return False
 
 
 def scan(capability: str) -> list[Any]:
@@ -76,6 +107,8 @@ def scan(capability: str) -> list[Any]:
     entries = _config_provider_entries()
     out: list[Any] = []
     for fn in scanners:
+        if not _acts(fn, capability):
+            continue
         try:
             out.extend(fn(entries) or [])
         except Exception:  # noqa: BLE001 — a bad scanner can't break discovery

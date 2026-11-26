@@ -17,6 +17,9 @@ _providers: dict[str, SttProvider] = {}
 # dropped on ``refresh_providers`` — app-registered bundled providers (faster-whisper),
 # which the app loader registers once on enable, must survive a config change.
 _remote_names: set[str] = set()
+# Names of the adapters app scanners built (``media_scanners.scan``): one its app no longer builds
+# (the capability that declares this kind went off, or its instance was removed) leaves.
+_scanned_names: set[str] = set()
 
 # active_models.json refs may name the bundled provider as "faster-whisper"
 # (manifest name) or "faster_whisper" (registry key); both map to the one
@@ -31,6 +34,7 @@ def register_provider(provider: SttProvider) -> None:
 def unregister_provider(name: str) -> None:
     _providers.pop(name, None)
     _remote_names.discard(name)
+    _scanned_names.discard(name)
 
 
 def get_provider(name: str) -> SttProvider | None:
@@ -56,8 +60,17 @@ def _register_remote_providers() -> None:
     Keyed by the provider's config name so an ``<name>:whisper-1`` active
     selection resolves to the same account that backs that provider's chat.
     """
+    from personalclaw.providers.media_scanners import scan
     from personalclaw.providers.use_cases import openai_family_providers
     from personalclaw.stt.openai_provider import OpenAISttProvider
+
+    # What the apps' scanners build now, read first: an adapter its app no longer builds leaves
+    # before the family adapters are filled in, so a same-named one comes back at once (#3843).
+    fresh = {nm: prov for prov in scan("stt") if (nm := getattr(prov, "name", ""))}
+    for nm in _scanned_names - fresh.keys():
+        _providers.pop(nm, None)
+        _remote_names.discard(nm)
+    _scanned_names.intersection_update(fresh)
 
     for p in openai_family_providers():
         if p["name"] in _providers:
@@ -79,13 +92,10 @@ def _register_remote_providers() -> None:
     # generateContent, not the OpenAI audio.transcriptions API), and ``google`` is
     # in the OpenAI family, so without the overwrite the family adapter would shadow
     # the real one. Tracked as remote so refresh_providers() re-reads on a change.
-    from personalclaw.providers.media_scanners import scan
-
-    for prov in scan("stt"):
-        nm = getattr(prov, "name", "")
-        if nm:
-            register_provider(prov)
-            _remote_names.add(nm)
+    for nm, prov in fresh.items():
+        register_provider(prov)
+        _remote_names.add(nm)
+        _scanned_names.add(nm)
 
 
 def refresh_providers() -> None:

@@ -1032,7 +1032,15 @@ app's `acp:<cli>` runtime, a catalog), so off means deregistered even for a fact
 no instance, and a build that fails part way leaves nothing of its own registered
 (`app_code.building` and `app_code.release_capability`). What the app's modules register as they
 load is the app's, whichever capability's build first imported them: it stays while the app is
-on and leaves with the app. A native app's capabilities are always on. A settings save retries a capability that failed only
+on and leaves with the app. A media scanner the app's code registered
+(`personalclaw.sdk.model.register_scanner`) acts only while its capability runs
+(`capability_switches.registration_acts`): one a build registered while that capability is
+`running`, and one its modules registered as they loaded while a capability that declares its
+media kind among its `capabilities` is `running`, so switching off a model app's capability
+stops the image, video, embedding and speech adapters it served. A kind no capability declares
+is the app's own. A switch counts as a change of the scanners (`media_scanners.generation`), so
+a registry that keeps what it built rebuilds, and the speech registries drop an adapter its app
+no longer builds. A native app's capabilities are always on. A settings save retries a capability that failed only
 while it is switched on.
 
 What a capability is doing is read in one place, `capability_status`: its switch (`on`) beside

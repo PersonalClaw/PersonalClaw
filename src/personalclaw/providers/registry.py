@@ -179,10 +179,12 @@ class ProviderRegistry:
                     handler.register(ext, instance)
             ext.provider_instance = instance
             ext.enabled = True
+            _changed()
             logger.info("Enabled extension %s (type=%s)", ext.key, ext.provider_config.type)
             return True
         except Exception as exc:
             ext.error = str(exc)
+            _changed()
             # A capability that failed part way does not half run: what it registered goes.
             app_code.release_capability(ext.name, ext.capability or "")
             logger.exception("Failed to enable extension %s", ext.key)
@@ -213,6 +215,7 @@ class ProviderRegistry:
         app_code.release_capability(ext.name, ext.capability or "")
         ext.provider_instance = None
         ext.enabled = False
+        _changed()
         logger.info("Disabled extension %s (type=%s)", ext.key, ext.provider_config.type)
 
     def disable(self, name: str, capability: str | None = None) -> bool:
@@ -271,6 +274,23 @@ class ProviderRegistry:
 
     def list_by_type(self, provider_type: str) -> list[RegisteredProvider]:
         return [ext for ext in self.list_extensions() if ext.provider_config.type == provider_type]
+
+
+#: How many times a capability was built, failed to build, or was torn down, in this process:
+#: what a reader that keeps what it built from a capability's registrations reads to know which
+#: of them act may have changed (``media_scanners.generation``). Module-wide, so a registry a
+#: test swaps in never sets it back.
+_state_changes = 0
+
+
+def state_changes() -> int:
+    """How many times any capability's state changed (:data:`_state_changes`)."""
+    return _state_changes
+
+
+def _changed() -> None:
+    global _state_changes  # noqa: PLW0603 — one counter for the process
+    _state_changes += 1
 
 
 def _needs_setup(ext: RegisteredProvider) -> str:

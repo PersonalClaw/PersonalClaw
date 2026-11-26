@@ -20,6 +20,8 @@ Six calls:
   while its factory runs is that capability's. A module body the build imports is still the
   app's, whichever capability's build ran it first, since the module is not imported again when
   the capability comes back.
+* :func:`owned` — whose registration the current call is making, ``(app, capability)``, for a
+  registry whose readers act on an entry only while its capability runs (the media scanners).
 * :func:`release_capability` — every entry one capability's build registered is taken back
   (newest first), when it is switched off or its build fails; the app's own and its other
   capabilities' stay.
@@ -150,12 +152,21 @@ def keep(undo: Callable[[], None]) -> None:
     A no-op for core's own registrations. *undo* must be safe to run once the registry holds
     something newer under the same key (take back only what it recorded).
     """
+    held = owned()
+    if held is None:
+        return
+    with _lock:
+        _undo.setdefault(held[0], []).append((held[1], undo))
+
+
+def owned() -> tuple[str, str] | None:
+    """Whose registration the current call is making: ``(app, capability)``, with ``""`` for
+    the app's own (made as its modules loaded, or outside a build), or ``None`` when core makes
+    it. :func:`keep` records the same owner for the take-back."""
     app = owner()
     if app is None:
-        return
-    capability = _built_by(app)
-    with _lock:
-        _undo.setdefault(app, []).append((capability, undo))
+        return None
+    return app, _built_by(app)
 
 
 def _built_by(app: str) -> str:
