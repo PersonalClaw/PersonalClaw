@@ -119,6 +119,14 @@ _REFUSED_BY_WHY = {
         "it reaches past the run's bounds (a host off the allowed hosts, or a file outside the "
         "folders the run works in), and nobody was there to allow it"
     ),
+    # The file tools' own controls (`file_scope.OutOfScope`).
+    "file_scope": (
+        "it names a file outside the folders this helper's file tools reach; a batch's helpers "
+        "work in their run's own folder, so start the batch with cwd set to the chat's folder "
+        "for them to read it"
+    ),
+    "owner_only": "it changes a file only you may change (git's settings and hooks, shell startup)",
+    "memory_withheld": "it reads long-term memory, which this helper's work may not read",
 }
 _NOT_RUN_WHY = {
     "missing_arguments": "it was sent without arguments the tool requires",
