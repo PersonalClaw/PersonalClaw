@@ -238,6 +238,16 @@ describe('Settings › Guardrails › Incident kill switch', () => {
     expect(document.activeElement).toBe(screen.getByRole('switch', { name: 'Incident mode' }))
   })
 
+  it('takes no focus when the section opens', async () => {
+    // The switch gets focus back only after the review or the summary closes, never because the
+    // section rendered: the page's own focus (a link, a search) stays where it was.
+    incident.mockResolvedValue(ON)
+    show()
+    await screen.findByRole('switch', { name: 'Incident mode' })
+    await flush()
+    expect(document.activeElement).toBe(document.body)
+  })
+
   it('keeping it on resumes nothing', async () => {
     incident.mockResolvedValue(ON)
     show()
