@@ -580,6 +580,39 @@ function forgetEndpoint(store, id) {
   return { ok: true, registry: next };
 }
 
+// ── this home's own gateway, saved as a paired one ─────────────────────────────────────────────
+
+/**
+ * Whether *baseUrl* is this home's own gateway, the one on *port*: a plain-http loopback address
+ * (`127.0.0.1`, `localhost`, `[::1]`) on that port. *port* is the port `homeGateway.reach` proved
+ * serves this home, never one the address names itself. Such an address, added as a gateway or
+ * pairing link, is this computer's gateway: the app uses it as it uses one it found (its bridge,
+ * its buddy, its own update), not as another gateway's window. A remote host, or a loopback
+ * address on any other port, is not.
+ */
+function isThisHomesGateway(baseUrl, port) {
+  const want = Number(port);
+  if (!Number.isInteger(want) || want < 1 || want > 65535) return false;
+  const parsed = parseGatewayUrl(String(baseUrl || ""));
+  if (!parsed.ok || parsed.trust !== TRUST_LOOPBACK || parsed.scheme !== "http:") return false;
+  return Number(parsed.port || 80) === want;
+}
+
+/**
+ * Fold every paired row that is this home's own gateway on *port* (`isThisHomesGateway`) into
+ * This computer: each is forgotten, with its namespaced state, so the Gateways window lists the
+ * one gateway once. The reserved local row stays. Returns the ids it forgot.
+ */
+function foldIntoThisComputer(store, port) {
+  const folded = [];
+  for (const row of loadRegistry(store).endpoints) {
+    if (row.id === LOCAL_ENDPOINT_ID || row.kind === "local") continue;
+    if (!isThisHomesGateway(row.base_url, port)) continue;
+    if (forgetEndpoint(store, row.id).ok) folded.push(row.id);
+  }
+  return folded;
+}
+
 // ── switching ──────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -912,6 +945,8 @@ module.exports = {
   adoptGatewayLabel,
   rememberLocalGateway,
   forgetEndpoint,
+  isThisHomesGateway,
+  foldIntoThisComputer,
   switchTo,
   probeEndpoint,
   isRetryable,

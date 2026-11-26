@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **A chat's permission and task mode controls show the mode it runs in when it was set elsewhere: a pick in another tab or on another device, or YOLO turned on, off or running out. An open chat's Execution Boundary reads its sandbox again once a switch of its agent has been taken, and a project's start box never shows a permission mode this computer's operator settings would refuse: it keeps Normal and says why.**
+- **A gateway started outside the desktop app and added in the Gateways window by its address, `http://127.0.0.1:10000` say, is used as This computer: Buddy, the menu bar's Show Buddy and the app's own update work with it, and the Gateways window lists it once. While no gateway of this computer's is in use, Show Buddy says the buddy shows only with one.**
 
 ### Security
 
