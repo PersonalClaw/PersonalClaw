@@ -43,4 +43,7 @@ export const FIXED_CLOCK: Record<string, string> = {
   // it: under the real clock its axis moved with every run (the Refresh visual baselines run on
   // the band's branch shot 13:44 in one picture and 13:46 in the next).
   dashboard: '2026-11-02T12:00:00Z',
+  // The new-automation form lists its schedule's next runs and says how far off each is: the runs
+  // are a fixed answer (`SCHEDULE_PREVIEW`), counted from this instant, so the countdowns are too.
+  'triggers/new': '2026-11-02T09:00:00Z',
 }
