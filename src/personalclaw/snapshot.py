@@ -1436,11 +1436,12 @@ def _merge_keyed_jsonl(
     key_field: str,
     label: str,
     *,
-    at: str,
+    at: bounded_log.At,
     left_unchanged: list[str] | None = None,
 ) -> int:
     """Bring in the rows of `src` that `dst` lacks, deduping on `key_field`, and write the
-    log in time order by each row's `at` field (``bounded_log.merge_jsonl``).
+    log in time order by each row's `at` (its field, or what a callable reads off the row:
+    ``bounded_log.merge_jsonl``).
 
     Extracted after a THIRD near-identical copy was needed (`model_calls.jsonl`, whose declared
     `append_dedup` a ratchet demanded an executor for). Three hand-written loops differing
@@ -1482,6 +1483,46 @@ def _merge_feedback(src: Path, dst: Path, *, left_unchanged: list[str] | None = 
     store after finding one copy had silently reverted the other.
     """
     _merge_keyed_jsonl(src, dst, "id", "Feedback", at="created_at", left_unchanged=left_unchanged)
+
+
+def _security_plan() -> list[tuple[str, str, str]]:
+    """The security component's rows of a merge's plan (:func:`merge_plan`): its key material,
+    copied in only where the home has none, then its two logs (:func:`_merge_security_logs`)."""
+    from personalclaw.durability import inventory as inv
+    from personalclaw.guardrails.incident import HISTORY_FILENAME
+
+    return [
+        *(
+            (name, inv.MERGE_REPLACE_ONLY, "copy-if-missing, 0600")
+            for name in CORE_FILES["security"]
+        ),
+        ("security_events.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on event_id; HMAC-key gated"),
+        (HISTORY_FILENAME, inv.MERGE_APPEND_DEDUP, "dedup on id"),
+    ]
+
+
+def _merge_security_logs(snap: Path, pc: Path, left: list[str]) -> None:
+    """The security component's two logs into the home: the SEL audit log, gated on its key
+    (:func:`_merge_security_events`), then the incident history, merged into the home's
+    (:func:`_merge_incidents`) or brought in where it has none, under the name its module gives
+    it (``guardrails.incident.HISTORY_FILENAME``)."""
+    from personalclaw.guardrails.incident import HISTORY_FILENAME
+
+    _merge_security_events(snap, pc, left_unchanged=left)
+    merge = functools.partial(_merge_incidents, left_unchanged=left)
+    restore_items.merged_or_brought_in(snap, pc, HISTORY_FILENAME, left, merge)
+
+
+def _merge_incidents(src: Path, dst: Path, *, left_unchanged: list[str] | None = None) -> None:
+    """Merge the incident history (``guardrails.incident``), deduped on each line's ``id`` (an
+    incident's, or a note's on one) and written in time order, an incident by its end and a note
+    by its own time, as the history trims itself. Not trimmed here: the history keeps its own
+    bound at its next line, as `feedback.jsonl` does."""
+    from personalclaw.guardrails.incident import line_time
+
+    _merge_keyed_jsonl(
+        src, dst, "id", "Incident history", at=line_time, left_unchanged=left_unchanged
+    )
 
 
 def _merge_security_events(
@@ -1933,9 +1974,8 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
         _add("feedback.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on id")
         _add("model_calls.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on audit_id")
     if _want(components, "security"):
-        for name in CORE_FILES["security"]:
-            _add(name, inv.MERGE_REPLACE_ONLY, "copy-if-missing, 0600")
-        _add("security_events.jsonl", inv.MERGE_APPEND_DEDUP, "dedup on event_id; HMAC-key gated")
+        for name, strategy, detail in _security_plan():
+            _add(name, strategy, detail)
     if _want(components, "workspace"):
         _add("workspace", inv.MERGE_UNION_BY_ID, "tree, no overwrite")
     if _want(components, "skills"):
@@ -2173,9 +2213,9 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
                 # Key material: written 0600 from its first byte, never copied and then tightened.
                 atomic_write_bytes(d, (snap / f).read_bytes())
                 print(f"  {_shown(f)}: restored (was missing)")
-        # The SEL audit log, whose declared `append_dedup` had no executor. Placed AFTER the key
+        # The SEL audit log and the incident history (`_merge_security_logs`). Placed AFTER the key
         # copy above, because whether the imported rows can verify depends on which key won.
-        _merge_security_events(snap, pc, left_unchanged=left)
+        _merge_security_logs(snap, pc, left)
         restore_items.said("security", left, since)
 
     if _want(components, "workspace"):

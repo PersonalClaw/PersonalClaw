@@ -1634,9 +1634,9 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path, _resto
     """The sweep's closing assertion. Every entry that declares `append_dedup` is handled, and by a
     REASON rather than by accident:
 
-    * `cron-history`, `notifications.jsonl`, `security_events.jsonl`, `feedback.jsonl` and
-      `model_calls.jsonl` each have an executor: a merge restore through `_do_merge` brings in the
-      snapshot's row beside the home's own, for every one of them;
+    * `cron-history`, `notifications.jsonl`, `security_events.jsonl`, `feedback.jsonl`,
+      `model_calls.jsonl` and `incidents.jsonl` each have an executor: a merge restore through
+      `_do_merge` brings in the snapshot's row beside the home's own, for every one of them;
     * `crashes`, `sessions`, `dashboard_tiles`, `history` — directories on disk, so the generic
       per-file tree copy already gives them entity-level union; a line-dedup executor would be the
       wrong shape entirely.
@@ -1664,6 +1664,7 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path, _resto
         "security_events.jsonl",
         "feedback.jsonl",
         "model_calls.jsonl",
+        "incidents.jsonl",
     }
     trees = {"crashes", "sessions", "dashboard_tiles", "history"}
     assert (
@@ -1680,11 +1681,17 @@ def test_every_declared_APPEND_DEDUP_entry_now_has_a_path(tmp_path: Path, _resto
         (root / "notifications.jsonl").write_text(json.dumps({"ts": when, "msg": tag}) + "\n")
         (root / "feedback.jsonl").write_text(json.dumps({"id": tag, "created_at": when}) + "\n")
         (root / "model_calls.jsonl").write_text(json.dumps({"audit_id": tag, "ts": when}) + "\n")
+        incident = {"type": "incident", "id": f"inc-{tag}", "ended_at": when, "reason": tag}
+        (root / "incidents.jsonl").write_text(json.dumps(incident) + "\n")
 
+    from personalclaw.snapshot import merge_plan
+
+    planned = [(r["path"], r["detail"]) for r in merge_plan(snap, pc, None)]
+    assert ("incidents.jsonl", "dedup on id") in planned, "the dry run does not say it is merged"
     _do_merge(snap, pc, None)
 
     assert sorted(_ids(pc, "clock:backup.jsonl")) == ["LIVE-run", "SNAP-run"]
-    for name in ("notifications.jsonl", "feedback.jsonl", "model_calls.jsonl"):
+    for name in ("notifications.jsonl", "feedback.jsonl", "model_calls.jsonl", "incidents.jsonl"):
         text = (pc / name).read_text()
         assert "SNAP" in text and "LIVE" in text, f"{name} took no row from the snapshot"
     events = (pc / "security_events.jsonl").read_text()

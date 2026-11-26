@@ -66,7 +66,7 @@ from personalclaw.atomic_write import atomic_write
 logger = logging.getLogger(__name__)
 
 _INCIDENT_FILENAME = "incident.json"
-_HISTORY_FILENAME = "incidents.jsonl"
+HISTORY_FILENAME = "incidents.jsonl"
 
 #: The most characters a reason may have, after trimming, and the most a note may have.
 REASON_MAX = 200
@@ -399,7 +399,7 @@ def _incident_line(current: IncidentState, *, resumed_by: str) -> dict[str, Any]
 def _history_path() -> Path:
     from personalclaw.config.loader import config_dir
 
-    return config_dir() / _HISTORY_FILENAME
+    return config_dir() / HISTORY_FILENAME
 
 
 def _append(line: dict[str, Any]) -> str:
@@ -420,13 +420,13 @@ def _append(line: dict[str, Any]) -> str:
         logger.warning("%s", why)
         return why
     try:
-        bounded_log.trim_jsonl(path, HISTORY_KEEP, at=_line_time)
+        bounded_log.trim_jsonl(path, HISTORY_KEEP, at=line_time)
     except OSError:
         logger.warning("the incident history could not be trimmed", exc_info=True)
     return ""
 
 
-def _line_time(row: Any) -> Any:
+def line_time(row: Any) -> Any:
     """A history line's time: an incident's end, or a note's."""
     if not isinstance(row, dict):
         return ""
