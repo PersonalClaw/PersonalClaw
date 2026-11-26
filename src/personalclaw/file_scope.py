@@ -391,12 +391,26 @@ class FileScope:
             raise _not_shared(raw, real, places[0])
         return real
 
+    def _own_folder(self) -> str:
+        """How a refusal names the session's own folder: the workspace, or, for a session that
+        works in another (a batch's helper in its run's folder, a chat in a project), that folder
+        by its path, so a refused path inside the workspace is not told the workspace is reached."""
+        from personalclaw.config.loader import workspace_root
+
+        try:
+            workspace = os.path.realpath(str(workspace_root()))
+        except Exception:  # noqa: BLE001 - a workspace that cannot be named is named as before
+            return "the workspace"
+        if not self.base or self.base == workspace:
+            return "the workspace"
+        return f"this session's own folder ({_plain(from_home(self.base), 200)})"
+
     def _outside(self, raw: str, real: str, change: bool) -> OutOfScope:
         if not change:
             return OutOfScope(
-                f"path {raw!r} is outside every folder the file tools reach: the workspace, the "
-                "allowed working directories, the folders added as knowledge sources and each "
-                "installed skill's own folder",
+                f"path {raw!r} is outside every folder the file tools reach: "
+                f"{self._own_folder()}, the allowed working directories, the folders added as "
+                "knowledge sources and each installed skill's own folder",
                 _REACH_HINT,
             )
         held = self._containing(real, False)
@@ -423,8 +437,8 @@ class FileScope:
                 "one for them to accept.",
             )
         return OutOfScope(
-            f"path {raw!r} is outside every folder the file tools may change: the workspace and "
-            "the allowed working directories",
+            f"path {raw!r} is outside every folder the file tools may change: "
+            f"{self._own_folder()} and the allowed working directories",
             f"To change files in another folder, the user adds it in {ALLOWED_SETTING}.",
         )
 
