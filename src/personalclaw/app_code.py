@@ -7,7 +7,7 @@ replaced keeps answering from a registry long after its files are gone, and the 
 the new version is refused as a duplicate (a model type's ``register_type`` is strict, and every
 shipped model app swallows that refusal).
 
-Four calls:
+Six calls:
 
 * :func:`claim` — the loader names the directory an app's code runs from, before running any of
   it.
@@ -16,6 +16,13 @@ Four calls:
   registry, the app's code is reached before any module body that is not the app's. So a core
   module that registers its own provider type while it is being imported stays core's, even when
   it was the app's import that pulled it in.
+* :func:`building` — core builds one capability of an app (#3843): what the app's code registers
+  while its factory runs is that capability's. A module body the build imports is still the
+  app's, whichever capability's build ran it first, since the module is not imported again when
+  the capability comes back.
+* :func:`release_capability` — every entry one capability's build registered is taken back
+  (newest first), when it is switched off or its build fails; the app's own and its other
+  capabilities' stay.
 * :func:`release` — every entry the app's code registered is taken back (newest first), every
   module loaded from its directory leaves ``sys.modules``, and what Python cannot take back
   in-process is returned as the reasons a restart is needed.
@@ -38,6 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import importlib
 import importlib.machinery
 import logging
@@ -58,8 +66,14 @@ logger = logging.getLogger(__name__)
 _lock = threading.RLock()
 #: A directory an app's code is loaded from (with a trailing separator) → the app.
 _roots: dict[str, str] = {}
-#: The app → how to take back each registration its code made, oldest first.
-_undo: dict[str, list[Callable[[], None]]] = {}
+#: The app → how to take back each registration its code made, oldest first, each with the
+#: capability whose build made it (``""``: the app's own).
+_undo: dict[str, list[tuple[str, Callable[[], None]]]] = {}
+#: The capability core is building now (:func:`building`): the app, the capability, and the frame
+#: of the ``with`` that builds it, which is where a walk out from a registration stops.
+_building: contextvars.ContextVar[tuple[str, str, types.FrameType] | None] = contextvars.ContextVar(
+    "app_code_building", default=None
+)
 #: The app → the modules its earlier :func:`alone` blocks loaded, set aside by name until its
 #: next block.
 _parked: dict[str, dict[str, Any]] = {}
@@ -139,8 +153,77 @@ def keep(undo: Callable[[], None]) -> None:
     app = owner()
     if app is None:
         return
+    capability = _built_by(app)
     with _lock:
-        _undo.setdefault(app, []).append(undo)
+        _undo.setdefault(app, []).append((capability, undo))
+
+
+def _built_by(app: str) -> str:
+    """The capability of *app* whose build is making the current call, or ``""`` for the app's
+    own: no build of *app*'s is running, or the walk out from the call meets a module body before
+    the build's frame (an import the build set off), or never meets that frame (a thread or task
+    the build left behind)."""
+    held = _building.get()
+    if held is None or held[0] != app:
+        return ""
+    frame: types.FrameType | None = sys._getframe(1)
+    while frame is not None:
+        if frame is held[2]:
+            return held[1]
+        if frame.f_code.co_name == "<module>":
+            return ""
+        frame = frame.f_back
+    return ""
+
+
+class _Building:
+    """The block that builds one capability (:func:`building`)."""
+
+    def __init__(self, app: str, capability: str) -> None:
+        self._held = (app, capability)
+        self._token: contextvars.Token[tuple[str, str, types.FrameType] | None] | None = None
+
+    def __enter__(self) -> None:
+        if self._held[1]:
+            self._token = _building.set((*self._held, sys._getframe(1)))
+
+    def __exit__(self, *exc: object) -> None:
+        if self._token is not None:
+            _building.reset(self._token)
+            self._token = None
+
+
+def building(app: str, capability: str) -> _Building:
+    """A ``with`` block in which core builds *capability* of *app*: what the app's code registers
+    in it, outside a module body, is the capability's (:func:`release_capability`). An empty
+    *capability* (a record that names none) leaves every registration the app's."""
+    return _Building(app, capability)
+
+
+def release_capability(app: str, capability: str) -> int:
+    """Take back every entry *capability*'s builds registered, newest first, and say how many.
+
+    Its switch went off, or its build failed part way: what it registered must not stay
+    resolving (an agent runtime's ``acp:<cli>`` entry, a catalog). The app's own registrations
+    and its other capabilities' stay until :func:`release`."""
+    if not capability:
+        return 0
+    with _lock:
+        entries = _undo.get(app, [])
+        mine = [undo for owner_, undo in entries if owner_ == capability]
+        if mine:
+            _undo[app] = [entry for entry in entries if entry[0] != capability]
+    for take_back in reversed(mine):
+        try:
+            take_back()
+        except Exception:  # noqa: BLE001 — one registry's failure must not strand the rest
+            logger.warning(
+                "app %s: taking back one of %s's registrations failed",
+                app,
+                capability,
+                exc_info=True,
+            )
+    return len(mine)
 
 
 @dataclass
@@ -165,7 +248,7 @@ def release(app: str) -> Released:
         _parked.pop(app, None)
         _released.add(app)
         _refresh_loaded()
-    for take_back in reversed(undo):
+    for _capability, take_back in reversed(undo):
         try:
             take_back()
         except Exception:  # noqa: BLE001 — one registry's failure must not strand the rest
