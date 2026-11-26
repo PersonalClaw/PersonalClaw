@@ -40,19 +40,20 @@ from collections.abc import Callable, Iterable, Mapping
 from types import MappingProxyType
 from typing import Any, TypeVar
 
+# The keys a row records its source by, which the typed turn reads them by too, so they are kept
+# below the gateway (``turn_origin``): every name is this module's too.
+from personalclaw.turn_origin import (  # noqa: F401  re-exported
+    ASKED_FOR_BY,
+    FROM_OUTSIDE,
+    QUEUED_FROM,
+    SOURCE_FIELDS,
+)
+
 logger = logging.getLogger(__name__)
 
 #: A transcript row, as whichever reader holds it: a chat's buffer, a file's lines, a copy.
 Row = TypeVar("Row", bound=Mapping[str, Any])
 
-#: The fields a row records where it came from: the thread it arrived on, who sent it, and the
-#: chat channel that took it in.
-SOURCE_FIELDS = ("source_thread", "source_user", "source_channel")
-
-#: The ``meta`` key of a row several queued messages run as when they came from different places:
-#: the source each of them records, in order, written by the chat's queue as it merges them. Such a
-#: row records no source of its own (:func:`shared_source`), so this is what says whose they were.
-QUEUED_FROM = "queued_from"
 
 #: The ``meta`` key of a row several queued messages run as: each message's id and the source it
 #: records, in order (``dashboard.chat_intake.carried``). It takes the place of :data:`QUEUED_FROM`,
@@ -60,15 +61,6 @@ QUEUED_FROM = "queued_from"
 #: records no source of its own.
 MERGED = "merged"
 
-#: The ``meta`` key of a row whose words PersonalClaw took in from outside as they came, which no
-#: model of the conversation wrote: a scheduled run's result opened as a chat
-#: (``dashboard.schedule_inject``), a heartbeat task's result or a check-in written into a chat
-#: (``gateway``'s ``_deliver_result``), and the list of saved prompts, as their files describe them
-#: (``dashboard.chat_runner``'s ``/prompts``). It holds what a model is told they are and where they
-#: came from (``what``, and the fence's ``source``, ``source_type`` and ``source_id``), and the
-#: chat's own model is handed them through the door every text from outside takes into a prompt
-#: (:func:`model_text`). The row keeps its words as a person reads them.
-FROM_OUTSIDE = "from_outside"
 
 #: The ``meta`` key of an answer row the chat's channel thread was shown: the turn's answer, once
 #: it was mirrored there (``dashboard.chat_runner``'s ``_mirror_the_answer``). A turn someone
@@ -92,11 +84,6 @@ TURN_STARTS = frozenset({"user", "inject", "subagent", "nudge"})
 #: (``chat_handlers`` drops it). Such a row joins the turn it was sent into and starts none.
 STEERED = "steered"
 
-#: The ``meta`` key of a row that starts a turn for work someone other than the owner asked for,
-#: when no message of theirs is in it: the report of a subagent their turn started. It holds their
-#: source (``memory_writes.asked_for_work``), which :func:`asked_by` reads, and a queued message
-#: carries it under the same key until its row is written (``chat_queue``).
-ASKED_FOR_BY = "asked_for_by"
 
 #: How a model is told a user line someone other than the owner sent is not hers, ahead of the
 #: line, fenced (:func:`theirs`): every history of the conversation a model is handed shows such a

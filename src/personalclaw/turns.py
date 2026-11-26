@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, Union
 
 from personalclaw.instants import utc_now_iso
-from personalclaw.turn_source import ASKED_FOR_BY, FROM_OUTSIDE, QUEUED_FROM, SOURCE_FIELDS
+from personalclaw.turn_origin import ASKED_FOR_BY, FROM_OUTSIDE, QUEUED_FROM, SOURCE_FIELDS
 
 Role = Literal["user", "assistant"]
 #: What started a turn (§3.3). ``goal`` is a goal loop's cycle; goal loops replace Auto-nudge.
