@@ -129,6 +129,8 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     onVoiceChunk: (audio, request) => { if (request === readingRef.current?.request) enqueueAudio(audio) },
     onReplyFinished: (sid, opts) => replyFinished(sid, opts),
     onOpened: (d) => adoptDetail(d),
+    onModeSaid: (said) => adoptSaid(said),
+    onYoloChanged: () => readApprovalAgain(),
   })
   const {
     sessionRef, turns, wsConnected,
@@ -148,7 +150,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     pendingRouting, setRoutingSuggestion, setLiveRun, started, stream,
     followNewTurn: () => followNewTurn(), oweSpokenReply: (sid) => oweSpokenReply(sid),
   })
-  const { adoptDetail, applyTemplate, composerFocused, composerRef, draftUnderWay, focusComposerSoon, input, memoryMode, notice, quoteToComposer, replaceDraft, selection, send, setInput, setSelection } = composer
+  const { adoptDetail, adoptSaid, readApprovalAgain, applyTemplate, composerFocused, composerRef, draftUnderWay, focusComposerSoon, input, memoryMode, notice, quoteToComposer, replaceDraft, selection, send, setInput, setSelection } = composer
   // A start box's draft (`?start=`) is taken as the composer mounts, or there was none to take: the
   // address drops its token either way (replace), so a reload or Back never names it again.
   useEffect(() => { if (launch.start) setQuery({ start: null }, { replace: true }) }, []) // eslint-disable-line react-hooks/exhaustive-deps

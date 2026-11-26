@@ -306,7 +306,9 @@ async def test_it_says_no_path_secret_or_command_and_changes_nothing(tmp_path, b
     for query in (f"?session={chat.key}", f"?runtime={AGENT_CLI}", "?runtime=acp:<b>" + "x" * 64):
         status, body = await _read(state, query)
         assert status == 200
-        assert set(body) == {"sandbox", "reach"}
+        # A new chat's reading also says the modes the ceiling refuses, none here.
+        new_chat = not query.startswith("?session=")
+        assert set(body) == {"sandbox", "reach"} | ({"permission"} if new_chat else set())
         assert set(body["sandbox"]) == {"confined", "label", "said"}
         assert set(body["reach"]) == {"tier", "label", "said"}
         said = repr(body)

@@ -2611,12 +2611,19 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
 
     def push_sessions_update(self) -> None:
         """Push current session list to all SSE clients (instant UI update)."""
-        # Read for its effect, not its answer: a lapsed dashboard YOLO expires when it is read
+        # Read once, for its effect too: a lapsed dashboard YOLO expires when it is read
         # (`trust_mode`), which clears the auto-approve it left on your chats. This push runs on
         # every change to a session, mid-turn included, so it is where a TTL that ran out takes
-        # hold soonest. The list itself no longer carries the flag.
-        self.is_yolo_active()
-        sessions_data = [s.to_dict() for s in self._sessions.values()]
+        # hold soonest.
+        yolo = self.is_yolo_active()
+        # Each row says the mode its chat runs in (`approval_of`), YOLO included: an open composer
+        # shows it, so a mode set elsewhere shows there without the chat being opened again. An
+        # app's rows are its own chats, which never run on your YOLO, and YOLO turning on or off
+        # pushes no list (`_ring_yolo`), so an app's socket learns nothing of it.
+        sessions_data = [
+            {**s.to_dict(), "approval": self.approval_of(s, yolo=yolo)}
+            for s in self._sessions.values()
+        ]
         self._broadcast(
             {
                 "_type": "sessions",
@@ -2624,6 +2631,22 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
                 "sessions": json.dumps(sessions_data),
             }
         )
+
+    def approval_of(self, session: _ChatSession, *, yolo: bool | None = None) -> str:
+        """The permission mode *session* runs in, as its composer shows it: ``yolo`` while YOLO is
+        on (it holds for every chat of yours; *yolo* when the caller read it already), else its own
+        ``trust``, ``trust_reads`` or ``normal``. A chat an app started runs on the app's
+        permissions, never on your switches (``chat_runner.started_by_app``), so it reads
+        ``normal``."""
+        from personalclaw.dashboard.chat_runner import started_by_app
+
+        if started_by_app(session):
+            return "normal"
+        if self.is_yolo_active() if yolo is None else yolo:
+            return "yolo"
+        if session._trust:
+            return "trust"
+        return "trust_reads" if session._trust_reads else "normal"
 
     def push_session_title(self, key: str, title: str) -> None:
         """Push a targeted title update for a single session.

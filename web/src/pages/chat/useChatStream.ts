@@ -10,6 +10,7 @@ import { SnapshotReplay } from './snapshotReplay'
 import { resolveStalledStream, STREAM_HEAL_WARNING } from './streamStall'
 import { chatDoneOutcome, TURN_RESPONDING, TURN_SUPERSEDED, turnEndedSentence, turnOutcomeOf, type TurnOutcome } from './turnOutcome'
 import { deliverableToOpenSession } from './sessionDelivery'
+import { refreshKinds } from '../../lib/wsFrames'
 import { joinsATurnStartedElsewhere } from './joinTurn'
 import { snapshotPredatesSend, streamingAtMount } from './liveRun'
 import { startedByName } from './StartedByApp'
@@ -138,6 +139,12 @@ export interface ChatStreamSinks {
   onReplyFinished: (session: string | null, opts: { last: boolean }) => void
   /** The settled detail of the read that opened the session. */
   onOpened: (d: ChatDetail) => void
+  /** The chat's modes as the gateway's chat list says them (`sessions`): its permission mode,
+   *  YOLO included, and its task mode. */
+  onModeSaid?: (said: { approval?: unknown; taskMode?: unknown }) => void
+  /** YOLO turned on or off, or ran out (the owner-only `yolo` refresh): the chat's permission mode
+   *  may have changed with no chat list saying so. */
+  onYoloChanged?: () => void
 }
 
 export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
@@ -961,6 +968,12 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
       case 'sessions': {
         const row = (Array.isArray(m.data) ? m.data : []).find((r: { key?: unknown }) => r?.key === s)
         if (row && Array.isArray(row.bookmarks)) setBookmarks(row.bookmarks.filter((t: unknown): t is string => typeof t === 'string'))
+        if (row) sinks.current.onModeSaid?.({ approval: row.approval, taskMode: row.task_mode })
+        break
+      }
+      // YOLO's flip reaches your own pages alone, as this refresh, never as a chat list.
+      case 'refresh': {
+        if (refreshKinds(m).includes('yolo')) sinks.current.onYoloChanged?.()
         break
       }
       case 'chat_done': {

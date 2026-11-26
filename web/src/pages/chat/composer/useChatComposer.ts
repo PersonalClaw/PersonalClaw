@@ -363,6 +363,10 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   // Whether the selection shows the chat's own posture: at once on a new chat, and once the first
   // read is in on an existing one. Until then its task mode is a default, not the chat's.
   const [postureKnown, setPostureKnown] = useState(!sessionId)
+  /** How many of the chat's agent and model bindings the gateway has answered: the Execution
+   *  Boundary reads an open chat's sandbox again on each (`useBoundaryReading`), since the gateway
+   *  reads the agent the chat is bound to there, not the one picked. */
+  const [bindingsAnswered, setBindingsAnswered] = useState(0)
   // Chat preferences' two hooks write in one queue (`useInTurn`): the server takes the picks in the
   // order they were made, so the last answer is what the chat holds.
   const prefWrites = useInTurn()
@@ -1350,6 +1354,9 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   // It is one helper rather than eleven catch blocks because eleven is how one gets missed.
   const persistSelection = <T,>(what: string, p: Promise<T>): Promise<T | void> =>
     p.catch((e) => { notify(`Couldn't apply ${what} to this session: ${String((e as Error)?.message || e)}`, 'error') })
+  /** A binding write, reported (`persistSelection`), whose answer either way has the boundary read
+   *  again. */
+  const afterBinding = <T,>(p: Promise<T>): Promise<T> => p.finally(() => setBindingsAnswered((n) => n + 1))
 
   function applySelection(patch: Partial<ComposerValue>) {
     const nextSel = { ...selection, ...patch }
@@ -1360,12 +1367,12 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
     if (patch.agent) {
       // ACP agents bind via /acp-agent (provider + provider_agent + model);
       // native agents via /agent.
-      if (acp) persistSelection('this agent', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: nextSel.model && nextSel.model !== 'Auto' ? nextSel.model : undefined }))
-      else persistSelection('this agent', api.setSessionAgent(s, patch.agent))
+      if (acp) afterBinding(persistSelection('this agent', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: nextSel.model && nextSel.model !== 'Auto' ? nextSel.model : undefined })))
+      else afterBinding(persistSelection('this agent', api.setSessionAgent(s, patch.agent)))
     }
     if (patch.model && !patch.agent) {
       // model-only change: ACP model goes through /acp-agent too (re-bind w/ model)
-      if (acp) persistSelection('this model', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: patch.model === 'Auto' ? undefined : patch.model }))
+      if (acp) afterBinding(persistSelection('this model', api.setSessionAcpAgent(s, { provider: acp.providerId, provider_agent: acp.agent.provider_agent, model: patch.model === 'Auto' ? undefined : patch.model })))
       else persistSelection('this model', api.setSessionModel(s, patch.model === 'Auto' ? '' : patch.model))
     }
     // Approval mode first among these three deliberately: it is the one whose silent divergence has a
@@ -1394,6 +1401,25 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   function chooseTaskMode(mode: TaskMode): Promise<string | null> {
     return sendModePick('taskMode', 'task mode', (s, n) => api.setTaskMode(mode, s, n), () => setSelection((sel) => ({ ...sel, taskMode: mode })), adoptTaskMode)
   }
+  /** The chat's modes as the gateway's chat list says them (its `sessions` frame): shown on each
+   *  control with no pick of its own still unanswered, so a mode set elsewhere (another tab or
+   *  device, YOLO from another chat, YOLO running out) shows without the chat being opened again.
+   *  A control with a pick on its way shows the pick's answer instead. */
+  function adoptSaid(said: { approval?: unknown; taskMode?: unknown }) {
+    const approval = typeof said.approval === 'string' && said.approval ? said.approval as ApprovalMode : null
+    const taskMode = typeof said.taskMode === 'string' && said.taskMode ? said.taskMode as TaskMode : null
+    setSelection((sel) => ({
+      ...sel,
+      ...(approval && !unanswered.current.approval ? { approval } : {}),
+      ...(taskMode && !unanswered.current.taskMode ? { taskMode } : {}),
+    }))
+  }
+  /** YOLO turned on or off, which no chat list says: read the chat's permission mode again,
+   *  unless a pick of its own is still unanswered, whose answer then says the mode. */
+  function readApprovalAgain() {
+    const s = sessionRef.current
+    if (s && !unanswered.current.approval) readModeBack('approval', s, adoptApproval)
+  }
   /** Show the task mode the chat is in, as the gateway reads it. */
   function adoptTaskMode(d: ChatDetail) { setSelection((sel) => ({ ...sel, taskMode: (d.task_mode || 'agent') as TaskMode })) }
   /** A `.catch` for a mode's write that did not go through: the chat `s` is read back and its mode
@@ -1411,6 +1437,9 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   const pickCount = useRef(0)
   /** For each control, the number of the latest pick made on it, taken or not. */
   const madePick = useRef<Record<'approval' | 'taskMode', number>>({ approval: 0, taskMode: 0 })
+  /** For each control, how many of its picks were sent and not yet answered, either way: while one
+   *  is, the mode the chat list says is not shown over it (`adoptSaid`). */
+  const unanswered = useRef<Record<'approval' | 'taskMode', number>>({ approval: 0, taskMode: 0 })
   /** For each control, how many picks on it the gateway has said it took: a read of the chat begun
    *  before the latest of them may have read the mode the chat left. */
   const takes = useRef<Record<'approval' | 'taskMode', number>>({ approval: 0, taskMode: 0 })
@@ -1443,6 +1472,7 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
   ): Promise<string | null> {
     const pick = ++pickCount.current
     madePick.current[control] = pick
+    unanswered.current[control]++
     /** The gateway took this pick. The latest pick made on the control is shown; an older one's
      *  answer says nothing of the newer pick, which may have been taken after it, so the chat is
      *  read back instead. */
@@ -1453,7 +1483,7 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
     }
     const next = modePicks.current.then(() => new Promise<string | null>((resolve) => {
       const s = sessionRef.current
-      if (!s) { take(); resolve(null); return }
+      if (!s) { unanswered.current[control]--; take(); resolve(null); return }
       const number = Math.max(Date.now(), sentFloor.current + 1)
       sentFloor.current = number
       const timer = setTimeout(() => {
@@ -1462,8 +1492,9 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
       }, MODE_PICK_DEADLINE_MS)
       send(s, number).then(
         // The gateway took it, in time or after its wait (`taken`).
-        () => { clearTimeout(timer); taken(s); resolve(null) },
+        () => { unanswered.current[control]--; clearTimeout(timer); taken(s); resolve(null) },
         (e) => {
+          unanswered.current[control]--
           clearTimeout(timer)
           if (hasApiCode(e, 'stale_pick')) {
             const last = (e as { detail?: { last?: unknown } }).detail?.last
@@ -1634,6 +1665,6 @@ export function useChatComposer({ sessionId, navigate, seed, seedFromWidget = fa
 
   return {
     widgetDraft: draft.widget, draftIsAWidgets, sendWithPrompt, widgetSuggestion, addWidgetSuggestion, dismissWidgetSuggestion, clearWidgetDraft, editInput, touchComposer, takeBackQueued, fillHold, replaceDraft,
-    setRoutingSuggestion, acpFor, editorKeep, activatePlanMode, startGoalLoop, adoptDetail, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, draftUnderWay, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
+    setRoutingSuggestion, acpFor, editorKeep, activatePlanMode, startGoalLoop, adoptDetail, adoptSaid, readApprovalAgain, bindingsAnswered, applySelection, applyTemplate, chooseApproval, chooseTaskMode, artifactPickerOpen, attach, attachError, attachSnip, attachedPaths, captureProvider, captureScreenArea, composerFocused, composerRef, data, displayCapture, draftUnderWay, ensureSession, focusComposerSoon, historyTexts, input, insertPrompt, knowledgePickerOpen, livePasteBlocks, memoryMode, mentionedArtifacts, mentionedFiles, mentionedKnowledge, replyStyle, explain, preferencesOpen, setPreferencesOpen, notice, onLargePaste, onMentionFile, onMentionKnowledge, openAgentSignal, openModelSignal, openProjectSignal, openReasoningSignal, optimize, optimizing, pasteBlocks, pinScreenFrame, postureKnown, preOptimize, projectId, promptPaletteOpen, quoteToComposer, recallPrompt, removePaste, revertOptimize, routingSuggestion, screenShare, selection, send, setArtifactPickerOpen, setAttachError, setAttachedPaths, setComposerFocused, setInput, setKnowledgePickerOpen, setMemoryMode, setMentionedArtifacts, setMentionedFiles, setMentionedKnowledge, setPreOptimize, setProjectId, setPromptPaletteOpen, setSelection, setSnip, setToast, snip, stop, takeBack, toast, transcribe, uploadAborts, uploadHold, uploads,
   }
 }

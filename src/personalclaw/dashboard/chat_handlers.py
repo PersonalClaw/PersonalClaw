@@ -1167,19 +1167,7 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
             if isinstance(getattr(session, "_investigate_ctx", None), dict)
             else None
         ),
-        "approval": (
-            "normal"
-            if app_chat
-            else (
-                "yolo"
-                if state.is_yolo_active()
-                else (
-                    "trust"
-                    if session._trust
-                    else "trust_reads" if session._trust_reads else "normal"
-                )
-            )
-        ),
+        "approval": state.approval_of(session),
         **(_started_by(session.created_by_app, {}) if app_chat else {}),
         # Its memory mode and its project, as the session list returns them (`_session_scope`).
         **_session_scope(session),

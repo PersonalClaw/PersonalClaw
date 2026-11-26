@@ -128,21 +128,25 @@ function TaskModeMenu({ value, close, onPick }: { value: TaskMode; close: () => 
 
 /** The sandbox and the reach of the next turn, read from the gateway: `undefined` while it is being
  *  read, `null` when it could not be. An open chat is read once its own read has landed (`ready`),
- *  for the agent it runs on; a new chat for the agent CLI it is set to (`runtime`), or the built-in
- *  agent; a loop not created yet of the kind `kind` for its runtime and its Mode (`loop`). A change
- *  of any reads it again. */
-export function useBoundaryReading(session: string | null, ready: boolean, runtime: string, loop?: 'attended' | 'unattended', kind = ''): ChatBoundary | null | undefined {
+ *  for the agent it is bound to on the gateway, read again each time a binding of its agent answers
+ *  (`bound`, a count): the agent picked is not the one the gateway reads until its binding has
+ *  answered. A new chat is read for the agent CLI it is set to (`runtime`), or the built-in agent;
+ *  a loop not created yet of the kind `kind` for its runtime and its Mode (`loop`). A change of
+ *  any reads it again. */
+export function useBoundaryReading(session: string | null, ready: boolean, runtime: string, loop?: 'attended' | 'unattended', kind = '', bound = 0): ChatBoundary | null | undefined {
   const [reading, setReading] = useState<ChatBoundary | null | undefined>(undefined)
+  // An open chat is read for its binding, which the gateway holds: the runtime picked says nothing.
+  const asked = session ? '' : runtime
   useEffect(() => {
     if (!ready) return
     let alive = true
     setReading(undefined)
-    api.chatBoundary({ session: session ?? '', runtime, loop, kind }).then(
+    api.chatBoundary({ session: session ?? '', runtime: asked, loop, kind }).then(
       (r) => { if (alive) setReading(r) },
       () => { if (alive) setReading(null) },
     )
     return () => { alive = false }
-  }, [session, ready, runtime, loop, kind])
+  }, [session, ready, asked, loop, kind, bound])
   return reading
 }
 

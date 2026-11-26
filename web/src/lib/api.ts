@@ -1820,6 +1820,9 @@ export type AppStarted = Pick<ChatSessionSummary, 'created_by_app' | 'created_by
 export interface ChatBoundary {
   sandbox: { confined: boolean; label: string; said: string }
   reach: { tier: string; label: string; said: string }
+  /** A new chat's only: the permission modes the operator ceiling refuses for a chat made now, and
+   *  the sentence the mode route refuses them with. */
+  permission?: { refused: string[]; said: string }
 }
 /** What switching an open chat's model costs its next reply, which re-reads the chat
  *  (`GET /api/chat/switch-price`). `tokens` is the chat's context as its ring measured it, `null`

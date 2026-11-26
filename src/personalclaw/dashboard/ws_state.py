@@ -227,7 +227,9 @@ class DashboardWebSocketState:
     def _ring_yolo(self) -> None:
         """YOLO turned on or off, however it went (a toggle, its time running out, the config): the
         corner's YOLO mark reads the status again (``YoloChip``), on your own pages alone
-        (:data:`OWNER_REFRESH_KINDS`)."""
+        (:data:`OWNER_REFRESH_KINDS`), and each open chat reads its permission mode again
+        (``useChatStream``'s ``onYoloChanged``). It sends no chat list: an app's socket hears every
+        list, cut to its own rows, and is told nothing of when your YOLO turns on or off."""
         self.push_refresh("yolo")
 
     def next_stream_seq(self) -> int:
