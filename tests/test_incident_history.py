@@ -385,3 +385,70 @@ def test_an_apps_stop_always_engages(home) -> None:
     reason = started["reason"]
     assert len(reason) <= incident.REASON_MAX and reason.endswith("...")
     assert alert.startswith(reason[:-3]), "it keeps the alert's start"
+
+
+def test_the_history_reads_newest_first(home) -> None:
+    incident.activate("The first stop", by="owner")
+    first = incident.resume(by="owner").incident
+    incident.activate("The second stop", by="owner")
+    incident.resume(by="owner")
+    # A line written last that ended first: the order is each incident's end, not the file's.
+    older = {
+        **first,
+        "id": "inc_00000000000000000000000001",
+        "reason": "An older stop",
+        "started_at": "2026-01-01T08:00:00+00:00",
+        "ended_at": "2026-01-01T09:00:00+00:00",
+    }
+    with (home / "incidents.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(older) + "\n")
+    status, page = _call("GET", "/api/incidents")
+    assert status == 200
+    assert [item["reason"] for item in page["items"]] == [
+        "The second stop",
+        "The first stop",
+        "An older stop",
+    ]
+
+
+@pytest.mark.parametrize("next_line", ["note", "resume"])
+def test_the_next_written_line_clears_the_doctors_flag(home, monkeypatch, next_line) -> None:
+    from personalclaw.resilience import doctor
+
+    def probe_ok() -> bool:
+        card = asyncio.run(doctor.run_capability("security"))
+        (row,) = [r for r in card["probes"] if r["id"] == "incident_history"]
+        return row["ok"]
+
+    incident.activate("A stop whose line is kept", by="owner")
+    kept = incident.resume(by="owner").incident
+    incident.activate("A stop whose line fails", by="owner")
+    with monkeypatch.context() as failing:
+        failing.setattr(
+            incident, "_append", lambda _line: "The incident history could not be written: full."
+        )
+        assert incident.resume(by="owner").recorded is False
+    assert probe_ok() is False
+    if next_line == "note":
+        status, _note = _call("POST", f"/api/incidents/{kept['id']}/note", {"note": "Found it."})
+        assert status == 201
+    else:
+        incident.activate("The next stop", by="owner")
+        assert incident.resume(by="owner").recorded is True
+    assert probe_ok() is True, f"a written {next_line} clears the Doctor's flag"
+
+
+def test_a_note_writes_its_audit_row(home) -> None:
+    from personalclaw.sel import sel
+
+    incident.activate("A stop to review", by="owner")
+    line = incident.resume(by="owner").incident
+    status, _note = _call("POST", f"/api/incidents/{line['id']}/note", {"note": "Reviewed it."})
+    assert status == 201
+    rows = [
+        row
+        for row in sel().recent(200)
+        if row.get("operation") == "guardrails.incident_reviewed"
+        and row.get("resources") == line["id"]
+    ]
+    assert [row.get("outcome") for row in rows] == ["ok"], "a note is audited with its incident"
