@@ -1,3 +1,4 @@
+import { forgetEverythingKept } from '../lib/browserStore'
 import { Fragment, useEffect, useRef } from 'react'
 import { LogOut } from 'lucide-react'
 import { Button } from '../ui/Button'
@@ -31,6 +32,9 @@ export function SignedOutScreen({ notice }: { notice: SignedOut }) {
   const heading = useRef<HTMLHeadingElement | null>(null)
   // The page the user was on is gone; put them on the thing that replaced it.
   useEffect(() => { heading.current?.focus() }, [])
+  // Signed out, here or from another device: what this browser kept of its chats goes (#4012). A
+  // sign-in that only ran out keeps it, for the owner who signs straight back in.
+  useEffect(() => { if (notice.code === 'session_signed_out') void forgetEverythingKept() }, [notice.code])
   return (
     <main aria-labelledby="signed-out-heading" aria-describedby="signed-out-why"
       className="grid h-full place-items-center overflow-y-auto px-l" style={{ background: 'var(--color-canvas)' }}>

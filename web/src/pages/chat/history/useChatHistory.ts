@@ -1,3 +1,4 @@
+import { forgetChatHere } from '../../../lib/forgetChatHere'
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { failureSentence, reportActionFailure, reportingWrite } from '../../../app/reportingWrite'
 import { searchCoverage } from '../searchDeepLink'
@@ -359,6 +360,7 @@ export function useChatHistory({ navigate, query, setQuery }: { navigate: (p: st
       notify(`Couldn't delete this chat: ${String((e as Error)?.message || e)}`, 'error')
       return
     }
+    void forgetChatHere(s.key)
     invalidateKeys(detailKey(s.key))
     load()
   }

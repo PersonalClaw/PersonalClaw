@@ -306,6 +306,10 @@ What also came from elsewhere stays: a lesson you taught in another chat too, a 
 attached to an ordinary chat (Files lists them), and the Knowledge entries, artifacts and skills you
 kept. You can remove any of those where it is listed: a lesson or a fact in **Library → Memory**.
 
+Deleting a chat also takes, in this browser, its draft and every message of it waiting to send,
+so nothing is ever sent into it afterwards (see [Your draft, and messages that wait for
+PersonalClaw](#your-draft-and-messages-that-wait-for-personalclaw)).
+
 Each deletion leaves one entry in **Settings → Security → Audit log** (`chat.deleted`), naming the chat and
 never what it held. If the chat's history cannot be removed from disk, the page says so and the
 chat stays in the list; its entry then says `failure`.
@@ -493,6 +497,29 @@ a new chat that reads it. An item your library doesn't have, or can't read just 
 out, and the line above the composer says how many were.
 
 ---
+
+## Your draft, and messages that wait for PersonalClaw
+
+What you are typing in a chat is kept as you type: its text, what you pasted, the files you
+attached and what you mentioned. A reload, a closed tab or a desktop app that was quit or crashed
+gives it back when you open the chat again, with **Your draft from before is back** and **Discard
+draft** under it. The chat list marks a chat with a kept draft with a pencil and **Draft**. A draft
+goes when you send it or discard it. A Temporary or Incognito chat keeps none, and switching a chat
+to one takes away the draft it had.
+
+A message you send while the connection is down, or while PersonalClaw restarts, is not lost. It
+waits above the composer as **Waiting to send**, and goes on its own once the chat is connected
+again, once, in the order you sent it. If PersonalClaw had in fact received it before the
+connection dropped, it still shows once. A message that has waited a day asks first: **Send now**,
+or **Remove**. A message PersonalClaw answered with a refusal (a chat that was busy, a file it
+would not take) is shown as refused and never sent again.
+
+Drafts and waiting messages are kept in this browser, never in your PersonalClaw home, and only for
+this browser: another device does not see them. At most 200 drafts are kept, the oldest going
+first, and at most 50 waiting messages for a chat. Signing out takes all of them away. A device
+signed out from elsewhere keeps them until the next time it opens PersonalClaw, which takes them
+away. A sign-in that only ran out keeps them, so you can sign back in and carry on. Deleting a chat
+takes its own.
 
 ## Chat preferences
 

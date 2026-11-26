@@ -1,3 +1,4 @@
+import { useDraftSessions } from '../lib/useDraftSessions'
 import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api, type ChatFolder, type ChatSessionSummary, type ChatTag } from '../lib/api'
 import { invalidateKeys, useQuery } from '../lib/data'
@@ -125,7 +126,12 @@ export function useChatList(host: ChatListHost): ChatListRead {
     return [...active, ...archivedThreads(archived.sessions).filter((t) => !keys.has(t.key))]
   }, [threads.groups, archived?.sessions])
 
-  const rows = useMemo(() => applyView(all, view, folders, tags), [all, view, folders, tags])
+  // A chat with a draft kept in this browser says so on its row (`lib/drafts`, #4012).
+  const drafts = useDraftSessions()
+  const rows = useMemo(
+    () => applyView(all, view, folders, tags).map((t) => (t.kind === 'chat' && drafts.has(t.id) ? { ...t, draft: true } : t)),
+    [all, view, folders, tags, drafts],
+  )
   const retryNames = useCallback(() => { refreshFolders(); refreshTags() }, [refreshFolders, refreshTags])
   const sections = useMemo(() => viewSections(all, view, {
     folders, tags, foldersFailed: !!foldersError && !folders, tagsFailed: !!tagsError && !tags, onRetryNames: retryNames,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Blocks, Code2, Edit3, Maximize2, MessageCircle, Pin, Repeat, type LucideIcon } from 'lucide-react'
+import { Archive, Blocks, Code2, Edit3, Maximize2, MessageCircle, PencilLine, Pin, Repeat, type LucideIcon } from 'lucide-react'
 import type { Thread, ThreadKind, ThreadPip } from '../lib/useThreads'
 import type { PhaseFamily } from '../lib/workPhase'
 import { bindingLabel } from '../app/keymap'
@@ -326,6 +326,7 @@ function ThreadRow({ thread, selected, archivedMark, onOpen }: {
   const said = [
     kind ? `${kind.word}: ${title}` : title,
     thread.pinned && 'pinned',
+    thread.draft && 'draft',
     archivedMark && 'archived',
     app && `started by ${app}`,
     channel && `from ${channel}`,
@@ -361,6 +362,12 @@ function ThreadRow({ thread, selected, archivedMark, onOpen }: {
           <span data-type="caption" data-started-by className="relative inline-flex min-w-0 max-w-[40%] shrink items-center gap-0.5 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }}>
             <Blocks size={12} strokeWidth={2} aria-hidden className="shrink-0" />
             <span className="min-w-0 truncate">{app}</span>
+          </span>
+        )}
+        {thread.draft && (
+          <span data-type="caption" data-draft className="relative inline-flex shrink-0 items-center gap-0.5 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }}>
+            <PencilLine size={12} strokeWidth={2} aria-hidden className="shrink-0" />
+            <span>Draft</span>
           </span>
         )}
         {channel && (
