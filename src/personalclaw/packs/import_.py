@@ -1134,9 +1134,16 @@ def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: st
         # A step's `approval_mode: auto` or `capability: mutating` is its owner's yes, given where
         # she is shown the step, so a pack's is not hers: its template arrives with every step
         # asking before it acts and only reading, and allowing either asks her, in its editor.
+        # So is publishing it to outside A2A clients, which only her switch does: a pack's template
+        # arrives unpublished.
         from personalclaw.automation_posture import workflow_what_it_is
 
-        text = json.dumps(workflow_what_it_is(comp.obj), indent=2, ensure_ascii=False)
+        template = workflow_what_it_is(comp.obj)
+        if isinstance(template.get("metadata"), dict):
+            template["metadata"] = {
+                k: v for k, v in template["metadata"].items() if k != "a2a_published"
+            }
+        text = json.dumps(template, indent=2, ensure_ascii=False)
     else:
         # A trigger — staged + disabled: never into the live trigger store, since a pack cannot
         # arm automation on install. The user enables it later from Automations.
