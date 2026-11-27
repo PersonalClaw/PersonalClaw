@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from personalclaw import filled_secrets
+from personalclaw import filled_secrets, subagent_persistence
 from personalclaw.guardrails.wire import capture_wire_prompt
 from personalclaw.safety_flags import strict_bool, yes_or_no
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
@@ -852,20 +852,8 @@ async def dispatch_stage(
     approved_request, approved_at = approved_start
     claim_target = claim_key(run_id, instance_path)
     holder = claim_holder(run_id, node.id or "")
-    if claim_target:
-        granted, reason = leases.acquire_claim(claim_target, holder)
-        if granted is None:
-            # DEGRADED, not FAILED: another worker holding the claim means this leaf is already
-            # being executed, which is the lease working. Failing would turn a successful
-            # duplicate-suppression into a red branch on a run that is proceeding correctly.
-            return NodeResult(
-                state=InstanceState.DEGRADED,
-                output=None,
-                degraded_reason=(
-                    f"another worker holds the claim on this node ({reason}) — not executing twice"
-                ),
-                resolved_prompt=prompt,
-            )
+    if (held_elsewhere := _claim_refused(claim_target, holder, prompt)) is not None:
+        return held_elsewhere
 
     try:
         info = subagents.spawn(
@@ -900,6 +888,7 @@ async def dispatch_stage(
         # (`_execute` → `classify_exception`) is untouched.
         release_execution_claim(claim_target, holder)
         raise
+    _tie_to_claim(info, claim_target, holder)
     if info is None:
         # At capacity. Not a failure: the node stays ready and the next tick retries — so the claim
         # MUST be released. A claim held across a no-spawn return would make this node refuse its
@@ -947,6 +936,36 @@ async def dispatch_stage(
         claim_target=claim_target,
         claim_holder=holder,
     )
+
+
+def _claim_refused(claim_target: str, holder: str, prompt: str) -> NodeResult | None:
+    """The claim on the node at *claim_target* taken for *holder*, or, when another worker holds
+    it, the result that says so (``None`` for a node with no claim to take, or a claim taken).
+
+    DEGRADED, not FAILED: another worker holding the claim means this leaf is already being
+    executed, which is the lease working. Failing would turn a successful duplicate-suppression
+    into a red branch on a run that is proceeding correctly."""
+    if not claim_target:
+        return None
+    granted, reason = leases.acquire_claim(claim_target, holder)
+    if granted is not None:
+        return None
+    return NodeResult(
+        state=InstanceState.DEGRADED,
+        output=None,
+        degraded_reason=(
+            f"another worker holds the claim on this node ({reason}) — not executing twice"
+        ),
+        resolved_prompt=prompt,
+    )
+
+
+def _tie_to_claim(info: Any, claim_target: str, holder: str) -> None:
+    """Whose the folder of the agent a spawn that took a claim started is: its *holder*, written
+    before the agent's task first runs (`workflows.left_running`), so no await stands between the
+    spawn and the write. Nothing for a spawn at capacity (*info* ``None``) or one refused."""
+    if claim_target and info is not None and not getattr(info, "error", ""):
+        subagent_persistence.tie_to_claim(info.id, holder)
 
 
 def _held_by_incident(prompt: str) -> NodeResult:

@@ -75,7 +75,7 @@ import secrets
 import signal
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from personalclaw import process_facts
@@ -386,6 +386,33 @@ def _end_these(carrying: dict[int, tuple[str, int]], groups: list[_Group], grace
     for group in held:
         _signal_group(group, signal.SIGKILL)
     return len(left) + len(held)
+
+
+#: How long :func:`end_groups` waits, after its SIGKILL, for the kernel to take what it ended.
+_SETTLE_SECS = 1.0
+
+
+def end_groups(
+    groups: Iterable[tuple[int, frozenset[tuple[int, int]]]], *, grace: float | None = None
+) -> list[int]:
+    """End each process group of *groups*, given as ``(pgid, members)`` with the ``(pid, started)``
+    of each member seen when the group was found: SIGTERM, then SIGKILL for what is still there
+    after *grace* (:data:`GRACE_SECS`), then up to :data:`_SETTLE_SECS` for the kernel to take it.
+
+    A group is signalled only while a member seen then is still in it (:func:`_group_still`), so a
+    number the system has given a later group since is never signalled, and a zombie is no member.
+    Returns the pgids of the groups still there after all that, which the caller must not take to
+    be gone. Blocking: a coroutine runs it in a thread."""
+    found = [_Group(pgid, members) for pgid, members in groups if pgid > 1 and members]
+    if not found:
+        return []
+    _end_these({}, found, GRACE_SECS if grace is None else grace)
+    deadline = time.monotonic() + _SETTLE_SECS
+    while True:
+        left = [group for group in found if _group_still(group)]
+        if not left or time.monotonic() >= deadline:
+            return [group.pgid for group in left]
+        time.sleep(_POLL_SECS)
 
 
 async def _swept(accepts: Callable[[str], bool]) -> int:

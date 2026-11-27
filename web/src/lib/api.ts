@@ -1787,6 +1787,8 @@ export interface ChatSessionSummary {
   /** The project the chat belongs to, live or kept only on disk; `""` for none. */
   project_id?: string
   last_message?: string; prompt_preview?: string
+  /** The chat's first message of the owner's, plain: what names it before it has a title. */
+  first_message?: string
   // Session origin: 'manual' (user-initiated) vs a worker started by a goal loop /
   // code project. Worker sessions carry the originating entity's id +
   // friendly label so the history list can tag + link them and default-hide them.

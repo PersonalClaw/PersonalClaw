@@ -49,7 +49,7 @@ from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for das
     shell_command,
     tool_input_to_str,
 )
-from personalclaw.textfmt import board_options, without_board_options
+from personalclaw.textfmt import board_options, first_message, without_board_options
 from personalclaw.turn_source import DASHBOARD_SOURCE, source_of
 
 
@@ -891,6 +891,8 @@ class _ChatSession(ChatQueue):
             "has_options": has_options,
             "options": [_redact(o) for o in options],
             "prompt_preview": prompt_preview,
+            # What names the chat until it has a title: its first message of the owner's, plain.
+            "first_message": _redact(first_message(self.messages, 80)),
             "trust": self._trust,
             "trust_reads": self._trust_reads,
             "task_mode": self._task_mode,

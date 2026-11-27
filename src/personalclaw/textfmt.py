@@ -277,3 +277,36 @@ def _accept_title(title: str) -> str:
     title, _ = redact_credentials(title)
     logger.info("Title generated: %r", title[:80])
     return title[:60]
+
+
+_MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_MD_LINE_START = re.compile(r"^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+[.)][ \t]+)", re.M)
+_MD_MARKS = re.compile(r"\*\*|\*|`+|~~")
+_MD_RULE = re.compile(r"(?<!\S)[-:=]{3,}(?!\S)")
+
+
+def plain_snippet(text: str, limit: int) -> str:
+    """*text* without its Markdown, on one line, cut at a word to *limit* characters with "…".
+
+    What names a chat before it has a title (its first message): a link's words without its
+    address, no heading, quote or list marks, no emphasis or code marks, a table's cells as words.
+    A word's own underscores stay (``snake_case``)."""
+    t = _MD_LINK.sub(r"\1", text or "")
+    t = _MD_LINE_START.sub("", t)
+    t = _MD_MARKS.sub("", t.replace("|", " "))
+    t = " ".join(_MD_RULE.sub(" ", t).split())
+    if len(t) <= limit:
+        return t
+    cut = t[:limit]
+    space = cut.rfind(" ")
+    return (cut[:space] if space >= limit // 2 else cut).rstrip() + "…"
+
+
+def first_message(messages: list, limit: int) -> str:
+    """The first message of the owner's in *messages*, plain (:func:`plain_snippet`), or ``""``."""
+    for m in messages:
+        if isinstance(m, dict) and m.get("role") == "user":
+            content = m.get("content")
+            if isinstance(content, str) and content.strip():
+                return plain_snippet(content, limit)
+    return ""
