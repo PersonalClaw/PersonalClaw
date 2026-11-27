@@ -62,7 +62,8 @@ import { openValue, projectDetail, retiredPanelPatch, type ProjectDetail } from 
  *  work in one group). About this project sits beside the work from 60rem of content, after it
  *  below that. One detail at a time opens beside the work (`?open=`, pushed, so Back closes it, and
  *  Esc closes it with focus back where it came from, `PaneHost`); while one is open it takes
- *  About's column and gives it back on close.
+ *  About's column and gives it back on close. Where the page is too narrow for the two side by side,
+ *  the detail opens over it as a full-height sheet (`stacks="over"`), its Close and Esc closing it.
  *
  *  What its work made (Results) and what its agents know (About › Knowledge) are the library's,
  *  from one read (`useProjectLibrary`): its cards and compact rows, its preview beside the work,
@@ -595,7 +596,9 @@ function ProjectOverview({ id, project, cached, projects, navigate, query, setQu
             a new chat is told) scrolls itself. Each scroller's scroll padding keeps a focused control's
             ring clear of its fold: focus scrolls the control in by it, and `s` is more than the 4 px ring
             in every density (`--space-scale`). */}
-        <PaneHost surface="project" size={{ def: 336, min: 320, max: 640 }}
+        {/* Where the page stacks, a detail is the whole task while it is open: it opens over the page
+            as a full-height sheet, closed with Close or Esc, rather than in the lower half under it. */}
+        <PaneHost surface="project" size={{ def: 336, min: 320, max: 640 }} stacks="over"
           pane={pane && { ...pane, body: <div className="h-full scroll-py-s overflow-y-auto">{pane.body}</div> }}>
           <div className="h-full scroll-py-s overflow-y-auto">
             <div className="mx-auto grid w-full min-w-0 grid-cols-1 gap-l px-l py-l @[60rem]/page:grid-cols-[minmax(0,1fr)_336px]">

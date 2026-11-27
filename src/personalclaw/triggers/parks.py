@@ -97,6 +97,20 @@ class TriggerPark:
     #: The question in a line: the card's blocker, else what the action said when it stopped.
     question: str = ""
     created_at: float = 0.0
+    #: A fire held before its action ran, because the action asks first (:func:`hold_fire`): the
+    #: action it holds, by provider, and the fire's payload, as the injection screen and the fence
+    #: left it, for Approve to run with. Empty for a question an action asked as it ran.
+    held: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+    #: How many fires it held since it asked: Approve runs the newest one's payload.
+    fires: int = 0
+    #: What else the held fire handed its action, kept beside its payload for Approve: its
+    #: `$CONTEXT` line (fenced), its account of what started it (`fire_facts`, which an agent's
+    #: action is told so it does not read the fire's words as a request to it), and the files it is
+    #: about, which the run may read (`fire_files`). Approve runs this fire, so it carries them.
+    context: str = ""
+    fire_facts: str = ""
+    fire_files: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -105,17 +119,29 @@ class TriggerPark:
             "card": dict(self.card),
             "question": self.question,
             "created_at": self.created_at,
+            "held": self.held,
+            "payload": dict(self.payload),
+            "fires": self.fires,
+            "context": self.context,
+            "fire_facts": self.fire_facts,
+            "fire_files": list(self.fire_files),
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TriggerPark:
-        card = d.get("card")
+        card, payload, files = d.get("card"), d.get("payload"), d.get("fire_files")
         return cls(
             token=str(d.get("token") or ""),
             trigger_id=str(d.get("trigger_id") or ""),
             card=dict(card) if isinstance(card, dict) else {},
             question=str(d.get("question") or ""),
             created_at=float(d.get("created_at") or 0.0),
+            held=str(d.get("held") or ""),
+            payload=dict(payload) if isinstance(payload, dict) else {},
+            fires=int(d.get("fires") or 0),
+            context=str(d.get("context") or ""),
+            fire_facts=str(d.get("fire_facts") or ""),
+            fire_files=[str(f) for f in files] if isinstance(files, list) else [],
         )
 
 
@@ -234,6 +260,75 @@ def raise_park(trigger: Any, result: Any, *, state: Any = None) -> TriggerPark |
         return None
 
 
+def hold_fire(
+    trigger: Any,
+    payload: dict[str, Any],
+    *,
+    provider: str,
+    reason: str,
+    label: str = "",
+    context: str = "",
+    facts: Any = None,
+    refs: dict[str, Any] | None = None,
+    state: Any = None,
+    hook: bool = False,
+) -> TriggerPark | None:
+    """Ask once whether to run a fire held because its action asks first (the `one_tap` rung).
+
+    🔴 It filed a notice: "<action> is waiting for you", with nothing on it that runs the action,
+    since no question was registered for it to answer. Now the hold is this trigger's question:
+    one Inbox row, answerable in place (`TriggerParkActions`), whose Approve runs the held fire
+    once, as your run, with the fire's payload, so the webhook or event that fired it is not lost
+    (`trigger_runs.api_trigger_answer`); Deny records that you declined. It keeps across a
+    restart, as every question here does, until it lapses (:func:`answerable_secs`).
+
+    One question per trigger, however many fires it holds: a later fire before anyone answers
+    keeps the token and the row, and its payload is the one Approve runs (:attr:`TriggerPark.
+    fires` counts them). *payload* is the fire's as the injection screen and the fence left it,
+    never the raw request, with its *context* line and its *facts* (`fire_facts.FireFacts`) as
+    the same door left them; *refs* are added to the row (the action type and its rung, which the
+    ladder reads). *hook* says *trigger* is a lifecycle trigger (``hooks._withhold``), the one
+    kind whose id is ``lifecycle:<id>``. Never raises: the fire is already held, and recorded.
+    """
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+
+    trigger_id = str(getattr(trigger, "id", "") or "")
+    if not trigger_id:
+        return None
+    if trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX) != hook:
+        # A lifecycle trigger's id (``lifecycle:<id>``) is a hook's alone (*hook*): its question
+        # is answered by running that hook, so another trigger that carried one, such as a row an
+        # app serves, is not asked under it, and a hook's question is asked under nothing else.
+        logger.warning("trigger %s: its held fire is not asked: its id is not its own", trigger_id)
+        return None
+    try:
+        park = load(trigger_id)
+        if park is None or expired(park) or not park.held:
+            name = str(getattr(trigger, "name", "") or trigger_id)
+            # The action by the name its app gives it (*label*), and why it did not run: the
+            # rung's own words, which say more than "it asks first" when a profile narrowed it.
+            question = (
+                f"Run {name} now? Its {label or provider} action did not run on its own: {reason}."
+            )
+            park = TriggerPark(
+                token=secrets.token_urlsafe(24),
+                trigger_id=trigger_id,
+                question=question,
+                created_at=time.time(),
+                held=provider,
+            )
+        park.payload, park.fires = dict(payload or {}), park.fires + 1
+        park.context = str(context or "")
+        park.fire_facts = str(getattr(facts, "text", "") or "")
+        park.fire_files = [str(f) for f in (getattr(facts, "files", ()) or ())]
+        _write(park)
+        _raise_row(trigger, park, state=state, refs=refs)
+        return park
+    except Exception:
+        logger.warning("trigger %s: could not hold its fire for you", trigger_id, exc_info=True)
+        return None
+
+
 def claim(trigger_id: str, token: str) -> TriggerPark | None:
     """Consume the park `token` answers. None when there is none, or `token` is not its token
     (already answered, or a stale link). Single-use by an atomic rename, so exactly one of two
@@ -293,7 +388,9 @@ def _dashboard_state() -> Any:
     return None
 
 
-def _raise_row(trigger: Any, park: TriggerPark, *, state: Any = None) -> str:
+def _raise_row(
+    trigger: Any, park: TriggerPark, *, state: Any = None, refs: dict[str, Any] | None = None
+) -> str:
     """The ONE Inbox row: the action's card, answerable in place (`TriggerParkActions`)."""
     from dataclasses import replace
 
@@ -323,9 +420,13 @@ def _raise_row(trigger: Any, park: TriggerPark, *, state: Any = None) -> str:
         # The card's own refs, less the run keys it has none for: an empty `workflow` would read as
         # a gate to anything that only asks whether the key is there.
         **{key: value for key, value in card_refs(card).items() if value},
+        **dict(refs or {}),
         "trigger": park.trigger_id,
         "trigger_name": name,
         "trigger_park": park.trigger_id,
+        # A fire held before it ran (:func:`hold_fire`): the action it holds, so the card says
+        # Approve runs it, not that it runs it again.
+        **({"trigger_held": park.held} if park.held else {}),
     }
     return emit_attention_item(
         state,

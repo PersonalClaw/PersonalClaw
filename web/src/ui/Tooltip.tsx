@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom'
 
 /** How long the pointer rests on a control before its tooltip shows. */
 export const TOOLTIP_DELAY_MS = 400
+/** How long a tooltip a tap opened stays (`tapOpens`), unless a blur or Escape closes it first. */
+export const TAP_SHOWS_MS = 4000
 /** How long a tooltip waits after the pointer leaves, so the pointer can move onto it. */
 const HIDE_GRACE_MS = 100
 /** The gap between a control and its tooltip, and the least distance from the window's edge. */
@@ -33,8 +35,10 @@ export interface TooltipTriggerProps {
  *  page's Escape listeners and closing a tooltip does not also stop a running turn. Its
  *  description is `description` when one is given, else its text unless `describes` is false: the
  *  control's `aria-describedby` names a hidden copy of it, and the bubble, portaled at `--z-menu`,
- *  shows the text. It never opens on touch, nor on the focus a press gives. `children` renders the
- *  control from the trigger props.
+ *  shows the text. It never opens on touch, nor on the focus a press gives, unless `tapOpens`:
+ *  then a tap opens it, for `TAP_SHOWS_MS`, for a control a tap does nothing on, such as a button
+ *  that is unavailable, whose reason is the only answer a tap can get. With no `text` it never
+ *  opens and describes nothing. `children` renders the control from the trigger props.
  *
  *  `describes={false}` is for a control whose name already says the text, such as a list row whose
  *  tooltip shows its whole cut-short title: the bubble shows and the control gets no description,
@@ -46,16 +50,17 @@ export interface TooltipTriggerProps {
  *  is no room, and sits on the control's own row when neither side has room, taking no pointer, so
  *  it covers no other row of its list and the row under it keeps its hover and its click. `shows` is asked as it would
  *  open, so a row whose whole title shows can keep a tip that would only repeat it. */
-export function Tooltip({ text, describes = true, description, side = 'above', shows, children }: {
+export function Tooltip({ text, describes = true, description, side = 'above', shows, tapOpens = false, children }: {
   text: string
   describes?: boolean
   description?: string
   side?: 'above' | 'end'
   shows?: (control: HTMLElement) => boolean
+  tapOpens?: boolean
   children: (trigger: TooltipTriggerProps) => ReactNode
 }) {
   // What a screen reader hears beside the control's name: the text, unless the name says it.
-  const said = description || (describes ? text : '')
+  const said = text ? description || (describes ? text : '') : ''
   const id = useId()
   const [open, setOpen] = useState(false)
   const [place, setPlace] = useState<Place | null>(null)
@@ -110,7 +115,7 @@ export function Tooltip({ text, describes = true, description, side = 'above', s
 
   const opens = () => {
     const control = triggerRef.current
-    return !shows || (control !== null && shows(control))
+    return !!text && (!shows || (control !== null && shows(control)))
   }
 
   const trigger: TooltipTriggerProps = {
@@ -128,7 +133,15 @@ export function Tooltip({ text, describes = true, description, side = 'above', s
     onPointerDown: () => { pressing.current = true },
     // A mouse press that gave no focus (WebKit does not focus a pressed button) is over at its
     // release; a tap's focus comes after its pointerup, so touch and pen keep the mark until then.
-    onPointerUp: (e) => { if (e.pointerType === 'mouse') pressing.current = false },
+    onPointerUp: (e) => {
+      if (e.pointerType === 'mouse') { pressing.current = false; return }
+      // A tap opens only a tip that asks to (`tapOpens`), and only for a while: touch has no leave.
+      if (!tapOpens || !opens()) return
+      clear(showTimer)
+      setOpen(true)
+      clear(hideTimer)
+      hideTimer.current = window.setTimeout(() => { hideTimer.current = null; setOpen(false) }, TAP_SHOWS_MS)
+    },
     onPointerCancel: () => { pressing.current = false },
     onFocus: (e) => {
       if (pressing.current) { pressing.current = false; return }

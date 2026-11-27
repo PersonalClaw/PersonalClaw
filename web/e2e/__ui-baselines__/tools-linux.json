@@ -3,7 +3,6 @@
     "targets": {
       "320": [
         "a \"Settings › Security\"",
-        "button \"Add tool server\"",
         "button \"Disable artifact_delete\"",
         "button \"Disable artifact_get\"",
         "button \"Disable artifact_list\"",
@@ -133,14 +132,11 @@
         "button \"Let personalclaw-core ask you questions\"",
         "button \"Look in Claude Code\"",
         "button \"Look in Codex\"",
-        "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
-        "button \"Remove personalclaw-core\"",
-        "button[role=switch] \"Tool groups\""
+        "button \"Remove personalclaw-core\""
       ],
       "390": [
         "a \"Settings › Security\"",
-        "button \"Add tool server\"",
         "button \"Disable artifact_delete\"",
         "button \"Disable artifact_get\"",
         "button \"Disable artifact_list\"",
@@ -270,15 +266,12 @@
         "button \"Let personalclaw-core ask you questions\"",
         "button \"Look in Claude Code\"",
         "button \"Look in Codex\"",
-        "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
-        "button \"project_listList projects (with their task lists). No args.\"",
-        "button[role=switch] \"Tool groups\""
+        "button \"project_listList projects (with their task lists). No args.\""
       ],
       "412": [
         "a \"Settings › Security\"",
-        "button \"Add tool server\"",
         "button \"Disable artifact_delete\"",
         "button \"Disable artifact_get\"",
         "button \"Disable artifact_list\"",
@@ -408,15 +401,12 @@
         "button \"Let personalclaw-core ask you questions\"",
         "button \"Look in Claude Code\"",
         "button \"Look in Codex\"",
-        "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
-        "button \"project_listList projects (with their task lists). No args.\"",
-        "button[role=switch] \"Tool groups\""
+        "button \"project_listList projects (with their task lists). No args.\""
       ],
       "768": [
         "a \"Settings › Security\"",
-        "button \"Add tool server\"",
         "button \"Disable artifact_delete\"",
         "button \"Disable artifact_get\"",
         "button \"Disable artifact_list\"",
@@ -546,7 +536,6 @@
         "button \"Let personalclaw-core ask you questions\"",
         "button \"Look in Claude Code\"",
         "button \"Look in Codex\"",
-        "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
         "button \"project_listList projects (with their task lists). No args.\"",
@@ -556,8 +545,7 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "button[role=switch] \"Tool groups\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {
@@ -570,7 +558,6 @@
     "targets": {
       "320": [
         "a \"Settings › Security\"",
-        "button \"Add tool server\"",
         "button \"Disable artifact_delete\"",
         "button \"Disable artifact_get\"",
         "button \"Disable artifact_list\"",
@@ -700,14 +687,11 @@
         "button \"Let personalclaw-core ask you questions\"",
         "button \"Look in Claude Code\"",
         "button \"Look in Codex\"",
-        "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
-        "button \"Remove personalclaw-core\"",
-        "button[role=switch] \"Tool groups\""
+        "button \"Remove personalclaw-core\""
       ],
       "390": [
         "a \"Settings › Security\"",
-        "button \"Add tool server\"",
         "button \"Disable artifact_delete\"",
         "button \"Disable artifact_get\"",
         "button \"Disable artifact_list\"",
@@ -837,15 +821,12 @@
         "button \"Let personalclaw-core ask you questions\"",
         "button \"Look in Claude Code\"",
         "button \"Look in Codex\"",
-        "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
-        "button \"project_listList projects (with their task lists). No args.\"",
-        "button[role=switch] \"Tool groups\""
+        "button \"project_listList projects (with their task lists). No args.\""
       ],
       "412": [
         "a \"Settings › Security\"",
-        "button \"Add tool server\"",
         "button \"Disable artifact_delete\"",
         "button \"Disable artifact_get\"",
         "button \"Disable artifact_list\"",
@@ -975,15 +956,12 @@
         "button \"Let personalclaw-core ask you questions\"",
         "button \"Look in Claude Code\"",
         "button \"Look in Codex\"",
-        "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
-        "button \"project_listList projects (with their task lists). No args.\"",
-        "button[role=switch] \"Tool groups\""
+        "button \"project_listList projects (with their task lists). No args.\""
       ],
       "768": [
         "a \"Settings › Security\"",
-        "button \"Add tool server\"",
         "button \"Disable artifact_delete\"",
         "button \"Disable artifact_get\"",
         "button \"Disable artifact_list\"",
@@ -1113,7 +1091,6 @@
         "button \"Let personalclaw-core ask you questions\"",
         "button \"Look in Claude Code\"",
         "button \"Look in Codex\"",
-        "button \"More actions\"",
         "button \"Reconnect personalclaw-core\"",
         "button \"Remove personalclaw-core\"",
         "button \"project_listList projects (with their task lists). No args.\"",
@@ -1123,8 +1100,7 @@
         "button[role=radio] \"Prompts\"",
         "button[role=radio] \"Skills\"",
         "button[role=radio] \"Store\"",
-        "button[role=radio] \"Tools\"",
-        "button[role=switch] \"Tool groups\""
+        "button[role=radio] \"Tools\""
       ]
     },
     "known": {

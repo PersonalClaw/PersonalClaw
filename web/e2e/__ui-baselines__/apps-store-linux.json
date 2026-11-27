@@ -2,24 +2,16 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Install from URL\"",
-        "button \"Install\"",
-        "button \"More actions\""
+        "button \"Install\""
       ],
       "390": [
-        "button \"Install from URL\"",
-        "button \"Install\"",
-        "button \"More actions\""
+        "button \"Install\""
       ],
       "412": [
-        "button \"Install from URL\"",
-        "button \"Install\"",
-        "button \"More actions\""
+        "button \"Install\""
       ],
       "768": [
-        "button \"Install from URL\"",
         "button \"Install\"",
-        "button \"More actions\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",
@@ -39,24 +31,16 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Install from URL\"",
-        "button \"Install\"",
-        "button \"More actions\""
+        "button \"Install\""
       ],
       "390": [
-        "button \"Install from URL\"",
-        "button \"Install\"",
-        "button \"More actions\""
+        "button \"Install\""
       ],
       "412": [
-        "button \"Install from URL\"",
-        "button \"Install\"",
-        "button \"More actions\""
+        "button \"Install\""
       ],
       "768": [
-        "button \"Install from URL\"",
         "button \"Install\"",
-        "button \"More actions\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",

@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { ProposalsLens } from './ProposalsLens'
 import { canBatchApprove, groupKey, applyCase, proposalOf } from './proposalLens'
 import type { InboxItem, InboxProposal } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 // ── A mixed sweep must be IMPOSSIBLE in the UI ────────────────────────────────────────
 //
@@ -96,7 +97,7 @@ describe('Proposals lens', () => {
     selectRow(/Send the reply\?/)
     const btn = batchButton()
     expect(btn.getAttribute('aria-disabled')).toBe('true')
-    expect(btn.getAttribute('title')).toMatch(/different sources or kinds/i)
+    expect(describedBy(btn)).toMatch(/different sources or kinds/i)
     // And it does nothing if clicked anyway: no apply may escape a mixed selection.
     fireEvent.click(btn)
     expect(applyInboxProposal).not.toHaveBeenCalled()
@@ -119,7 +120,7 @@ describe('Proposals lens', () => {
     render(<ProposalsLens items={[learningA, learningB]} onChanged={() => {}} />)
     const btn = batchButton()
     expect(btn.getAttribute('aria-disabled')).toBe('true')
-    expect(btn.getAttribute('title')).toMatch(/select one or more/i)
+    expect(describedBy(btn)).toMatch(/select one or more/i)
   })
 
   it('a failed apply is reported against the row and says it is still pending', async () => {
@@ -171,6 +172,6 @@ describe('Proposals lens', () => {
     render(<ProposalsLens items={[dead]} onChanged={() => {}} />)
     const btn = screen.getByRole('button', { name: /^Approve$/ })
     expect(btn.getAttribute('aria-disabled')).toBe('true')
-    expect(btn.getAttribute('title')).toMatch(/no runnable action/i)
+    expect(describedBy(btn)).toMatch(/no runnable action/i)
   })
 })

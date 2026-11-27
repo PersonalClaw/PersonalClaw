@@ -206,7 +206,7 @@ def test_the_WRITE_response_carries_the_same_issues_as_the_list(home, state):
     assert updated["warnings"] == listed["warnings"]
 
 
-def test_a_STORE_ONLY_kind_carries_warnings_too(home, state):
+def test_a_STORE_ONLY_kind_carries_warnings_too(home, state, monkeypatch):
     """`_serialize_store` had the same drop, and there is no reason a `file` automation's advisory
     should be visible when a schedule's is not — one projection contract, both namespaces.
 
@@ -215,7 +215,12 @@ def test_a_STORE_ONLY_kind_carries_warnings_too(home, state):
     `row.issues` instead of re-deriving a single rule. Asserting the MESSAGE rather than the
     presence
     of the key — a mutant that hard-coded `"warnings": []` survived the presence check.
+
+    The folder it watches is there, so the one advisory is the unknown key's: a folder that is not
+    on this machine is an advisory of its own (`file_watch.watch_warnings`).
     """
+    monkeypatch.setenv("HOME", str(home))
+    (home / "notes").mkdir()
     (home / "triggers.json").write_text(
         json.dumps(
             {

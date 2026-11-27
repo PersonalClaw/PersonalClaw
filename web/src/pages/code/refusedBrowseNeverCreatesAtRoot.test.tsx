@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { WorkspacePicker } from './WorkspacePicker'
+import { describedBy } from '../../test/describedBy'
 
 const HOME = '/Users/me'
 
@@ -112,7 +113,7 @@ describe('a picker whose first browse is refused', () => {
 
     // Reachable and explained, not silently dead — the kit's unavailable contract.
     expect(newFolder()).toHaveAttribute('aria-disabled', 'true')
-    expect(newFolder()).toHaveAttribute('title', expect.stringMatching(/Open a folder first/))
+    expect(describedBy(newFolder())).toEqual(expect.stringMatching(/Open a folder first/))
 
     await userEvent.click(newFolder())
 

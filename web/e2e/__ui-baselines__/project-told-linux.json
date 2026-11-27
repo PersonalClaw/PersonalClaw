@@ -2,45 +2,17 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Agent and model: Agent · Auto\"",
-        "button \"Attach files\"",
-        "button \"Back to Projects\"",
-        "button \"Chat preferences\"",
-        "button \"Chat: When to sow the beans\"",
-        "button \"Close detail\"",
-        "button \"Execution boundary: Normal\"",
-        "button \"Expand detail\"",
-        "button \"Send message\"",
-        "button \"Task mode: Agent\""
+        "button \"Close detail\""
       ],
       "390": [
-        "button \"Agent and model: Agent · Auto\"",
-        "button \"Attach files\"",
-        "button \"Back to Projects\"",
-        "button \"Chat preferences\"",
-        "button \"Chat: When to sow the beans\"",
-        "button \"Close detail\"",
-        "button \"Execution boundary: Normal\"",
-        "button \"Expand detail\"",
-        "button \"Send message\"",
-        "button \"Task mode: Agent\""
+        "button \"Close detail\""
       ],
       "412": [
-        "button \"Agent and model: Agent · Auto\"",
-        "button \"Attach files\"",
-        "button \"Back to Projects\"",
-        "button \"Chat preferences\"",
-        "button \"Chat: When to sow the beans\"",
-        "button \"Close detail\"",
-        "button \"Execution boundary: Normal\"",
-        "button \"Expand detail\"",
-        "button \"Send message\"",
-        "button \"Task mode: Agent\""
+        "button \"Close detail\""
       ],
       "768": [
         "button \"Agent and model: Agent · Auto\"",
         "button \"Attach files\"",
-        "button \"Back to Projects\"",
         "button \"Chat preferences\"",
         "button \"Chat: When to sow the beans\"",
         "button \"Close detail\"",
@@ -62,45 +34,17 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Agent and model: Agent · Auto\"",
-        "button \"Attach files\"",
-        "button \"Back to Projects\"",
-        "button \"Chat preferences\"",
-        "button \"Chat: When to sow the beans\"",
-        "button \"Close detail\"",
-        "button \"Execution boundary: Normal\"",
-        "button \"Expand detail\"",
-        "button \"Send message\"",
-        "button \"Task mode: Agent\""
+        "button \"Close detail\""
       ],
       "390": [
-        "button \"Agent and model: Agent · Auto\"",
-        "button \"Attach files\"",
-        "button \"Back to Projects\"",
-        "button \"Chat preferences\"",
-        "button \"Chat: When to sow the beans\"",
-        "button \"Close detail\"",
-        "button \"Execution boundary: Normal\"",
-        "button \"Expand detail\"",
-        "button \"Send message\"",
-        "button \"Task mode: Agent\""
+        "button \"Close detail\""
       ],
       "412": [
-        "button \"Agent and model: Agent · Auto\"",
-        "button \"Attach files\"",
-        "button \"Back to Projects\"",
-        "button \"Chat preferences\"",
-        "button \"Chat: When to sow the beans\"",
-        "button \"Close detail\"",
-        "button \"Execution boundary: Normal\"",
-        "button \"Expand detail\"",
-        "button \"Send message\"",
-        "button \"Task mode: Agent\""
+        "button \"Close detail\""
       ],
       "768": [
         "button \"Agent and model: Agent · Auto\"",
         "button \"Attach files\"",
-        "button \"Back to Projects\"",
         "button \"Chat preferences\"",
         "button \"Chat: When to sow the beans\"",
         "button \"Close detail\"",

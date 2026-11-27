@@ -9,6 +9,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { api } from '../../lib/api'
 import { InlineError } from '../../ui/InlineError'
 import { TerminalView } from './TerminalView'
+import { hideTerminal, runInTerminalWhenReady, showTerminal } from './terminalBridge'
 import { openRefusal, standing, type OpenRefusal } from './openRefusal'
 import type { TermTab } from './TerminalPage'
 import { tabListKeys } from '../../lib/tabListKeys'
@@ -30,11 +31,17 @@ export function fullTerminalRoute(session?: string): string {
  *  Terminal page, and reuses TerminalView (so exit/reconnect/restart all work identically). "Open
  *  full" hands the session it shows to the Terminal page (`fullTerminalRoute`). Drag the top edge
  *  to resize; height persists. */
-export function TerminalDrawer({ open, onClose, onOpenFull }: {
+export function TerminalDrawer({ open, onClose, onOpenFull, run, onRunTaken }: {
   open: boolean
   onClose: () => void
   /** Open the Terminal page on *session*, the drawer's shown session (none while it has none). */
   onOpenFull: (session?: string) => void
+  /** A command "Run in terminal" left for the drawer while no terminal could take it (`App`). It
+   *  runs in the session the drawer shows, the one it opens for it when it has none, and never in
+   *  another; when that open is refused it is dropped, saying so. */
+  run?: { command: string } | null
+  /** The drawer has taken *run*: run it, or dropped it. */
+  onRunTaken?: () => void
 }) {
   const [tabs, setTabs] = useState<TermTab[]>([])
   const [active, setActive] = useState('')
@@ -53,6 +60,28 @@ export function TerminalDrawer({ open, onClose, onOpenFull }: {
   // dragging/ArrowUp grows it upward.
   const { width: height, onHandleDown, onHandleKey, min, max } = useResizablePanel(
     'terminal-drawer', { storageKey: HEIGHT_KEY, def: DEF_H, min: MIN_H, max: () => window.innerHeight * MAX_FRAC, side: 'bottom' })
+
+  // The session it shows is the one "Run in terminal" goes to (`terminalBridge.showTerminal`),
+  // until it shows another or closes.
+  useEffect(() => {
+    if (!open || !active) return
+    showTerminal(active)
+    return () => hideTerminal(active)
+  }, [open, active])
+
+  // A command left for it runs in the session it shows, bound to that session, or goes with the
+  // open it waited for when that is refused: it never waits for whichever terminal comes next.
+  useEffect(() => {
+    if (!run || !open) return
+    if (active) {
+      const into = active
+      onRunTaken?.()
+      runInTerminalWhenReady(run.command, () => into)
+    } else if (refused && !busy) {
+      onRunTaken?.()
+      notify(`Couldn't run the command: ${refused.text}`, 'error')
+    }
+  }, [run, open, active, refused, busy, onRunTaken])
 
   // Lazily open one session the first time the drawer is shown.
   useEffect(() => {

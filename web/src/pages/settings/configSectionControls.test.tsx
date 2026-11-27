@@ -97,12 +97,39 @@ describe('Settings › Automations › Workflows writes workflows.* (issue #2801
     expect(patchConfig).toHaveBeenCalledWith('workflows.surface_mode_default', 'suggest')
   })
 
-  it('a model tier is a select over the real use cases, not a free-text box', async () => {
+  it('a model tier offers only the use cases its steps run on, and says what a stage runs on', async () => {
     const { WorkflowsPanel } = await import('./WorkflowsPanel')
     render(<WorkflowsPanel />)
-    const tier = await screen.findByRole('combobox', { name: /reasoning tier/i })
-    await userEvent.selectOptions(tier, 'background')
+    // 🔴 Before: six options per tier, Chat and Code & tools among them, and a step's own call never
+    // runs on either (`llm_helpers.one_shot_use_case`): a tier set to one ran on Reasoning. The four
+    // are `WORKFLOW_TIER_USE_CASES`, the enum `_EDITABLE_CONFIG` declares for these keys.
+    const offered = await screen.findAllByRole('button', { name: /^Reasoning tier: / })
+    expect(offered.map((b) => b.textContent)).toEqual(['Reasoning', 'Background', 'Orchestration', 'Loops'])
+    for (const tier of ['Reasoning', 'Standard', 'Fast']) {
+      expect(screen.queryByRole('button', { name: `${tier} tier: Chat` })).toBeNull()
+      expect(screen.queryByRole('button', { name: `${tier} tier: Code & tools` })).toBeNull()
+    }
+    expect(screen.getByRole('button', { name: 'Standard tier: Orchestration' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText(/a stage step's agent runs on orchestration, or on the model the step names/i)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Reasoning tier: Background' }))
     expect(patchConfig).toHaveBeenCalledWith('workflows.model_tier_reasoning', 'background')
+  })
+
+  it('every model tier pill is a 44 px hit box at the compact widths, and the baselined pills keep theirs', async () => {
+    const { WorkflowsPanel } = await import('./WorkflowsPanel')
+    const { TOUCH_TARGET } = await import('../../ui/Toggle')
+    render(<WorkflowsPanel />)
+    // 🔴 Before: the twelve tier pills were the kit's 28 px pill at 320 to 768 px, under the UI
+    // quality matrix's 44 px floor with no baselined allowance (#3905).
+    const pills = await screen.findAllByRole('button', { name: /^(Reasoning|Standard|Fast) tier: / })
+    expect(pills).toHaveLength(12)
+    for (const pill of pills) {
+      for (const cls of TOUCH_TARGET.split(' ')) expect(pill.classList.contains(cls), `${pill.getAttribute('aria-label')} ${cls}`).toBe(true)
+    }
+    // The control: a group the matrix already holds under 44 px keeps its pill until all move.
+    const held = screen.getAllByRole('button', { name: /^Default workspace mode: / })
+    expect(held.length).toBeGreaterThan(0)
+    for (const pill of held) expect(pill.className).not.toContain('min-h-11')
   })
 
   it('a text row commits on Enter — never per keystroke', async () => {

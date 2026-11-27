@@ -366,27 +366,7 @@ def register_lifecycle_hooks(app: web.Application) -> None:
 
     app.on_cleanup.append(_provider_availability_shutdown)
 
-    def _relay_voice_settings(use_case: str) -> None:
-        """Text-to-speech's settings were saved, whoever saved them: every open chat re-reads its
-        voice settings on the ``refresh`` frame naming ``voice``, so "Speak replies aloud" reaches a
-        chat that is already open, in both directions."""
-        if use_case == "tts":
-            app["state"].push_refresh("voice")
-
-    async def _voice_settings_relay_startup(app_: web.Application) -> None:
-        from personalclaw.providers import use_cases
-
-        use_cases.subscribe_settings_saved(_relay_voice_settings)
-
-    app.on_startup.append(_voice_settings_relay_startup)
-
-    async def _voice_settings_relay_shutdown(app_: web.Application) -> None:
-        """Stop relaying when this gateway stops, so a later one in the same process is told."""
-        from personalclaw.providers import use_cases
-
-        use_cases.unsubscribe_settings_saved(_relay_voice_settings)
-
-    app.on_cleanup.append(_voice_settings_relay_shutdown)
+    _register_settings_relays(app)
 
     def _relay_mcp_status(_server: str) -> None:
         """What an MCP server's card says may have changed (`mcp_status.announce`): every open page
@@ -536,3 +516,52 @@ def register_lifecycle_hooks(app: web.Application) -> None:
         artifact_changes.unsubscribe(app_["state"].announce_artifact_change)
 
     app.on_cleanup.append(_artifact_refresh_shutdown)
+
+
+def _register_settings_relays(app: web.Application) -> None:
+    """The relays that tell every open page a setting it shows was saved, whoever saved it: the
+    voice settings, and the models PersonalClaw can use. Each starts with the gateway and stops
+    with it."""
+
+    def _relay_voice_settings(use_case: str) -> None:
+        """Text-to-speech's settings were saved, whoever saved them: every open chat re-reads its
+        voice settings on the ``refresh`` frame naming ``voice``, so "Speak replies aloud" reaches a
+        chat that is already open, in both directions."""
+        if use_case == "tts":
+            app["state"].push_refresh("voice")
+
+    async def _voice_settings_relay_startup(app_: web.Application) -> None:
+        from personalclaw.providers import use_cases
+
+        use_cases.subscribe_settings_saved(_relay_voice_settings)
+
+    app.on_startup.append(_voice_settings_relay_startup)
+
+    async def _voice_settings_relay_shutdown(app_: web.Application) -> None:
+        """Stop relaying when this gateway stops, so a later one in the same process is told."""
+        from personalclaw.providers import use_cases
+
+        use_cases.unsubscribe_settings_saved(_relay_voice_settings)
+
+    app.on_cleanup.append(_voice_settings_relay_shutdown)
+
+    def _relay_model_changes() -> None:
+        """A model binding or a provider instance was written, whoever wrote it: every open page
+        reads again what follows from it (the header's model chip) on the ``refresh`` frame naming
+        ``models``, instead of waiting for its poll."""
+        app["state"].push_refresh("models")
+
+    async def _model_changes_relay_startup(app_: web.Application) -> None:
+        from personalclaw.providers import model_changes
+
+        model_changes.subscribe(_relay_model_changes)
+
+    app.on_startup.append(_model_changes_relay_startup)
+
+    async def _model_changes_relay_shutdown(app_: web.Application) -> None:
+        """Stop relaying when this gateway stops, so a later one in the same process is told."""
+        from personalclaw.providers import model_changes
+
+        model_changes.unsubscribe(_relay_model_changes)
+
+    app.on_cleanup.append(_model_changes_relay_shutdown)

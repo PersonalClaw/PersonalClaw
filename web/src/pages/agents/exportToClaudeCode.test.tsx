@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import { useState } from 'react'
+import { TIP_COPY, describedBy } from '../../test/describedBy'
 
 // ── Exporting your agents to Claude Code, from the Agents page ───────────────────────────────────
 //
@@ -80,7 +81,7 @@ async function openExport() {
 }
 
 async function leaveOutHerReviewer(dialog: HTMLElement) {
-  await within(dialog).findByText(REFUSAL)
+  await within(dialog).findByText(REFUSAL, { ignore: TIP_COPY })
   fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Export code-reviewer' }))
   await waitFor(() => expect(preview).toHaveBeenLastCalledWith(['talk-editor']))
   const ready = await within(dialog).findByRole('button', { name: 'Export 1 agent' })
@@ -118,11 +119,11 @@ describe('the Agents page exports your agents to Claude Code', () => {
     await mount()
     const dialog = await openExport()
     // The gateway's sentence, and the row that says which file.
-    expect(await within(dialog).findByText(REFUSAL)).toBeInTheDocument()
+    expect(await within(dialog).findByText(REFUSAL, { ignore: TIP_COPY })).toBeInTheDocument()
     expect(within(dialog).getByText('A file PersonalClaw did not write is there. It is never overwritten.')).toBeInTheDocument()
     const blocked = within(dialog).getByRole('button', { name: 'Export 2 agents' })
     expect(blocked).toHaveAttribute('aria-disabled', 'true')
-    expect(blocked.getAttribute('title')).toContain(REFUSAL)
+    expect(describedBy(blocked)).toContain(REFUSAL)
     fireEvent.click(blocked)
     expect(exportAgents, 'a refused plan is never written').not.toHaveBeenCalled()
 

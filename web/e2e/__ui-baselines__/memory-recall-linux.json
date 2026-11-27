@@ -2,20 +2,17 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Type a question first\"",
+        "button \"Recall\"",
         "button[role=radio] \"Audit\"",
-        "button[role=radio] \"Files\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Recall\"",
         "button[role=radio] \"Settings\"",
         "button[role=radio] \"Studio\"",
         "input \"Question for deep memory recall\""
       ],
       "390": [
-        "button \"Type a question first\"",
+        "button \"Recall\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -25,7 +22,7 @@
         "input \"Question for deep memory recall\""
       ],
       "412": [
-        "button \"Type a question first\"",
+        "button \"Recall\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -35,7 +32,7 @@
         "input \"Question for deep memory recall\""
       ],
       "768": [
-        "button \"Type a question first\"",
+        "button \"Recall\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -54,20 +51,17 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Type a question first\"",
+        "button \"Recall\"",
         "button[role=radio] \"Audit\"",
-        "button[role=radio] \"Files\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\"",
         "button[role=radio] \"Recall\"",
         "button[role=radio] \"Settings\"",
         "button[role=radio] \"Studio\"",
         "input \"Question for deep memory recall\""
       ],
       "390": [
-        "button \"Type a question first\"",
+        "button \"Recall\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -77,7 +71,7 @@
         "input \"Question for deep memory recall\""
       ],
       "412": [
-        "button \"Type a question first\"",
+        "button \"Recall\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",
@@ -87,7 +81,7 @@
         "input \"Question for deep memory recall\""
       ],
       "768": [
-        "button \"Type a question first\"",
+        "button \"Recall\"",
         "button[role=radio] \"Audit\"",
         "button[role=radio] \"Health\"",
         "button[role=radio] \"Inspect\"",

@@ -237,6 +237,15 @@ export const TITLE_MIN = 48
 /** A view switch folded to its pill at the compact widths: `TOUCH_TARGET`'s 44 px box. */
 const FOLDED_PILL = 44
 
+/** The `…` trigger's box: `TOUCH_TARGET`'s 44 px below the large breakpoint (`compact`), the kit's
+ *  40 px above it. The row counts it at this box and its gap; it took 40 px and a 4 px gap at every
+ *  width, so a 44 px `…` and its 8 px gap overran the room the row had left for it by 8 px. */
+export const overflowTriggerBox = (compact: boolean): number => (compact ? 44 : 40)
+
+/** Below the large breakpoint, where `TOUCH_TARGET`'s `max-lg:` box applies (Tailwind's `lg`, 64rem). */
+const compactNow = (): boolean =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1023.98px)').matches
+
 /** What the title slot is ACTUALLY owed: nothing when it holds no visible content; otherwise
  *  what it cannot shed (`minWidth`) plus the title's floor, never more than its natural width —
  *  and when the cluster's own floor (`floor`) would not fit beside that, the title yields
@@ -446,7 +455,7 @@ export function railCeiling(
 export function HeaderActions({ children, className, overflowClassName, overflowWidth, overflowPhoneSheet }: {
   children: ReactNode
   className?: string
-  /** Added to the `…` trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  /** Added to the `…` trigger. It has the compact widths' 44 px hit box (`TOUCH_TARGET`) already. */
   overflowClassName?: string
   /** The `…` menu's width, for rows whose hints need more than the default 220 px to sit whole on
    *  one line (the library's, 360). */
@@ -508,7 +517,6 @@ export function HeaderActions({ children, className, overflowClassName, overflow
     // flop every RO tick. Only applied when moving up (down-steps are immediate to
     // avoid clipping).
     const HYST = 8
-    const DOTS = 44 // `…` trigger (40px) + gap
     const GAP = 8
 
     // Available width = the header's inner CONTENT box (its width minus the shell-corner
@@ -533,6 +541,8 @@ export function HeaderActions({ children, className, overflowClassName, overflow
     }
 
     const measure = () => {
+      // The `…` and its gap, at the box it is drawn at for the width the row has now.
+      const DOTS = overflowTriggerBox(compactNow()) + GAP
       const header = outer.closest('header')
       const wFull = probeFull.current?.scrollWidth ?? 0
       const wText = probeText.current?.scrollWidth ?? 0
@@ -812,7 +822,7 @@ export function HeaderOverflow({ actions, className, width = OVERFLOW_WIDTH, pho
     <Popover align="right" width={width} placement="bottom" phoneSheet={phoneSheet}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-label="More actions" title="More actions" aria-expanded={open}
-          className={cx('inline-flex items-center justify-center size-10 rounded-pill shrink-0 transition-colors',
+          className={cx('inline-flex items-center justify-center size-10 rounded-pill shrink-0 transition-colors', TOUCH_TARGET,
             open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high hover:text-on-surface', className)}>
           {/* The entrance spring, on the glyph: the trigger has no fill at rest, so it reads as the
               box's spring did, and the box keeps its size. */}
@@ -970,6 +980,8 @@ export function HeaderControl({
         // Same dim as the native attribute, without swallowing the hover that shows the reason.
         'aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
         asSwitch && phone ? 'size-11' : iconOnly ? (asSwitch ? 'h-10 gap-s px-s' : 'size-10') : 'h-10 px-l',
+        // Every header control is a 44 px target below the large breakpoint, its 40 px box above it.
+        TOUCH_TARGET,
         asSwitch ? (active && phone ? 'bg-primary-container text-on-primary-container' : variants.ghost) : active ? variants.secondary : variants[eff],
         asSwitch && active ? CURRENT_OUTLINE : '',
         className,
@@ -1004,7 +1016,8 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
   /** Unavailable for now (the Inbox's Digest while one is being written): the trigger, and its rows
    *  in the `…`. */
   disabled?: boolean
-  /** Added to the trigger, as `HeaderControl`'s: the compact widths' 44 px box (`TOUCH_TARGET`). */
+  /** Added to the trigger, as `HeaderControl`'s. Every trigger has the compact widths' 44 px box
+   *  (`TOUCH_TARGET`) already. */
   className?: string
   /** The open menu's width, for hints that need more than the default 260 px to sit whole on one
    *  line (the library's Add, 384). */
@@ -1033,6 +1046,7 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
             'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
             'transition-colors duration-(--duration-short) disabled:opacity-40 disabled:pointer-events-none',
             iconOnly ? 'size-10' : 'h-10 px-l',
+            TOUCH_TARGET,
             open && variant === 'ghost' ? variants.secondary : variants[variant],
             className,
           )}
@@ -1102,6 +1116,7 @@ export function HeaderPopover({ icon: Icon, label, title, width = 320, children 
             'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
             'transition-colors duration-(--duration-short)',
             iconOnly ? 'size-10' : 'h-10 px-l',
+            TOUCH_TARGET,
             open ? variants.secondary : variants.ghost,
           )}
           style={fvs(470)}>

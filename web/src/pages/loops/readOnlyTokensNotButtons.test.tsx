@@ -99,7 +99,8 @@ describe('the Suggest-more gate keeps its tab stop', () => {
 
   it('says why, and suppresses the click it can no longer refuse natively', () => {
     expect(src).toMatch(/disabled=\{tooShort\} disabledReason="Describe the goal in a bit more detail first"/)
-    expect(button).toMatch(/title=\{softOff \? \[title, disabledReason\]\.filter\(Boolean\)\.join\(' — '\) : title\}/)
+    expect(button).toMatch(/const reason = softOff \? \[title, disabledReason\]\.filter\(Boolean\)\.join\(' — '\) : ''/)
+    expect(button, 'said in the themed tooltip').toMatch(/<Tooltip text=\{reason\} tapOpens>/)
     expect(button).toMatch(/onClick=\{softOff \? \(e\) => e\.preventDefault\(\) : onClick\}/)
   })
 

@@ -1223,9 +1223,11 @@ def _prepare_messages(messages: list[dict], running: bool) -> list[dict]:
             m = {**m, "content": text}
         msg_out = dict(m)
         if msg_out.get("variants"):
+            # A version's own rows (`chat_regenerate._show_version`) stay on the gateway: shown,
+            # they are the turn's rows, served as rows.
             msg_out["variants"] = [
                 {
-                    **v,
+                    **{k: val for k, val in v.items() if k != "rows"},
                     "content": redact_credentials(
                         redact_exfiltration_urls(v.get("content", ""))[0]
                     )[0],

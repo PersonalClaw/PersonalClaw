@@ -127,7 +127,8 @@ export function BuddyStage({ machine, width, steps, onAnswer }: StageProps) {
             <ul className="flex flex-col gap-xs">
               {machine.live.map((w) => (
                 <li key={w.id} className="min-w-0">
-                  <BuddyOrb state={w.phase} line={`${w.name}: ${phaseLabel(w.phase)}${w.id === focus?.id ? ' (in focus)' : ''}`} size={18} />
+                  {/* Its whole line, wrapped in the column: cut short it ran into Focused work at 200% text zoom. */}
+                  <BuddyOrb state={w.phase} line={`${w.name}: ${phaseLabel(w.phase)}${w.id === focus?.id ? ' (in focus)' : ''}`} size={18} wraps />
                 </li>
               ))}
             </ul>

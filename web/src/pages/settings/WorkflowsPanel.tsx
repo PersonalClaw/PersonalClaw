@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow, SegRow, SelectRow, TextRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow, SegRow, TextRow } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 // The editable `workflows.*` fields, mirroring the backend `_EDITABLE_CONFIG` allowlist
@@ -10,15 +10,15 @@ import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 // /api/config/personalclaw; nothing here spreads the fetched config object into a write.
 type WorkflowsCfg = Record<string, unknown>
 
-// The model use cases a tier may resolve to — the chat family from `ModelsPanel`'s USE_CASE_META,
-// which is the same vocabulary `providers/use_cases.py` resolves. 6 options (>4) → a Select.
+// The model use cases a tier may resolve to: the ones a step's own model call runs on, which is
+// the vocabulary `_EDITABLE_CONFIG`'s enum declares (`config/loader.py` WORKFLOW_TIER_USE_CASES).
+// Chat and Code & tools are not offered: they are the axes your own turns run on, and a step that
+// named either ran on Reasoning. 4 options → pills.
 const TIER_USE_CASES = [
-  { value: 'chat', label: 'Chat' },
-  { value: 'code_tools', label: 'Code & tools' },
-  { value: 'reasoning', label: 'Reasoning' },
-  { value: 'background', label: 'Background' },
-  { value: 'orchestration', label: 'Orchestration' },
-  { value: 'loops', label: 'Loops' },
+  { key: 'reasoning', label: 'Reasoning' },
+  { key: 'background', label: 'Background' },
+  { key: 'orchestration', label: 'Orchestration' },
+  { key: 'loops', label: 'Loops' },
 ] as const
 
 /** Workflows — the engine's runtime knobs.
@@ -82,15 +82,15 @@ export function WorkflowsPanel() {
         </RowGroup>
       </Section>
 
-      <Section title="Model tiers" hint="Templates name an intent — reasoning, standard, fast — never a model, so they stay portable. This maps each intent onto one of your model use cases.">
+      <Section title="Model tiers" hint="Templates name an intent — reasoning, standard, fast — never a model, so they stay portable. This maps each intent onto one of your model use cases, for the steps that make their own model call: infer steps and judge gates. A stage step's agent runs on Orchestration, or on the model the step names, whatever its tier.">
         <RowGroup>
-          <SelectRow label="Reasoning tier" cfg={cfg} field="model_tier_reasoning" patch={patch}
+          <SegRow label="Reasoning tier" cfg={cfg} field="model_tier_reasoning" patch={patch} touchTarget
             options={[...TIER_USE_CASES]} fallback="reasoning"
-            hint="Which model use case a node asking for the reasoning tier resolves to." />
-          <SelectRow label="Standard tier" cfg={cfg} field="model_tier_standard" patch={patch}
+            hint="Which model use case a step asking for the reasoning tier runs on." />
+          <SegRow label="Standard tier" cfg={cfg} field="model_tier_standard" patch={patch} touchTarget
             options={[...TIER_USE_CASES]} fallback="orchestration"
-            hint="Use case for the standard tier. Keep it distinct from Fast: if both point at one use case the three tiers are decorative, and a node asking for a mid-capability model silently gets the cheapest one." />
-          <SelectRow label="Fast tier" cfg={cfg} field="model_tier_fast" patch={patch}
+            hint="Use case for the standard tier. Keep it distinct from Fast: if both point at one use case the three tiers are decorative, and a step asking for a mid-capability model silently gets the cheapest one." />
+          <SegRow label="Fast tier" cfg={cfg} field="model_tier_fast" patch={patch} touchTarget
             options={[...TIER_USE_CASES]} fallback="background"
             hint="Use case for the fast tier." />
         </RowGroup>

@@ -3,6 +3,7 @@ import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@te
 import { HeldChange, StaleWriteNotice } from './StaleWriteNotice'
 import { useStaleWriteGuard, type StaleWriteGuard } from '../lib/useStaleWriteGuard'
 import { HELD_CHANGE_REASON, mergeRecord, type Rebase, type Revisioned } from '../lib/staleWrite'
+import { describedBy } from '../test/describedBy'
 
 // ── The one recovery for a stale whole-document save ─────────────────────────────────────────
 //
@@ -237,7 +238,7 @@ describe('StaleWriteNotice', () => {
     expect(reapply.hasAttribute('disabled') || reapply.getAttribute('aria-disabled') === 'true', 'nothing to re-apply onto yet').toBe(true)
     const review = within(alert).getByRole('button', { name: 'Review the difference' })
     expect(review.getAttribute('aria-disabled')).toBe('true')
-    expect(review.getAttribute('title')).toMatch(/Reading the current version/)
+    expect(describedBy(review)).toMatch(/Reading the current version/)
     await act(async () => { land({ value: { name: 'b', prompt: 'one' }, revision: 'r2' }) })
     await waitFor(() => expect(within(alert).getByRole('button', { name: 'Reload and reapply' }).hasAttribute('disabled')).toBe(false))
     expect(review.getAttribute('aria-disabled')).toBeNull()
@@ -269,7 +270,7 @@ describe('StaleWriteNotice', () => {
     for (const name of ['Review the difference', 'Reload and reapply']) {
       const action = within(alert).getByRole('button', { name })
       expect(action.getAttribute('aria-disabled'), `${name} waits`).toBe('true')
-      expect(action.getAttribute('title') ?? '', `${name} says why`).toMatch(/could not be read/)
+      expect(describedBy(action) ?? '', `${name} says why`).toMatch(/could not be read/)
     }
     await act(async () => { fireEvent.click(within(alert).getByRole('button', { name: 'Try again' })) })
     // The failure is off the screen while the new read is out, not left beside it.

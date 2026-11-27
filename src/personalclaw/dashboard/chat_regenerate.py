@@ -1,6 +1,8 @@
 """Regenerate, variant switch, and edit-resend endpoints."""
 
 import asyncio
+import copy
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -29,6 +31,10 @@ from personalclaw.turn_source import FROM_OUTSIDE, TURN_STARTS, provenance
 logger = logging.getLogger(__name__)
 
 _MAX_VARIANTS = 20
+#: The most of its answer's rows (as JSON) a version keeps, past which it keeps its text alone, as
+#: every version once did. A tool-using answer is several rows, its calls among them, and a
+#: version that is the answer whole keeps them all, so a switch can show it whole.
+_ROWS_CAP = 200_000
 # Rewind tail snapshots retained per edited user message. Mirrors _MAX_VARIANTS'
 # spirit (bound the persisted growth); owner tunes against real sessions.
 _MAX_REWIND_SNAPSHOTS = 5
@@ -142,7 +148,7 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
                 and (provenance(m).get("meta") or {}).get(FROM_OUTSIDE) is None
             ]
             if own:
-                variants = _versions_with(own)
+                variants = _versions_with(own, msgs[u_idx + 1 : anchor_idx + 1])
                 if len(variants) > _MAX_VARIANTS:
                     variants = variants[-_MAX_VARIANTS:]
 
@@ -197,7 +203,19 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-def _versions_with(own: list[dict]) -> list[dict]:
+def _rows_of(rows: list[dict]) -> list[dict] | None:
+    """The rows a version keeps of its answer, as they were written, without the versions the
+    answer's first message holds; ``None`` when they are past :data:`_ROWS_CAP` (the version then
+    keeps its text alone)."""
+    kept = [{k: v for k, v in r.items() if k not in ("variants", "variant_idx")} for r in rows]
+    try:
+        size = len(json.dumps(kept, default=str))
+    except (TypeError, ValueError):
+        return None
+    return copy.deepcopy(kept) if size <= _ROWS_CAP else None
+
+
+def _versions_with(own: list[dict], rows: list[dict] | None = None) -> list[dict]:
     """The versions a fresh answer takes, the answer it replaces among them (uncapped; the caller
     keeps the last ``_MAX_VARIANTS``): *own* is that answer's messages, a tool-using answer's
     segments around its calls included.
@@ -210,13 +228,59 @@ def _versions_with(own: list[dict]) -> list[dict]:
     holder = next((m for m in own if isinstance(m.get("variants"), list)), own[0])
     versions = list(holder.get("variants") or [])
     whole = "\n\n".join(text for text in (str(m.get("content") or "") for m in own) if text)
-    answer = {"content": whole, "ts": own[0].get("ts", "")}
+    answer: dict = {"content": whole, "ts": own[0].get("ts", "")}
+    # Its rows as written (*rows*, the answer's every message, its calls among them), so a switch
+    # back to it shows it whole (`api_chat_session_switch_variant`).
+    kept = _rows_of(rows) if rows else None
+    if kept:
+        answer["rows"] = kept
     at = holder.get("variant_idx")
     if not versions:
         versions = [answer]
     elif not isinstance(at, int) or at == len(versions) - 1 or not 0 <= at < len(versions):
         versions[-1] = answer
     return versions
+
+
+def _show_version(
+    session: _ChatSession, at: int, holder: dict, versions: list[dict], idx: int
+) -> dict:
+    """Show the version *idx* of the answer whose first message, at *at*, is *holder*: the turn's
+    rows are swapped for the version's own (its text alone, as one message, for a version that
+    kept none), and the rows it leaves are kept as the version that was on screen, so switching
+    back shows them whole. A tool-using answer is several rows: replacing only its first message's
+    text left the other version's calls and later text in the turn, which a reload drew as that
+    version. Returns the message that holds the versions now."""
+    msgs = session.messages
+    start = at
+    while start > 0 and msgs[start - 1].get("role") not in TURN_STARTS:
+        start -= 1
+    end = at + 1
+    while end < len(msgs) and msgs[end].get("role") not in TURN_STARTS:
+        end += 1
+    shown = holder.get("variant_idx")
+    if not isinstance(shown, int) or not 0 <= shown < len(versions):
+        shown = len(versions) - 1
+    leaving = _rows_of(msgs[start:end])
+    if leaving and isinstance(versions[shown], dict):
+        versions[shown] = {**versions[shown], "rows": leaving}
+    chosen = versions[idx]
+    rows = chosen.get("rows")
+    if isinstance(rows, list) and any(
+        isinstance(r, dict) and r.get("role") == "assistant" for r in rows
+    ):
+        new_rows = [copy.deepcopy(r) for r in rows if isinstance(r, dict)]
+    else:
+        one = {k: v for k, v in holder.items() if k not in ("variants", "variant_idx")}
+        one["content"] = chosen.get("content", "")
+        one["ts"] = chosen.get("ts", holder.get("ts", ""))
+        one.pop("meta", None)
+        new_rows = [one]
+    first = next(r for r in new_rows if r.get("role") == "assistant")
+    first["variants"] = versions
+    first["variant_idx"] = idx
+    msgs[start:end] = new_rows
+    return first
 
 
 async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
@@ -244,7 +308,8 @@ async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
             return web.json_response({"error": "session is running"}, status=409)
 
         target = None
-        for m in reversed(session.messages):
+        for at in range(len(session.messages) - 1, -1, -1):
+            m = session.messages[at]
             if m.get("role") == "assistant" and m.get("variants"):
                 target = m
                 break
@@ -262,10 +327,7 @@ async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
         chosen = variants[idx]
         if not isinstance(chosen, dict):
             return web.json_response({"error": "corrupt variant entry"}, status=400)
-        target_dict: dict = target
-        target_dict["content"] = chosen.get("content", "")
-        target_dict["ts"] = chosen.get("ts", target_dict.get("ts", ""))
-        target_dict["variant_idx"] = idx
+        target_dict: dict = _show_version(session, at, target, variants, idx)
         session._dirty = True
         await _persist_history_off_thread(state, session, "switch-variant")
         sel().log_api_access(
@@ -279,7 +341,14 @@ async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
         _bc, _ = redact_credentials(_bc)
         state.broadcast_ws(
             "chat_variant_switch",
-            {"session": session.key, "index": idx, "count": len(variants), "content": _bc},
+            # `whole`: the turn's rows were swapped for the version's, so a page reads them again.
+            {
+                "session": session.key,
+                "index": idx,
+                "count": len(variants),
+                "content": _bc,
+                "whole": True,
+            },
         )
         return web.json_response({"ok": True, "index": idx})
 

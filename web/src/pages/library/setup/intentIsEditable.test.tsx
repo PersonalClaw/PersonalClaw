@@ -19,6 +19,7 @@ import type { KnowledgeIntent } from '../../../lib/api'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { filesUnder, readSource } from '../../../test/sourceTree'
+import { describedBy } from '../../../test/describedBy'
 
 vi.mock('../../../lib/api', async (orig) => {
   const { gatewayApi } = await import('../../../test/libraryHarness')
@@ -121,7 +122,7 @@ describe('creating an intent', () => {
     render(<IntentForm onClose={vi.fn()} onSaved={vi.fn()} />)
     const start = screen.getByRole('button', { name: 'Start looking' })
     expect(start.getAttribute('aria-disabled') === 'true' || (start as HTMLButtonElement).disabled).toBe(true)
-    expect(start.getAttribute('title') ?? '').toContain('Say what to look out for first.')
+    expect(describedBy(start) ?? '').toContain('Say what to look out for first.')
     save()
     expect(calls.createKnowledgeIntent).toBeUndefined()
   })

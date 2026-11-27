@@ -9,6 +9,7 @@ import { act, fireEvent, render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { WorkflowAsk } from './WorkflowAsk'
 import type { WorkflowContinuation } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 vi.mock('../../lib/api', () => ({ api: {} }))
 
@@ -53,8 +54,8 @@ describe('Deny while an answer is in flight', () => {
     const deny = getByRole('button', { name: /Deny/ })
     expect(deny).toHaveAttribute('aria-disabled', 'true')
     // Deny's own words are its label; only the reason it is held is said.
-    expect(deny.getAttribute('title') ?? '', 'the reason is said').toMatch(/.+/)
-    expect(deny.getAttribute('title') ?? '').not.toMatch(/Deny this step/)
+    expect(describedBy(deny) ?? '', 'the reason is said').toMatch(/.+/)
+    expect(describedBy(deny)).not.toMatch(/Deny this step/)
     fireEvent.click(deny)
     expect(onAnswer).not.toHaveBeenCalled()
   })

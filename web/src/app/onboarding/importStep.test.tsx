@@ -42,6 +42,7 @@ import { ImportStep, summaryOfReport } from './ImportStep'
 import type {
   OnboardingImportItem, OnboardingImportJob, OnboardingImportReport, OnboardingImportScan,
 } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 /** A stand-in for the browser's EventSource that a test can push the import stream's frames
  *  through. */
@@ -371,7 +372,7 @@ describe('the import sends exactly the chosen fingerprints, and nothing else', (
     await mounted()
     for (const label of ['Instructions', 'MCP servers', 'Skills']) fireEvent.click(groupBox(label))
     const button = screen.getByRole('button', { name: /Import selected/ })
-    expect(button.getAttribute('title')).toMatch(/Pick at least one thing/)
+    expect(describedBy(button)).toMatch(/Pick at least one thing/)
     fireEvent.click(button)
     expect(runOnboardingImport).not.toHaveBeenCalled()
   })

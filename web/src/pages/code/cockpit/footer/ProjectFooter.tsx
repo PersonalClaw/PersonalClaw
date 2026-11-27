@@ -5,7 +5,7 @@ import { SpendCapPause } from '../../../../ui/SpendCapPause'
 import { NoToolsPause } from '../../../loops/NoToolsPause'
 import { IconButton } from '../../../../ui/IconButton'
 import { type CodeProject } from '../../../../lib/api'
-import { loopStatusLabel } from '../../../../lib/loopStatus'
+import { loopStatusLabel, PRELAUNCH_LOOP_STATUSES } from '../../../../lib/loopStatus'
 import { type StallInfo } from '../../../loops/runFold'
 import { KeptWork } from '../../KeptWork'
 import { StageGateVerdict } from '../../StageGateVerdict'
@@ -195,6 +195,10 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
           </div>
         ) : project.status === 'ready' || project.status === 'review' ? (
           <p data-type="caption" className="px-1.5 py-1 text-center text-on-surface-low">Press Start to launch — steer the worker once it's running.</p>
+        ) : PRELAUNCH_LOOP_STATUSES.has(project.status) ? (
+          // `intake` or `planning`: its plan is still being made, on its walkthrough. A cockpit
+          // shown for one (before the section has read its status) said it had finished.
+          <p data-type="caption" className="px-1.5 py-1 text-center text-on-surface-low">This project hasn’t started yet.</p>
         ) : (
           // Finished: the steer box is gone, so give the dangling "start a new one"
           // call-to-action a real button (was prose pointing nowhere — the only paths

@@ -2,6 +2,7 @@ import { memo, useRef, type ReactNode } from 'react'
 import { AnimatePresence, motion, useMotionValue, useMotionTemplate, useReducedMotion, type MotionValue } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { cx } from './cx'
+import { Tooltip } from './Tooltip'
 import { spring, physics, exprHeavy } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { usePersonality } from '../app/personality'
@@ -187,7 +188,7 @@ export function Button({
 }) {
   const reduce = useReducedMotion()
   const light = !!usePersonality().personality.behavior.decorativeLight
-  const ref = useRef<HTMLButtonElement>(null)
+  const ref = useRef<HTMLButtonElement | null>(null)
   const isSolid = variant === 'primary' || variant === 'danger'
   const off = !!disabled || loading
   // Reachable-but-unavailable only when a reason exists to announce; otherwise stay native.
@@ -208,34 +209,43 @@ export function Button({
   const onLeave = () => { mx.set(50); my.set(50) }
 
   const showSheen = light && isSolid && !reduce && exprHeavy(0.45) && !off
+  // The reason is said in the themed Tooltip, on hover, on keyboard focus and on a tap, and is the
+  // button's description through its hidden copy, a sibling of the button, so the button's name
+  // stays its action. Always wrapped, so a button that becomes available keeps its focus.
+  const reason = softOff ? [title, disabledReason].filter(Boolean).join(' — ') : ''
 
   return (
+    <Tooltip text={reason} tapOpens>{(trigger) => (
     <button
-      ref={ref}
+      ref={(el) => { ref.current = el; trigger.ref(el) }}
       type={type}
-      title={softOff ? [title, disabledReason].filter(Boolean).join(' — ') : title}
+      title={softOff ? undefined : title}
       aria-label={ariaLabel}
       aria-expanded={ariaExpanded}
       aria-pressed={ariaPressed}
-      aria-describedby={softOff ? undefined : ariaDescribedBy}
+      aria-describedby={softOff ? trigger['aria-describedby'] : ariaDescribedBy}
+      onPointerEnter={trigger.onPointerEnter}
+      onPointerDown={trigger.onPointerDown}
+      onPointerUp={trigger.onPointerUp}
+      onPointerCancel={trigger.onPointerCancel}
+      onFocus={trigger.onFocus}
+      onBlur={trigger.onBlur}
+      onKeyDown={trigger.onKeyDown}
       // `loading` cross-fades the label to opacity 0 and swaps in an aria-hidden spinner, so
       // sighted users see the action is in flight and everyone else got NO signal at all —
       // the button just went quiet and disabled while keeping its original name. `aria-busy`
       // is the state that says "working"; measured 0 buttons in the app carrying it before.
       aria-busy={loading || undefined}
-      // The reason rides `title`, NOT an aria-describedby target inside the button.
-      // An sr-only <span> in the button body is CONCATENATED into the accessible
-      // name — "Create project" became "Create projectEnter a name first", so the action
-      // stopped being findable by its own name. A describedby target outside the button would
-      // need a wrapper element at 100+ call sites. `title` is already the kit's convention
-      // and is both the sighted tooltip and the AT description.
+      // The reason is NOT an aria-describedby target inside the button: an sr-only <span> in
+      // the button body is CONCATENATED into the accessible name ("Create project" became
+      // "Create projectEnter a name first"). The Tooltip's hidden copy sits beside the button.
       // aria-disabled when there is a reason to announce (keeps the tab stop), native
       // `disabled` otherwise. Both paths must refuse the click.
       aria-disabled={softOff || undefined}
       onClick={softOff ? (e) => e.preventDefault() : onClick}
       disabled={softOff ? undefined : off}
       onPointerMove={onMove}
-      onPointerLeave={onLeave}
+      onPointerLeave={(e) => { onLeave(); trigger.onPointerLeave(e) }}
       data-type={sizeRole[size]}
       style={fvs(470)}
       className={cx(
@@ -305,6 +315,7 @@ export function Button({
         )}
       </AnimatePresence>
     </button>
+    )}</Tooltip>
   )
 }
 

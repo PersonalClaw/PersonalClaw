@@ -24,6 +24,7 @@ import { phaseKey } from '../loops/loopPhases'
 import { api, sdlcStageLabel, type Loop, type LoopPhase } from '../../lib/api'
 import { loopStatusLabel, effectiveLoopStatus, loopStatusTone, ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
+import { useLoopStatusRead } from '../../lib/useLoopStatusRead'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import type { RouteProps } from '../../app/useQueryState'
 
@@ -72,27 +73,17 @@ export function CodeSection({ sub, navigate, query, setQuery }: RouteProps) {
   // Review — NOT drop into the (empty) cockpit, which is for launched projects only.
   // We probe the status for a concrete-id route and route accordingly.
   const [resume, setResume] = useState<{ id: string; status: 'planning' | 'review'; project: Loop } | null>(null)
-  useEffect(() => {
-    let alive = true
-    const concrete = seg && seg !== 'history'
-    if (!concrete || planningId === seg || review?.projectId === seg) { setResume(null); return }
-    api.uLoop(seg).then((p) => {
-      if (!alive) return
-      // intake (classifier running) + planning both belong in the walkthrough.
-      const planningLike = p && (p.status === 'planning' || p.status === 'intake')
-      setResume(p && (planningLike || p.status === 'review')
-        ? { id: seg, status: (planningLike ? 'planning' : 'review'), project: p } : null)
-    }).catch((e) => {
-      if (!alive) return
-      // Only a real 404 means the project is gone → clear the resume routing and let
-      // the cockpit show its own missing state. On a transient error (network blip /
-      // 5xx) DON'T clear: clearing would fall a still-planning/review project through
-      // to the cockpit (wrong surface — the execution mini-IDE instead of the
-      // walkthrough / Plan Review). Keep any prior resume; the effect re-runs + recovers.
-      if ((e as { status?: number })?.status === 404) setResume(null)
-    })
-    return () => { alive = false }
-  }, [seg, planningId, review])
+  const probeId = seg && seg !== 'history' && planningId !== seg && review?.projectId !== seg ? seg : null
+  useEffect(() => { if (!probeId) setResume(null) }, [probeId])
+  // Read again while a read fails in a way that passes (`useLoopStatusRead`): a failed first read
+  // on a reload left a still-planning project on the cockpit, which said it had finished. A refusal
+  // no retry mends (a 404: the project is gone) clears the routing, and the cockpit says so.
+  const probeAgain = useLoopStatusRead(probeId, (p) => {
+    // intake (classifier running) + planning both belong in the walkthrough.
+    const planningLike = !!p && (p.status === 'planning' || p.status === 'intake')
+    setResume(p && (planningLike || p.status === 'review')
+      ? { id: p.id, status: (planningLike ? 'planning' : 'review'), project: p } : null)
+  }, () => setResume(null))
 
   const activePlanningId = planningId || (resume?.status === 'planning' ? resume.id : null)
 
@@ -139,8 +130,12 @@ export function CodeSection({ sub, navigate, query, setQuery }: RouteProps) {
   if (seg) {
     // The cockpit shows its own loader while it fetches the project, so a deep-link
     // to a still-pre-launch project briefly shows that loader, then the resume probe
-    // (above) re-routes it to the walkthrough / Plan Review. No wrong content flashes.
+    // (above) re-routes it to the walkthrough / Plan Review. A cockpit that shows such a
+    // project meanwhile says it hasn't started yet.
     return <CodeCockpitPage key={seg} id={seg} navigate={navigate}
+      // A status its own read or stream brings in that belongs on the walkthrough or Plan Review
+      // (the read above failed, or the project went back to planning): read it here again.
+      onStatus={(s) => { if (s === 'intake' || s === 'planning' || s === 'review') probeAgain() }}
       onBack={() => navigate('code/history')}
       // Invalidate the cached project list BEFORE navigating to it — else the SWR cache
       // paints the just-deleted project as a ghost row (clickable → "no longer exists")

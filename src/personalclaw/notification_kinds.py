@@ -445,6 +445,54 @@ _KINDS: tuple[NotificationKind, ...] = (
         decision=True,
         owner="personalclaw.rooms.arbiter",
     ),
+    # The four notices that wait on the owner and were sent as a plain `system/warning`, a badge,
+    # once only a decision or an error interrupted by default. Each is a `decision` of its own: work
+    # or a person waits until the owner acts. WARNING, the severity the `warning` emission had, so
+    # a raised minimum filters each as it did.
+    #
+    # An unpaired sender's first message and the Allow or Deny it waits on (or, on a channel that
+    # speaks as the owner, their message held in the Inbox for a reply): they get no answer until
+    # the owner pairs them, denies them or replies.
+    NotificationKind(
+        "channel",
+        "unknown_sender",
+        "Someone new wrote to you",
+        "immediate",
+        SEV_WARNING,
+        decision=True,
+        owner="personalclaw.channel_trust",
+    ),
+    # Automations paused by the spend ceiling, or by a ceiling that could not be read: none fires
+    # until the ceiling resets or the owner raises it.
+    NotificationKind(
+        "cron",
+        "budget_paused",
+        "Automations paused by the budget",
+        "immediate",
+        SEV_WARNING,
+        decision=True,
+        owner="personalclaw.gateway",
+    ),
+    # An MCP server's sign-in that ended: its tools cannot be used until the owner signs in again.
+    NotificationKind(
+        "mcp",
+        "sign_in_ended",
+        "MCP sign-in ended",
+        "immediate",
+        SEV_WARNING,
+        decision=True,
+        owner="personalclaw.mcp_oauth",
+    ),
+    # An unattended action the denylist held for the owner's approval: it does not run until then.
+    NotificationKind(
+        "guardrails",
+        "action_held",
+        "Action held for your approval",
+        "immediate",
+        SEV_WARNING,
+        decision=True,
+        owner="personalclaw.guardrails.denylist",
+    ),
     # system-level warnings and drift
     NotificationKind(
         "system",
@@ -869,6 +917,13 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # Its own wire string, not the bare `description_changed`: the digest groups by it and the SPA
     # keys its label on it, and the bare kind says nothing of whose description it was.
     "mcp_description_changed": ("mcp", "description_changed"),
+    # The four decisions that were plain `warning`s (their registrations say why).
+    # `mcp_sign_in_ended`, not the bare `sign_in_ended`: the digest groups by the wire string, and
+    # the bare kind says nothing of whose sign-in it was.
+    "unknown_sender": ("channel", "unknown_sender"),
+    "budget_paused": ("cron", "budget_paused"),
+    "mcp_sign_in_ended": ("mcp", "sign_in_ended"),
+    "action_held": ("guardrails", "action_held"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
@@ -921,6 +976,14 @@ AUTO_DENIED = "auto_denied"
 RUN_REVIEW = "run_review"
 #: A server whose read-only labels the owner does not trust changed a tool's description.
 MCP_DESCRIPTION_CHANGED = "mcp_description_changed"
+#: An unpaired sender waiting on the owner's Allow or Deny (`channel_trust.note_unknown_sender`).
+UNKNOWN_SENDER = "unknown_sender"
+#: Automations paused by the spend ceiling (`GatewayOrchestrator._notify_budget_once`).
+BUDGET_PAUSED = "budget_paused"
+#: An MCP server's sign-in that ended (`mcp_oauth._end_sign_in`).
+MCP_SIGN_IN_ENDED = "mcp_sign_in_ended"
+#: An unattended action the denylist held for approval (`guardrails.denylist.enforce_action`).
+ACTION_HELD = "action_held"
 GENERIC = GENERIC_KIND
 
 #: Every constant above, for the import-time consistency check and the drift test.
@@ -949,6 +1012,10 @@ WIRE_CONSTANTS: tuple[str, ...] = (
     AUTO_DENIED,
     RUN_REVIEW,
     MCP_DESCRIPTION_CHANGED,
+    UNKNOWN_SENDER,
+    BUDGET_PAUSED,
+    MCP_SIGN_IN_ENDED,
+    ACTION_HELD,
     GENERIC,
 )
 

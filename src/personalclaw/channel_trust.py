@@ -1279,7 +1279,7 @@ def note_unknown_sender(
                     "Allow them to talk to it, or deny."
                 )
             state.notify(
-                notification_kinds.WARNING,
+                notification_kinds.UNKNOWN_SENDER,
                 title,
                 body,
                 meta={

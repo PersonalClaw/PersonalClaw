@@ -17,18 +17,22 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   hasActiveTerminal,
+  hideTerminal,
   registerTerminal,
+  showTerminal,
   unregisterTerminal,
   runInTerminal,
 } from './terminalBridge'
 
 afterEach(() => {
-  for (const id of ['live', 'dead', 'x1']) unregisterTerminal(id)
+  for (const id of ['live', 'dead', 'x1']) { hideTerminal(id); unregisterTerminal(id) }
 })
 
 describe('bridge lifecycle (issue 598)', () => {
-  it('registering makes a terminal active; unregistering retires it', () => {
+  it('a shown terminal is active once it registers; unregistering retires it', () => {
     expect(hasActiveTerminal()).toBe(false)
+    showTerminal('x1')
+    expect(hasActiveTerminal(), 'shown, but nothing to send to yet').toBe(false)
     registerTerminal('x1', () => true)
     expect(hasActiveTerminal()).toBe(true)
     unregisterTerminal('x1')
@@ -38,17 +42,23 @@ describe('bridge lifecycle (issue 598)', () => {
   it('a sender that cannot send does NOT retire the terminal (reconnect-by-design)', () => {
     // A dropped socket over a live PTY reconnects — the registration must survive
     // a false-returning sender. Only an explicit unregister (exit/unmount) retires it.
+    showTerminal('live')
     registerTerminal('live', () => false)
     expect(hasActiveTerminal()).toBe(true)
     expect(runInTerminal('echo hi')).toBe(false)
     expect(hasActiveTerminal()).toBe(true)
   })
 
-  it('falls back to the most recent surviving terminal when the active one retires', () => {
+  it('a retired target leaves no target, and its surface hiding it gives back the one shown before', () => {
     const got: string[] = []
+    showTerminal('live')
     registerTerminal('live', (t) => { got.push(t); return true })
+    showTerminal('dead')
     registerTerminal('dead', () => false)
     unregisterTerminal('dead')
+    expect(hasActiveTerminal(), 'a pane showing "Process exited" takes nothing').toBe(false)
+    expect(runInTerminal('pytest')).toBe(false)
+    hideTerminal('dead')
     expect(hasActiveTerminal()).toBe(true)
     expect(runInTerminal('pytest')).toBe(true)
     expect(got).toEqual(['pytest\n'])

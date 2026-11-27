@@ -30,6 +30,7 @@ vi.mock('../../app/identity', async (orig) => ({
 }))
 
 import { AccountPanel } from './AccountPanel'
+import { describedBy } from '../../test/describedBy'
 
 const SESSION = {
   login_enabled: true, credential_configured: true, username: 'ada', totp_enabled: false,
@@ -53,7 +54,7 @@ describe('changing a password that is set', () => {
     type('New password', NEW)
     type('Confirm password', NEW)
     expect(save().getAttribute('aria-disabled') ?? String((save() as HTMLButtonElement).disabled)).toMatch(/true/)
-    expect(save().getAttribute('title') ?? save().getAttribute('aria-description') ?? '').toMatch(/current password/)
+    expect(describedBy(save()) ?? save().getAttribute('aria-description') ?? '').toMatch(/current password/)
     type('Current password', 'correct-horse-battery-staple')
     fireEvent.click(save())
     await waitFor(() => expect(setLoginPassword).toHaveBeenCalledOnce())

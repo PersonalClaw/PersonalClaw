@@ -1395,7 +1395,7 @@ class GatewayOrchestrator:
         if self.dashboard_state is None:
             return
         try:
-            self.dashboard_state.notify(notification_kinds.WARNING, title, body)
+            self.dashboard_state.notify(notification_kinds.BUDGET_PAUSED, title, body)
         except Exception:
             logger.debug("budget notify failed", exc_info=True)
 
@@ -1707,7 +1707,7 @@ class GatewayOrchestrator:
         # incident, or a budget pause.
         from personalclaw.guardrails.denylist import enforce_action
         from personalclaw.guardrails.policy import unattended_dispatch_key
-        from personalclaw.guardrails.rungs import announce_withheld, record_execution
+        from personalclaw.guardrails.rungs import record_execution
         from personalclaw.guardrails.rungs import route_provider_action as _route_action
 
         # 🔴 THE SESSION IDENTITY, now shared by BOTH gates on this seam (the shape the
@@ -1762,26 +1762,10 @@ class GatewayOrchestrator:
         # here with no branch of its own.
         route = _route_action(provider_name, session_key=dispatch_key)
         if not route.executes:
-            announce_withheld(
-                route,
-                title=f"{provider_name} is waiting for you",
-                body=(
-                    f"The {provider_name!r} action on trigger {trigger.id} did not run: "
-                    f"{route.reason}."
-                ),
-                refs=_held_action_refs(trigger, provider_name),
-                dedup_key=f"autonomy_hold:{route.key}:trigger:{getattr(trigger, 'id', '')}",
+            label = str(getattr(provider, "display_name", "") or provider_name)
+            return await self._hold_fire(
+                trigger, payload, route, provider_name, label, source=source, held=fired
             )
-            from personalclaw.triggers.models import Outcome as _Outcome
-
-            run_id = await self._record_refused_fire(
-                trigger,
-                status=_Outcome.SKIPPED_GATE.value,
-                error=f"held for your approval: {route.reason}",
-                source=source,
-            )
-            self._push_trigger_refresh()
-            return run_id
 
         # 🔴 THE DAY-BUDGET PAUSE, at the seam that never had one.
         # `_day_budget_exceeded` was WRITTEN to be this gate — its own docstring says it is "used as
@@ -1988,6 +1972,62 @@ class GatewayOrchestrator:
             await self._chain_after_fire(
                 trigger, payload, cut_off=cut_off, started_only=started_only
             )
+        return run_id
+
+    async def _hold_fire(
+        self,
+        trigger: Any,
+        payload: dict[str, Any],
+        route: Any,
+        provider_name: str,
+        label: str,
+        *,
+        source: str,
+        held: Any = None,
+    ) -> str:
+        """Hold a fire whose action's rung does not let it run on its own, ask you, and record it.
+        Returns the id of the history row it wrote.
+
+        An action that asks first (`one_tap`) is asked as a question you can answer: Approve runs
+        this fire once, as your run, with its payload (`parks.hold_fire`). One that only drafts
+        (`draft_only`) files a proposal of what it would have done (`rungs.announce_withheld`).
+        *held* is what the fire's door handed on (`fire_facts.HandedOn`): its `$CONTEXT` line and
+        its account of what started it are kept with the payload, so Approve hands them on too.
+        """
+        from personalclaw.guardrails.rungs import ROUTE_ASK, announce_withheld
+        from personalclaw.triggers import parks
+
+        refs = _held_action_refs(trigger, provider_name)
+        if route.route == ROUTE_ASK:
+            parks.hold_fire(
+                trigger,
+                payload,
+                provider=provider_name,
+                reason=route.reason,
+                label=label,
+                context=str(getattr(held, "context", "") or ""),
+                facts=getattr(held, "facts", None),
+                refs={"action_type": route.key, "rung": route.rung, **refs},
+                state=getattr(self, "dashboard_state", None),
+            )
+        else:
+            announce_withheld(
+                route,
+                title=f"{provider_name} is waiting for you",
+                body=(
+                    f"The {provider_name!r} action on trigger {trigger.id} did not run: "
+                    f"{route.reason}."
+                ),
+                refs=refs,
+                dedup_key=f"autonomy_hold:{route.key}:trigger:{getattr(trigger, 'id', '')}",
+            )
+        run_id = await self._record_refused_fire(
+            trigger,
+            status=Outcome.SKIPPED_GATE.value,
+            error=f"held for your approval: {route.reason}",
+            source=source,
+        )
+        self._push_trigger_refresh()
         return run_id
 
     async def _chain_after_fire(

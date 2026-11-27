@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { ReadingView } from './ReadingView'
 import { MARK_CLASS } from './readingAnchors'
 import { api, type KnowledgeAnnotation, type KnowledgeItem } from '../../lib/api'
+import { describedBy } from '../../test/describedBy'
 
 // ── The reading view ────────────────────────────────────────────────────────────
 // Three clauses to hold, and each one has a way of looking held while being absent:
@@ -256,7 +257,7 @@ describe('the in-reader highlight', () => {
     render(<ReadingView item={item()} annotations={[]} onAnnotationsChanged={() => {}} />)
     const button = screen.getByRole('button', { name: /Highlight selection/ })
     expect(button).toHaveAttribute('aria-disabled', 'true')
-    expect(button.getAttribute('title')).toMatch(/Select a passage/)
+    expect(describedBy(button)).toMatch(/Select a passage/)
 
     await selectByKeyboard('quick brown fox')
 

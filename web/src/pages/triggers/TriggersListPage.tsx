@@ -28,7 +28,7 @@ import { CallbackDetail } from './CallbackDetail'
 import { TriggerReview } from './TriggerReview'
 import { RestoreHoldNotice } from './RestoreHold'
 import { UnreadableNotice } from './UnreadableNotice'
-import { scheduleToTrigger, hookToTrigger, storeToTrigger, callbackToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, callbackToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, advisoryBadge, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { triggerStatusMeta, explainsCause, relFuture, runSourceMeta } from '../schedule/scheduleMeta'
@@ -422,8 +422,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               danger, because the trigger RUNS as authored; this is an advisory. */}
                           {/* A web watch whose last check leaves it unable to fire carries that
                               sentence among its warnings, and "check schedule" would send the owner
-                              to a cadence that is not the problem. */}
-                          {advisory.length > 0 && <span data-type="caption" className="shrink-0 text-warn">· {t.store?.last_check?.can_fire === false ? "can't fire" : 'check schedule'}</span>}
+                              to a cadence that is not the problem; so would a file automation's
+                              folder that is not on this machine. */}
+                          {advisory.length > 0 && <span data-type="caption" className="shrink-0 text-warn">· {advisoryBadge(t)}</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
                           {/* The app that keeps it: where it is changed, and why its menu has no Edit. */}
                           {t.servedBy && !t.readOnly && <span data-type="caption" className="shrink-0 text-on-surface-low">· from {t.servedBy}</span>}

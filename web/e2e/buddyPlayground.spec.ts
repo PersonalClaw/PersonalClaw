@@ -10,7 +10,8 @@ import type { Theme } from './routes'
 // the stage after every step, each a state change of the day, in seven legs: light and dark at the
 // rest width, then 320, 390 and 412 px, high contrast, and 200% text zoom. Each screenshot comes
 // with an overflow check (nothing past the right edge, no text cut off by a box that does not
-// scroll), and a leg reds on the first step that finds one.
+// scroll, no control of the card that no scroll can bring into view, no list running into the
+// next), and a leg reds on the first step that finds one.
 //
 // The screenshots are saved, never compared: they are the recording the owner reviews the day by
 // (`buddy-day/<leg>/` in the test's output folder), with an index of each step's situation and
@@ -69,6 +70,53 @@ async function clippedFindings(page: Page): Promise<string[]> {
     }
     return out
   })
+}
+
+/** A control in the buddy's card that no scroll can bring into view: past the edge of a box that
+ *  cuts it off and that nobody can scroll (`overflow: hidden`), once every scrolling box between it
+ *  and that box has brought it as close as it can. A card taller than its space scrolls inside
+ *  itself (`data-buddy-card-surface`), and that is fine; a control a box cuts off is not, as the
+ *  own-words field and its Send at 200% text zoom were said to be, as a review of the 200% shots found. */
+async function unreachableControls(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const out: string[] = []
+    const name = (e: HTMLElement) => (e.getAttribute('aria-label') || e.textContent || e.getAttribute('placeholder') || e.tagName).replace(/\s+/g, ' ').trim().slice(0, 30)
+    for (const el of document.querySelectorAll('[data-buddy-card] :is(button, input, textarea, select, a[href])')) {
+      const e = el as HTMLElement
+      if (!e.getClientRects().length) continue
+      const r = e.getBoundingClientRect()
+      // Where the control can be brought: its own box, until a box that scrolls holds it, which can
+      // bring it to its own top (a control taller than that box shows its top).
+      let reach = { top: r.top, bottom: r.bottom, left: r.left, right: r.right }
+      for (let a = e.parentElement; a && a !== document.body; a = a.parentElement) {
+        const cs = getComputedStyle(a)
+        const scrollsY = /auto|scroll/.test(cs.overflowY)
+        const scrollsX = /auto|scroll/.test(cs.overflowX)
+        const clipsY = /hidden|clip/.test(cs.overflowY)
+        const clipsX = /hidden|clip/.test(cs.overflowX)
+        if (!scrollsY && !scrollsX && !clipsY && !clipsX) continue
+        const b = a.getBoundingClientRect()
+        const box = { top: b.top + a.clientTop, left: b.left + a.clientLeft, bottom: b.top + a.clientTop + a.clientHeight, right: b.left + a.clientLeft + a.clientWidth }
+        if (scrollsY) reach = { ...reach, top: box.top, bottom: box.top + Math.min(reach.bottom - reach.top, a.clientHeight) }
+        if (scrollsX) reach = { ...reach, left: box.left, right: box.left + Math.min(reach.right - reach.left, a.clientWidth) }
+        const cutY = clipsY && (reach.top < box.top - 0.5 || reach.bottom > box.bottom + 0.5)
+        const cutX = clipsX && (reach.left < box.left - 0.5 || reach.right > box.right + 0.5)
+        if (cutY || cutX) {
+          out.push(`"${name(e)}" is cut off by <${a.tagName.toLowerCase()}>, and nothing scrolls to it`)
+          break
+        }
+      }
+    }
+    return out
+  })
+}
+
+/** A list of the stage that spills sideways into the next: its content wider than its column. At
+ *  200% text zoom the running list's lines ran over Focused work, as a review of the 200% shots found. */
+async function spillingLists(page: Page): Promise<string[]> {
+  return page.evaluate(() => [...document.querySelectorAll('[data-stage] section[role="region"]')]
+    .filter((s) => s.scrollWidth > s.clientWidth + 1)
+    .map((s) => `"${s.getAttribute('aria-label')}" spills past its column: ${s.scrollWidth} in ${s.clientWidth}`))
 }
 
 /** What of `target` is out of sight: each edge past the visible box of a scrolling ancestor or of
@@ -147,7 +195,10 @@ async function recordDay(page: Page, info: TestInfo, leg: Leg): Promise<void> {
     if (family !== 'none') families.add(family)
     const shot = `${String(n).padStart(2, '0')}-${situation}.png`
     await shoot(page, page.locator('[data-stage]'), info.outputPath('buddy-day', leg.name, shot), leg)
-    const found = [...(await overflowFindings(page)), ...(await clippedFindings(page))]
+    const found = [
+      ...(await overflowFindings(page)), ...(await clippedFindings(page)),
+      ...(await unreachableControls(page)), ...(await spillingLists(page)),
+    ]
     index.push(`${shot}\t${situation}\t${family}${found.length ? `\t${found.join('; ')}` : ''}`)
     expect(found, `step ${n} (${situation}) on the ${leg.name} leg`).toEqual([])
   }

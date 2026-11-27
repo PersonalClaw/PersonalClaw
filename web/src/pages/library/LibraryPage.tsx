@@ -222,7 +222,14 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
   const place = powerUserPlace(raw, power.stored, narrowed)
   const powerOn = !!place.tab
   const onItems = !place.tab || place.tab === 'items'
-  const previewed = selected ? rows.find((r) => r.ref === selected) : undefined
+  // The open item, from the list, else the copy the pane last showed while a search or filter leaves
+  // it out of the list: narrowing the list does not take the item out of the library.
+  const listed = selected ? rows.find((r) => r.ref === selected) : undefined
+  const [lastOpen, setLastOpen] = useState<LibraryItem | undefined>(undefined)
+  useEffect(() => { if (listed) setLastOpen(listed) }, [listed])
+  const hidden = !listed && narrowed && !!selected
+  const previewed = listed ?? (hidden && lastOpen?.ref === selected ? lastOpen : undefined)
+  const hiddenNote = hidden ? <p data-type="body-s" className="px-l pt-l text-on-surface-low">The search or filter leaves this item out of the list.</p> : null
   const adding = /^(link|note|audio):new$/.exec(query.open ?? '')?.[1] as AddForm | undefined
   const setupPane = adding ? (
     <LibraryAddForm key={adding} form={adding} project={into} onClose={() => setQuery({ open: null })}
@@ -371,8 +378,9 @@ export function LibraryPage({ navigate, query: raw, setQuery }: RouteProps) {
           <div className="m-m hidden min-w-0 flex-1 overflow-y-auto rounded-xl bg-surface-low md:block">
             {setupPane}
             {!setupPane && !selected && <p data-type="body-m" className="p-xl text-on-surface-low">Pick an item to see it here.</p>}
+            {!setupPane && selected && (previewed || (hidden && data && !loading)) && hiddenNote}
             {!setupPane && selected && previewed && <LibraryPreview key={previewed.ref} item={previewed} actions={actions} phoneSheet detail={powerOn} />}
-            {!setupPane && selected && data && !previewed && !loading && (
+            {!setupPane && selected && data && !previewed && !loading && !hidden && (
               <p data-type="body-m" className="p-xl text-on-surface-low">Nothing in your library has this address.</p>
             )}
           </div>

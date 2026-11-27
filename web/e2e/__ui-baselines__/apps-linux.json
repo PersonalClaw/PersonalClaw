@@ -3,28 +3,24 @@
     "targets": {
       "320": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
       "390": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
       "412": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
       "768": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
@@ -47,28 +43,24 @@
     "targets": {
       "320": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
       "390": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
       "412": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\""
       ],
       "768": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Install from URL\"",
         "button \"Open\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",

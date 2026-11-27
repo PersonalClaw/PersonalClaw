@@ -3,6 +3,7 @@ import { render, screen, cleanup, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { InboxDrafting, InboxItem } from '../../lib/api'
 import { openAnswers } from './DraftNotices'
+import { describedBy } from '../../test/describedBy'
 
 // ── A draft leaves her answers to her, and says which ─────────────────────────────────────────
 //
@@ -67,7 +68,7 @@ describe('a drafted reply', () => {
 
     expect(await screen.findByText(`Left for you to answer, where it says [your answer: …]: ${PHOTO}; ${DINNER}.`)).toBeTruthy()
     expect(sendButton().getAttribute('aria-disabled')).toBe('true')
-    expect(sendButton().getAttribute('title')).toContain('Write your answers in the 2 places that say [your answer: …]')
+    expect(describedBy(sendButton())).toContain('Write your answers in the 2 places that say [your answer: …]')
     await user.click(sendButton())
     expect(h.sendInboxReply).not.toHaveBeenCalled()
 
@@ -76,7 +77,7 @@ describe('a drafted reply', () => {
     await user.clear(box())
     await user.paste(`Thank you! Photo to follow. [your answer: ${DINNER}]`)
     expect(screen.getByText(`Left for you to answer, where it says [your answer: …]: ${DINNER}.`)).toBeTruthy()
-    expect(sendButton().getAttribute('title')).toContain('Write your answer where it says [your answer: …], or take that out')
+    expect(describedBy(sendButton())).toContain('Write your answer where it says [your answer: …], or take that out')
 
     // She answers the other: nothing is left, and the reply goes.
     await user.clear(box())

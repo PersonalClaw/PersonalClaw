@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { WorkflowDeliverableAbsence, WorkflowRunDeliverable } from '../../lib/api'
-import { ABSENT_COPY, DeliverablePanel } from './DeliverablePanel'
+import { ABSENT_COPY, DeliverablePanel, ENDED_WITHOUT_IT } from './DeliverablePanel'
 
 // ── A run has a document, and every way of NOT having one is rendered ────────────────────────────
 //
@@ -336,5 +336,86 @@ describe('the panel carries no money and no ROI axis', () => {
     const { container } = render(<DeliverablePanel runId="r1" />)
     await waitFor(() => expect(screen.getByText('done')).toBeTruthy())
     expect(container.textContent ?? '').not.toMatch(/\$|cost|token|marginal|quality/i)
+  })
+})
+
+
+// ── 🔴 it reads again as the run's steps settle, and an ended run says it ended without it ─────────
+//
+// The panel read the run's document once, when the page opened: a loop went on saying "The worker
+// has not written it yet." after its step had kept the note, and after the run had ended, until a
+// reload. Now the page hands it a `refreshKey` that changes when a step settles and when the run
+// ends, and the panel reads again on each change, quietly: what it shows stays while it reads.
+
+describe('the panel reads again when a step settles', () => {
+  it('🔴 shows a document a step kept after it opened, without a remount', async () => {
+    let calls = 0
+    payload = () => {
+      calls += 1
+      return Promise.resolve(calls === 1 ? body() : body({ report: present('REPORT.md', '# The note\n\nKept.') }))
+    }
+    const view = render(<DeliverablePanel runId="r1" refreshKey="running:0" />)
+    await waitFor(() => expect(screen.getByText(ABSENT_COPY.not_written)).toBeTruthy())
+    view.rerender(<DeliverablePanel runId="r1" refreshKey="running:1" />)
+    await waitFor(() => expect(screen.getByText('Kept.')).toBeTruthy())
+    expect(calls).toBe(2)
+  })
+
+  it('keeps what it shows while it reads again, with no skeleton over it', async () => {
+    let finish: (b: WorkflowRunDeliverable) => void = () => {}
+    let calls = 0
+    payload = () => {
+      calls += 1
+      if (calls === 1) return Promise.resolve(body({ report: present('REPORT.md', 'First draft.') }))
+      return new Promise((resolve) => { finish = resolve })
+    }
+    const view = render(<DeliverablePanel runId="r1" refreshKey="running:1" />)
+    await waitFor(() => expect(screen.getByText('First draft.')).toBeTruthy())
+    view.rerender(<DeliverablePanel runId="r1" refreshKey="running:2" />)
+    await waitFor(() => expect(calls).toBe(2))
+    expect(screen.getByText('First draft.')).toBeTruthy()
+    expect(screen.queryByRole('status')).toBeNull()
+    finish(body({ report: present('REPORT.md', 'Second draft.') }))
+    await waitFor(() => expect(screen.getByText('Second draft.')).toBeTruthy())
+  })
+
+  it('a re-read that fails leaves the shown document', async () => {
+    let calls = 0
+    payload = () => {
+      calls += 1
+      return calls === 1 ? Promise.resolve(body({ report: present('REPORT.md', 'Kept text.') })) : Promise.reject(new Error('the gateway went away'))
+    }
+    const view = render(<DeliverablePanel runId="r1" refreshKey="running:1" />)
+    await waitFor(() => expect(screen.getByText('Kept text.')).toBeTruthy())
+    view.rerender(<DeliverablePanel runId="r1" refreshKey="running:2" />)
+    await waitFor(() => expect(calls).toBe(2))
+    expect(screen.getByText('Kept text.')).toBeTruthy()
+    expect(screen.queryByText(/the gateway went away/)).toBeNull()
+  })
+
+  it('reads nothing more while its key stays the same', async () => {
+    let calls = 0
+    payload = () => { calls += 1; return Promise.resolve(body()) }
+    const view = render(<DeliverablePanel runId="r1" refreshKey="running:0" />)
+    await waitFor(() => expect(screen.getByText(ABSENT_COPY.not_written)).toBeTruthy())
+    view.rerender(<DeliverablePanel runId="r1" refreshKey="running:0" />)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(calls).toBe(1)
+  })
+})
+
+describe('🔴 a run that ended without its document says so', () => {
+  it('and not that the worker has yet to write it', async () => {
+    payload = () => Promise.resolve(body())
+    render(<DeliverablePanel runId="r1" refreshKey="complete:3" ended />)
+    await waitFor(() => expect(screen.getByText(ENDED_WITHOUT_IT)).toBeTruthy())
+    expect(screen.queryByText(ABSENT_COPY.not_written)).toBeNull()
+    expect(screen.queryByText(/Waiting will not produce it/)).toBeNull()
+  })
+
+  it('every other absence reads as before when the run has ended', async () => {
+    payload = () => Promise.resolve(body({ report: absent('REPORT.md', 'unreadable') }))
+    render(<DeliverablePanel runId="r1" ended />)
+    await waitFor(() => expect(screen.getByText(ABSENT_COPY.unreadable)).toBeTruthy())
   })
 })

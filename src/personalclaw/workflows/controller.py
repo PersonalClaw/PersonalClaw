@@ -704,15 +704,17 @@ class RunController:
         # this a crash loop mints a fresh budget each time and spends without bound.
         tokens_recorded = self._inherit_ledger_tokens(totals)
         self._inherit_ledger_spend(totals)
+        # The caps its owner resumed with, taken BEFORE the check below: taken only by the first
+        # step, after it, they could never lift this pause, so no resume, hers with no token budget
+        # included, got past it.
+        self._take_budget_request()
         token_cap = int(getattr(self.run.budget, "max_tokens", 0) or 0)
         if resumed and token_cap and not tokens_recorded:
             # UNKNOWN is not free. A capped resume whose earlier steps never recorded their token
             # count cannot be safely pre-charged, so pause before the first new node is scheduled.
-            # Removing the cap remains the explicit way to continue when no measurement exists.
-            await self._finish(
-                RunStatus.PAUSED,
-                error="token spend unrecorded; cannot pre-charge token budget",
-            )
+            # Removing the cap, as its owner resumes it, is the explicit way to continue when no
+            # measurement exists (`run_budget.resume_refusal`).
+            await self._finish(RunStatus.PAUSED, error=run_budget.TOKENS_UNRECORDED)
             return False
         # Context lifecycle: rebuild handoffs/carryover/decisions from the ledger. This is
         # the whole reason they are journaled — a resumed run that lost them would restart its next

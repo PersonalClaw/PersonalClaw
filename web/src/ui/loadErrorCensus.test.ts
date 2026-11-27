@@ -744,7 +744,6 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // could not read. Its consumer half is budgeted at `ui/PlanningWalkthrough.tsx`, and
   // `pages/loops/LoopPlanningView.tsx` is its byte-for-byte twin for the non-code kinds.
   'pages/code/CodePlanningView.tsx': 1,
-  'pages/code/CodeSection.tsx': 1,
   // Git semantics, documented at both sites: an untracked file has no HEAD blob, so the `''` fallback
   // is what makes it render as all-added; a file deleted from the working copy has no working blob, so
   // the same fallback renders it as all-removed. Both substitutes are the true content of a side that
@@ -777,11 +776,11 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // records fixing once. A correct form-A veto needs the catch's argument paren-matched; until then
   // the veto stays form-B-only and `ui/SystemWidget.tsx` below carries its reason by hand.
   'pages/loop/LoopComposer.tsx': 2,
-  // 2nd (SCALAR widening): `if (e?.status === 404) setNotFound(true)` — the same
-  // status-DISCRIMINATING shape already budgeted at `pages/code/CodeSection.tsx`, where a 404 IS the
-  // answer "this loop does not exist". Left as debt for the identical reason stated there: the
-  // exemption would have to model a status check, and a rule that models control flow is one nobody
-  // can predict the verdict of.
+  // 2nd (SCALAR widening): `if (e?.status === 404) setNotFound(true)` — a status-DISCRIMINATING
+  // shape, where a 404 IS the answer "this loop does not exist" (`pages/code/CodeSection.tsx` carried
+  // the same until its read moved to `lib/useLoopStatusRead`). Left as debt: the exemption would
+  // have to model a status check, and a rule that models control flow is one nobody can predict the
+  // verdict of.
   'pages/loops/DesignCockpitPage.tsx': 2,
   // The artifact tab's swallow is GONE (it printed an empty document for a failed read). What is left
   // is a fire-and-forget `updateULoop` mutation, a different family. The per-item `api.task(id)`
@@ -798,12 +797,10 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // SCALAR widening: the non-code twin of `pages/code/CodePlanningView.tsx` above — same `isReady`
   // predicate, same fail-closed `false`, same reason.
   'pages/loops/LoopPlanningView.tsx': 1,
-  // 2nd (SCALAR widening): the cockpit ROUTER's kind probe, `setMissing(true)`. It is a router, not a
-  // renderer of loop data — it must send the user somewhere, and "missing" is the only terminal it
-  // has. 🪤 It does conflate UNREACHABLE with DELETED, which is a real (smaller) defect of the #3396
-  // family; fixing it means giving the router a third outcome, which is a routing design decision and
-  // not a swallow to delete.
-  'pages/loops/LoopsSection.tsx': 2,
+  // `pages/loops/LoopsSection.tsx` and `pages/code/CodeSection.tsx` carried 2 and 1: the resume
+  // probes and the cockpit router's kind probe, which called an UNREACHABLE loop deleted. They read
+  // through `lib/useLoopStatusRead` now, which reads again while a read fails in a way that passes
+  // and calls a loop gone only on a 4xx, and both rows went with them.
   'pages/prompts/promptWidgets.tsx': 1,
   'pages/settings/AgentDefaultsPanel.tsx': 1,
   'pages/settings/AlwaysOnConventions.tsx': 1,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { FileText, NotebookPen } from 'lucide-react'
 import { Segmented } from '../../ui/Segmented'
 import { FormSkeleton } from '../../ui/ListScaffold'
@@ -49,9 +49,14 @@ export const ABSENT_COPY: Record<WorkflowDeliverableAbsence, string> = {
   unreadable: 'The file is there and could not be read. That is a permissions or disk problem, not a slow worker.',
 }
 
+/** What a run that has ended says of a document it did not write: "not written yet" would send its
+ *  reader to wait for something no step of it is left to write. */
+export const ENDED_WITHOUT_IT = 'The run ended without writing it.'
+
 /** What a document with no content shows in place of a body. Exported so the absent case is asserted
  *  on the rendered text and not inferred from the absence of a document. */
-export function absentCopy(doc: WorkflowDeliverableDoc): string {
+export function absentCopy(doc: WorkflowDeliverableDoc, ended = false): string {
+  if (ended && doc.absent_reason === 'not_written') return ENDED_WITHOUT_IT
   return doc.absent_reason ? ABSENT_COPY[doc.absent_reason] : 'Nothing to show.'
 }
 
@@ -66,13 +71,14 @@ function DocSurface({ children }: { children: string }) {
   )
 }
 
-function Absent({ doc, instructed }: { doc: WorkflowDeliverableDoc; instructed: boolean | null }) {
+function Absent({ doc, instructed, ended }: { doc: WorkflowDeliverableDoc; instructed: boolean | null; ended: boolean }) {
   return (
     <div className="flex flex-col gap-xs rounded-xl bg-surface-high p-l">
-      <p data-type="body-s" className="text-on-surface-low">{absentCopy(doc)}</p>
+      <p data-type="body-s" className="text-on-surface-low">{absentCopy(doc, ended)}</p>
       {/* Only where it CHANGES the reading: a document the template never asks for will not arrive by
-          waiting, and that is a different instruction to the user than "check back later". */}
-      {doc.absent_reason === 'not_written' && instructed === false && (
+          waiting, and that is a different instruction to the user than "check back later". A run
+          that has ended is waiting for nothing, which the sentence above already says. */}
+      {doc.absent_reason === 'not_written' && instructed === false && !ended && (
         <p data-type="caption" className="text-on-surface-low">
           This run’s template never names <span className="font-mono">{doc.name}</span>, so nothing has
           asked the worker to write one. Waiting will not produce it.
@@ -122,25 +128,41 @@ function slotLabel(prefix: string, doc: WorkflowDeliverableDoc): string {
   return `${prefix} · ${doc.name ?? '—'}`
 }
 
-export function DeliverablePanel({ runId }: { runId: string }) {
+/** The run's document, read when the page opens and again each time *refreshKey* changes: the page
+ *  changes it when a step of the run settles and when the run ends (`WorkflowRunDetail`), the moments
+ *  a step's document is kept (`stage_settlement._keep_what_it_wrote`). 🔴 It was read once, so a loop
+ *  went on saying "The worker has not written it yet." after its step had kept the note, and after
+ *  the run had ended, until a reload. *ended* says the run can write nothing more. */
+export function DeliverablePanel({ runId, refreshKey = '', ended = false }: { runId: string; refreshKey?: string; ended?: boolean }) {
   const [data, setData] = useState<WorkflowRunDeliverable | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [slot, setSlot] = useState<'report' | 'log'>('report')
 
-  const load = useCallback(() => {
+  // A quiet read keeps what is shown while it is in flight (no skeleton over the document), and a
+  // failure of one leaves it there too: the next settle reads again.
+  const load = useCallback((quiet = false) => {
     let live = true
-    setLoading(true)
-    setError(null)
+    if (!quiet) {
+      setLoading(true)
+      setError(null)
+    }
     api
       .workflowRunDeliverable(runId)
-      .then((body) => { if (live) setData(body) })
-      .catch((e) => { if (live) setError(e instanceof Error ? e.message : 'could not read this run’s document') })
-      .finally(() => { if (live) setLoading(false) })
+      .then((body) => { if (live) { setData(body); setError(null) } })
+      .catch((e) => { if (live && !quiet) setError(e instanceof Error ? e.message : 'could not read this run’s document') })
+      .finally(() => { if (live && !quiet) setLoading(false) })
     return () => { live = false }
   }, [runId])
 
   useEffect(() => load(), [load])
+
+  const readFor = useRef(refreshKey)
+  useEffect(() => {
+    if (readFor.current === refreshKey) return
+    readFor.current = refreshKey
+    return load(true)
+  }, [refreshKey, load])
 
   // The shaped primitive rather than a bare `<Skeleton />`: that change with no className is a 0px
   // invisible div, which renders as broken rather than as loading, and it is `aria-hidden` by design
@@ -209,7 +231,7 @@ export function DeliverablePanel({ runId }: { runId: string }) {
           </p>
         </>
       ) : (
-        <Absent doc={doc} instructed={data.instructed} />
+        <Absent doc={doc} instructed={data.instructed} ended={ended} />
       )}
 
       {/* Where the backend looked, so "not written" is checkable rather than a claim. Only when

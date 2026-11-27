@@ -24,6 +24,32 @@ export function findAnnouncement(query: string, active: number, total: number): 
   return `Match ${active + 1} of ${total}`
 }
 
+/** Scroll *root* so the first occurrence of *query* inside *node* sits in the middle of it: true
+ *  when it did. False, and nothing scrolled, where there is nothing to measure (no occurrence, no
+ *  layout, as under a test DOM) or *root* does not scroll, so the caller scrolls the item instead. */
+function scrollToOccurrence(node: HTMLElement, query: string, root: HTMLElement | null): boolean {
+  if (!root || root.scrollHeight <= root.clientHeight || !query.trim()) return false
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
+  let text: Node | null
+  while ((text = walker.nextNode())) {
+    const value = text.nodeValue ?? ''
+    const [first] = findInText(value, query)
+    if (!first) continue
+    const range = document.createRange()
+    try {
+      range.setStart(text, Math.min(first.start, value.length))
+      range.setEnd(text, Math.min(first.end, value.length))
+    } catch { return false }
+    if (typeof range.getBoundingClientRect !== 'function') return false
+    const at = range.getBoundingClientRect()
+    if (!at.height && !at.top) return false
+    const box = root.getBoundingClientRect()
+    root.scrollTo({ top: root.scrollTop + (at.top - box.top) - (root.clientHeight - at.height) / 2, behavior: 'smooth' })
+    return true
+  }
+  return false
+}
+
 /** Find-in-<surface> — a compact bar docked under a surface's header. Case-insensitive
  *  substring search over whatever the host hands it; count ("3/17"), Enter/↓ next,
  *  Shift+Enter/↑ prev, Esc closes, focus returns to whatever opened it.
@@ -56,10 +82,13 @@ export function findAnnouncement(query: string, active: number, total: number): 
  *  (#546: two derivations of "the same" offsets drifted, and `Range.setEnd` threw).
  *
  *  Paints under the `pc-find` highlight name, styled once in `design/tokens.css`. */
-export function FindBar<T>({ items, segmentsOf, nodeOf, scrollRef, label, initialQuery, onClose }: {
+export function FindBar<T>({ items, segmentsOf, nodeOf, revealOf, scrollRef, label, initialQuery, onClose }: {
   items: readonly T[]
   segmentsOf: (item: T) => string[]
   nodeOf: (item: T, index: number) => HTMLElement | null | undefined
+  /** Open whatever hides *item*'s text (a folded long message), called as a step lands on it,
+   *  before its match is scrolled to. Optional: a surface with nothing folded leaves it out. */
+  revealOf?: (item: T, index: number) => void
   scrollRef: React.RefObject<HTMLElement | null>
   label: string
   initialQuery?: string
@@ -131,13 +160,25 @@ export function FindBar<T>({ items, segmentsOf, nodeOf, scrollRef, label, initia
     return clear
   }, [debounced, items, scrollRef])
 
+  // The stop a step landed on, scrolled to once the host's reveal of it has rendered (`revealOf`
+  // opens a fold, which moves what is below it). `step` makes every step a change, the same stop
+  // twice included.
+  const [landing, setLanding] = useState<{ index: number; step: number } | null>(null)
   function go(delta: number) {
     if (!matchIndices.length) return
     const next = (active + delta + matchIndices.length) % matchIndices.length
     setActive(next)
     const i = matchIndices[next]
-    nodeOf(items[i], i)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    revealOf?.(items[i], i)
+    setLanding((l) => ({ index: i, step: (l?.step ?? 0) + 1 }))
   }
+  useEffect(() => {
+    if (!landing) return
+    const node = nodeOf(items[landing.index], landing.index)
+    if (!node) return
+    // The match itself, centred, where the page can measure it; the stop's whole item otherwise.
+    if (!scrollToOccurrence(node, debounced, scrollRef.current)) node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [landing]) // eslint-disable-line react-hooks/exhaustive-deps -- once per step; reads the rest at fire time
 
   // Seeded open: a bar created WITH an initialQuery brings its FIRST match into view on
   // its own — the same scroll pressing ↓ once gives (`go(0)`), so there is no second

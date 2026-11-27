@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Cpu, MemoryStick, HardDrive, Activity, Zap, Network, Boxes, ShieldCheck, Server, Bot, X, Loader2, RotateCw, DownloadCloud, AlertTriangle } from 'lucide-react'
+import { Cpu, MemoryStick, HardDrive, Activity, Zap, Network, Boxes, ShieldCheck, Server, Bot, X, Loader2, RotateCw, DownloadCloud, AlertTriangle, RefreshCw } from 'lucide-react'
 import { api, type SystemInfo, type AuthStatus, type SpawnedAgent, type UpdateApplyAnswer } from '../lib/api'
 import { RELEASES_PAGE_URL } from '../lib/repoDocs'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
@@ -12,7 +12,7 @@ import { reportingWrite } from '../app/reportingWrite'
 import { WidgetBoundary } from '../app/ErrorBoundary'
 import { NO_READING, fixedReading, isReading, percentReading } from '../lib/readings'
 import { connectionWords, useGatewayConnection } from '../app/gatewayConnection'
-import { applyUpdate, updatedOutside, useInstallKind } from '../app/applyUpdate'
+import { applyUpdate, keepUpdateCheck, updatedOutside, useInstallKind, useUpdateCheck } from '../app/applyUpdate'
 import { useAppUpdate } from '../app/appUpdate'
 import { desktopBridge } from '../lib/desktopBridge'
 import { AppUpdateControls, appUpdateOnOffer } from '../app/AppUpdateControls'
@@ -300,10 +300,21 @@ function AppUpdateRow() {
   )
 }
 
-/** What an update that restarts does, as its confirm asks it, by how this install is updated. */
-const UPDATE_ASK: Record<string, string> = {
-  git: 'Pull latest, rebuild, and restart the gateway?',
-  pip: 'Install the new version and restart the gateway?',
+/** What an update that restarts does, as its confirm asks it, by how this install is updated:
+ *  to the version the update check found (*to*), or to the latest when it named none. */
+const UPDATE_ASK: Record<string, (to: string) => string> = {
+  git: (to) => `Pull ${to || 'latest'}, rebuild, and restart the gateway?`,
+  pip: (to) => `Install ${to || 'the new version'} and restart the gateway?`,
+}
+const updateAsk = (kind: string, to: string) =>
+  UPDATE_ASK[kind]?.(to) ?? (to ? `Update PersonalClaw to ${to} and restart the gateway?` : 'Update PersonalClaw and restart the gateway?')
+
+/** What a check the owner ran on the card found, said where it was pressed. */
+function checkSaid(answer: { available?: boolean; latest?: string; version?: string; current?: string; checked_now?: boolean }): string {
+  if (answer.available) return `PersonalClaw ${answer.latest || 'a newer version'} is available.`
+  if (answer.checked_now === false) return "Couldn't reach the releases to check. Try again later."
+  const running = answer.version || answer.current
+  return running ? `PersonalClaw ${running} is up to date.` : 'PersonalClaw is up to date.'
 }
 
 /** Gateway lifecycle controls — Restart (apply committed backend changes, no
@@ -334,6 +345,25 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
   const [asking, setAsking] = useState(false)
   const kind = useInstallKind()
   const outside = updatedOutside(kind)
+  // Whether an update is known, and to which version (the check Settings › Updates reads): with
+  // none known, an install updated in place offers Check for Updates, not an Update & Restart that
+  // would restart the gateway for nothing.
+  const known = useUpdateCheck()
+  const available = Boolean(known?.available)
+  const to = available ? known?.latest ?? '' : ''
+  const [checking, setChecking] = useState(false)
+  const [found, setFound] = useState('')
+  const checkNow = async () => {
+    setChecking(true); setFound('')
+    try {
+      const answer = await api.checkForUpdatesNow()
+      keepUpdateCheck(answer)
+      setFound(checkSaid(answer))
+    } catch (e) {
+      setFound(`Couldn't check for updates: ${e instanceof Error && e.message ? e.message : 'the request failed'}.`)
+    }
+    setChecking(false)
+  }
   // In the app, the app's own row has an Update beside this one (`AppUpdateRow`): this one is named
   // the gateway's, its label staying Update. Read once: the bridge doesn't come or go.
   const [inTheApp] = useState(() => Boolean(desktopBridge()?.appUpdate))
@@ -391,31 +421,42 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
   }
   return (
     <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
-      {asking ? (
+      {asking || checking ? (
         <div role="status" data-type="caption" className="flex items-center gap-1.5 text-on-surface-low">
-          <Loader2 size={12} className="animate-spin" /> Asking the gateway…
+          <Loader2 size={12} className="animate-spin" /> {checking ? 'Checking for updates…' : 'Asking the gateway…'}
         </div>
       ) : !pending ? (
+        <>
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => ask('restart')} data-type="caption"
             className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
             style={{ borderRadius: 'var(--radius-md)' }}>
             <RotateCw size={12} /> Restart
           </button>
-          <button type="button" onClick={() => ask('update')} data-type="caption"
-            aria-label={outside && inTheApp ? 'Update the gateway' : undefined}
-            className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
-            style={{ borderRadius: 'var(--radius-md)' }}>
-            <DownloadCloud size={12} /> {outside ? 'Update' : <>Update &amp; Restart</>}
-          </button>
+          {outside || available ? (
+            <button type="button" onClick={() => ask('update')} data-type="caption"
+              aria-label={outside && inTheApp ? 'Update the gateway' : undefined}
+              className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
+              style={{ borderRadius: 'var(--radius-md)' }}>
+              <DownloadCloud size={12} /> {outside ? 'Update' : <>Update &amp; Restart</>}
+            </button>
+          ) : (
+            <button type="button" onClick={checkNow} data-type="caption"
+              className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
+              style={{ borderRadius: 'var(--radius-md)' }}>
+              <RefreshCw size={12} /> Check for Updates
+            </button>
+          )}
         </div>
+        {found && <p role="status" data-type="caption" className="mt-1.5 text-on-surface-low">{found}</p>}
+        </>
       ) : (
         <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialFast}>
           <div data-type="caption" className="flex items-start gap-1.5 text-on-surface-var">
             {warn && <AlertTriangle size={13} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} />}
             <span>
               {pending === 'update'
-                ? UPDATE_ASK[kind ?? ''] ?? 'Update PersonalClaw and restart the gateway?'
+                ? updateAsk(kind ?? '', to)
                 : 'Restart the gateway to apply changes?'}
               {warn && (
                 <> This interrupts <span style={fvs(650)}>

@@ -1491,8 +1491,9 @@ async def api_run_deliverable(request: web.Request) -> web.Response:
 
     Its own route rather than a field on `api_run_status`: the status payload is polled by every
     open run tab and by the stream's snapshot, and a document read (up to two stats plus a file read
-    of a document that grows all run) has no business riding a poll. The panel fetches this once and
-    on refresh.
+    of a document that grows all run) has no business riding a poll. The panel reads it when the
+    page opens, and again, quietly, each time a step of the run settles and when the run ends
+    (`DeliverablePanel`'s `refreshKey`).
 
     Not `_guard`ed — a read, the same rule `api_run_workspace` and `api_run_ledger_rails` follow.
     Redacted at the service layer through the ledger redactor, because a worker-authored document is

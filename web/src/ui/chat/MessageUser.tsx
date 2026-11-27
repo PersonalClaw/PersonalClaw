@@ -29,16 +29,26 @@ export function isLongUserMessage(text: string): boolean {
  *  `ranPrompt` is the saved prompt the message ran: the bubble keeps what she typed, and the prompt's text sits folded under it, labelled as the
  *  prompt's. `steered` says she sent it into the answer while it was being written, which took it
  *  as it went: the answer above it goes on below it. */
-export function MessageUser({ children, onFileClick, pastes, optimized, ranPrompt, steered = false, onExpand }: {
+export function MessageUser({ children, onFileClick, pastes, optimized, ranPrompt, steered = false, onExpand, reveal = false }: {
   children: string; onFileClick?: (path: string) => void; pastes?: TurnPaste[]; optimized?: string
   ranPrompt?: RanPrompt
   steered?: boolean
   /** Called when the reader unfolds a long message — a decision to read it, which the host
    *  uses to stop following a turn that is still arriving below it. */
   onExpand?: () => void
+  /** Find in conversation has landed on this message: it opens, so the match is on screen. Not
+   *  the reader's own decision to read it, so `onExpand` is not called; she can fold it again. */
+  reveal?: boolean
 }) {
   const long = isLongUserMessage(children)
   const [expanded, setExpanded] = useState(false)
+  // Opened in the render that reveals it, not an effect after: Find measures where the match sits
+  // as soon as that render is on screen, and the message must already be open by then.
+  const [revealed, setRevealed] = useState(false)
+  if (reveal !== revealed) {
+    setRevealed(reveal)
+    if (reveal) setExpanded(true)
+  }
   const bodyId = useId()
   const folded = long && !expanded
   const lines = children.split('\n').length

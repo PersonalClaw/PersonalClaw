@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api, type CodeProject, type TaskItem } from '../../../../lib/api'
 import { isTerminalTask } from './taskState'
 import { TERMINAL_STATUSES } from '../cockpitShared'
+import { PRELAUNCH_LOOP_STATUSES } from '../../../../lib/loopStatus'
 
 // ── The cockpit task list's controller ────────────────────────────────────────────────────────
 //
@@ -17,7 +18,9 @@ export function useStageTasks({ project, onTasksChanged, tasksByList }: {
   const stages = project.stage_plan ?? []
   const [busy, setBusy] = useState(false)
   const noLists = !Object.keys(links).length
-  const isPreLaunch = project.status === 'ready' || project.status === 'review'
+  // Every status before launch, `intake` and `planning` included, as the stage trail reads them: a
+  // cockpit shown for a loop still planning said "No task breakdown for this run".
+  const isPreLaunch = PRELAUNCH_LOOP_STATUSES.has(project.status)
   const queuedSet = new Set(project.queued_task_ids ?? [])
   const allTasks: TaskItem[] = Object.values(tasksByList).flat()
   const doneIds = new Set(allTasks.filter(isTerminalTask).map((t) => t.id))

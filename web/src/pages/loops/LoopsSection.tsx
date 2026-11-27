@@ -10,7 +10,8 @@ import { LoopCockpitPage } from './LoopCockpitPage'
 import { DesignCockpitPage } from './DesignCockpitPage'
 import type { RouteProps } from '../../app/useQueryState'
 import { chatLaunchPath } from '../../app/linkState'
-import { api, type Loop } from '../../lib/api'
+import { type Loop } from '../../lib/api'
+import { useLoopStatusRead } from '../../lib/useLoopStatusRead'
 import { invalidateKeys } from '../../lib/data'
 import { loopRoute } from '../../lib/loopKind'
 import { Button } from '../../ui/Button'
@@ -54,21 +55,18 @@ export function LoopsSection({ sub, navigate, query, setQuery }: RouteProps) {
   // Through a ref, as `CockpitRouter` does: `navigate` is a new function on every render.
   const navigateTo = useRef(navigate)
   navigateTo.current = navigate
-  useEffect(() => {
-    let alive = true
-    const concrete = seg && seg !== 'history'
-    if (!concrete || planningId === seg || review?.loopId === seg) { setResume(null); return }
-    api.uLoop(seg).then((l) => {
-      if (!alive) return
-      // A code loop plans in the Code section, with its own walkthrough: a `#/loops/<id>` link to
-      // one (its planner's approval, from the bell) lands there, as the cockpit router's does.
-      if (l && (l.status === 'planning' || l.status === 'review') && loopRoute(l) !== `loops/${seg}`) {
-        navigateTo.current(loopRoute(l), { replace: true }); return
-      }
-      setResume(l && (l.status === 'planning' || l.status === 'review') ? { id: seg, status: l.status as 'planning' | 'review', loop: l } : null)
-    }).catch(() => { if (alive) setResume(null) })
-    return () => { alive = false }
-  }, [seg, planningId, review])
+  const probeId = seg && seg !== 'history' && planningId !== seg && review?.loopId !== seg ? seg : null
+  useEffect(() => { if (!probeId) setResume(null) }, [probeId])
+  // Read again while a read fails in a way that passes, as the Code section does
+  // (`useLoopStatusRead`): one failed read on a reload left a planning loop on its cockpit.
+  useLoopStatusRead(probeId, (l) => {
+    // A code loop plans in the Code section, with its own walkthrough: a `#/loops/<id>` link to
+    // one (its planner's approval, from the bell) lands there, as the cockpit router's does.
+    if (l && (l.status === 'planning' || l.status === 'review') && loopRoute(l) !== `loops/${l.id}`) {
+      navigateTo.current(loopRoute(l), { replace: true }); return
+    }
+    setResume(l && (l.status === 'planning' || l.status === 'review') ? { id: l.id, status: l.status as 'planning' | 'review', loop: l } : null)
+  }, () => setResume(null))
 
   // Build a Plan-Review draft from a resumed unified Loop. The classification carries
   // the role-phased execution_plan in kind_config (LoopPlanReview reads it from there),
@@ -167,20 +165,16 @@ function CockpitRouter({ id, navigate, query, setQuery }: { id: string } & Pick<
   // dependency it would refetch the loop on each render this effect's own state changes cause.
   const navigateRef = useRef(navigate)
   navigateRef.current = navigate
-  useEffect(() => {
-    let alive = true
-    setKind(null); setMissing(false)
-    api.uLoop(id).then((l) => {
-      if (!alive) return
-      // A run-backed loop opens on its run page and a code loop in the Code section
-      // (`loopRoute`), so a `#/loops/<id>` link to either lands where the loop is watched,
-      // its approvals included.
-      if (l && loopRoute(l) !== `loops/${id}`) { navigateRef.current(loopRoute(l), { replace: true }); return }
-      setKind(l?.kind ?? null)
-    })
-      .catch(() => { if (alive) setMissing(true) })
-    return () => { alive = false }
-  }, [id])
+  // Gone only on a refusal no retry mends (a 404): a read that failed in a way that passes (a 5xx
+  // on a reload) said this loop no longer exists. It is read again until it lands
+  // (`useLoopStatusRead`), and the page says it is loading meanwhile.
+  useLoopStatusRead(id, (l) => {
+    // A run-backed loop opens on its run page and a code loop in the Code section
+    // (`loopRoute`), so a `#/loops/<id>` link to either lands where the loop is watched,
+    // its approvals included.
+    if (l && loopRoute(l) !== `loops/${id}`) { navigateRef.current(loopRoute(l), { replace: true }); return }
+    setKind(l?.kind ?? null)
+  }, () => setMissing(true))
 
   if (missing) {
     // The same gone-state the loop cockpit renders (`LoopCockpitPage`'s `notFound`): what

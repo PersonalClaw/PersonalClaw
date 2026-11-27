@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Loader2, FileCode } from 'lucide-react'
 import { api } from '../../../../lib/api'
+import { workspaceRelative } from '../workspacePath'
 import { SearchField } from '../../../../ui/SearchField'
 
 // ── The cockpit's file finder ──────────────────────────────────────────────────────────────────
@@ -40,13 +41,15 @@ export function FileFinder({ ws }: { ws: string }) {
     if (!live) setResults([])
     if (!v) setOpen(false)
   }
+  // The root the search resolved the workspace to (`root`), a form of the workspace its paths name.
+  const [searchRoot, setSearchRoot] = useState('')
   useEffect(() => {
     const needle = q.trim()
     if (needle.length < 2) return
     const mine = ++seq.current
     const t = setTimeout(() => {
       api.fileSearch(needle, ws).then((r) => {
-        if (mine === seq.current) { setResults((r.results || []).map((x) => ({ path: x.path, name: x.name }))); setHi(0); setOpen(true); setSearching(false) }
+        if (mine === seq.current) { setResults((r.results || []).map((x) => ({ path: x.path, name: x.name }))); setSearchRoot(r.root || ''); setHi(0); setOpen(true); setSearching(false) }
       }).catch(() => { if (mine === seq.current) { setResults([]); setSearching(false) } })
     }, 200)
     return () => clearTimeout(t)
@@ -104,16 +107,11 @@ export function FileFinder({ ws }: { ws: string }) {
               ? <p data-type="caption" className="inline-flex items-center gap-1.5 px-2.5 py-2 text-on-surface-low"><Loader2 size={11} className="animate-spin" /> Searching…</p>
               : <p data-type="caption" className="px-2.5 py-2 text-on-surface-low">No files match “{q.trim()}”.</p>
           ) : results.map((r, i) => {
-            // fileSearch returns REALPATH-resolved paths (file_index realpaths the root),
-            // so a naive startsWith(ws) fails on a symlinked workspace root (/tmp vs
-            // /private/tmp on macOS) → it fell back to the bare basename, losing the
-            // subdir context that's the whole point of showing a rel path in quick-open
-            // (two `config.py`s become indistinguishable). Relativize by the workspace's
-            // LAST segment, like the Changes panel + canonPath do.
-            const wsBase = ws.replace(/\/$/, '').split('/').pop() || ''
-            const marker = `/${wsBase}/`
-            const mi = wsBase ? r.path.lastIndexOf(marker) : -1
-            const rel = mi >= 0 ? r.path.slice(mi + marker.length) : (r.path.startsWith(ws) ? r.path.slice(ws.replace(/\/$/, '').length + 1) : r.name)
+            // fileSearch returns REALPATH-resolved paths (file_index realpaths the root, which
+            // the search answers as `root`), so the workspace is read in each of its forms
+            // (`workspacePath`): a bare basename would lose the subfolder that is the point of
+            // a path in quick open (two `config.py`s become indistinguishable).
+            const rel = workspaceRelative(ws, r.path, searchRoot) || r.name
             // Raw: a listbox option scrolled into view through a ref, which no primitive draws.
             return (
               <button key={r.path} type="button" role="option" aria-selected={i === hi}

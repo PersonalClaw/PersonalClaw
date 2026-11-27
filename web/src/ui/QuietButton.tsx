@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { cx } from './cx'
+import { Tooltip } from './Tooltip'
 
 /** The quiet compact inline action in a content-viewer toolbar — a dimmed
  *  ink-low label + leading glyph, medium radius, 28px tall; hover fills to
@@ -15,7 +16,7 @@ import { cx } from './cx'
  *
  *  `disabled`/`disabledReason` are the SAME treatment {@link SquareIconButton}
  *  ships — `aria-disabled` (never the native attribute) so the tab stop
- *  survives, the reason riding `title`, the click suppressed in the handler —
+ *  survives, the reason said in the themed `Tooltip`, the click suppressed in the handler —
  *  not a fourth spelling of the idea. A press shows by colour, at once (the
  *  `active:` tint is the hover's), with no scale, matching the rest of the
  *  button family. */
@@ -52,22 +53,31 @@ export function QuietButton({
    *  Mapped to `aria-disabled`, never the native attribute (the same trade `SquareIconButton` and
    *  `Button` make): the control stays focusable so a keyboard user can reach it and hear why. */
   disabled?: boolean
-  /** WHY it is unavailable, when `disabled` is true. Rides `title` (appended after an em dash, after
-   *  any `title` the caller passes), matching `SquareIconButton.disabledReason` and
-   *  `Button.disabledReason` — an sr-only span inside the button would be CONCATENATED into the
-   *  accessible name, so the action would stop being findable by its own name.
+  /** WHY it is unavailable, when `disabled` is true. Said in the themed `Tooltip` (after any `title`
+   *  the caller passes, past an em dash), on hover, keyboard focus and a tap, and the button's
+   *  description through the tooltip's hidden copy beside it, as `Button.disabledReason` is: an
+   *  sr-only span inside the button would be CONCATENATED into the accessible name.
    *
    *  Omit it when the gate is self-evident; a compound gate should pass it only for the branch it
    *  actually describes. */
   disabledReason?: string
   className?: string
 }) {
+  // Always wrapped, so a button that becomes available keeps its focus; with no reason the tip says
+  // nothing and never opens.
+  const reason = disabled && disabledReason ? [title, disabledReason].filter(Boolean).join(' — ') : ''
   return (
+    <Tooltip text={reason} tapOpens>{(trigger) => (
     <button
+      ref={trigger.ref}
       type="button"
       onClick={disabled ? undefined : onClick}
-      title={disabled && disabledReason ? [title, disabledReason].filter(Boolean).join(' — ') : title}
+      title={reason ? undefined : title}
       aria-disabled={disabled || undefined}
+      aria-describedby={trigger['aria-describedby']}
+      onPointerEnter={trigger.onPointerEnter} onPointerLeave={trigger.onPointerLeave}
+      onPointerDown={trigger.onPointerDown} onPointerUp={trigger.onPointerUp} onPointerCancel={trigger.onPointerCancel}
+      onFocus={trigger.onFocus} onBlur={trigger.onBlur} onKeyDown={trigger.onKeyDown}
       aria-expanded={ariaExpanded}
       data-type="caption"
       className={cx(
@@ -80,5 +90,6 @@ export function QuietButton({
     >
       {children}
     </button>
+    )}</Tooltip>
   )
 }

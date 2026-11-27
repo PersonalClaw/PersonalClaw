@@ -13,7 +13,6 @@
         "button \"Update channel: Beta\"",
         "button \"Update channel: Developer\"",
         "button \"Update channel: Stable\"",
-        "button[role=switch] \"Automatic update checks\"",
         "input \"Check every\"",
         "input \"Version pin\""
       ],
@@ -29,7 +28,6 @@
         "button \"Update channel: Beta\"",
         "button \"Update channel: Developer\"",
         "button \"Update channel: Stable\"",
-        "button[role=switch] \"Automatic update checks\"",
         "input \"Check every\"",
         "input \"Version pin\""
       ],
@@ -45,7 +43,6 @@
         "button \"Update channel: Beta\"",
         "button \"Update channel: Developer\"",
         "button \"Update channel: Stable\"",
-        "button[role=switch] \"Automatic update checks\"",
         "input \"Check every\"",
         "input \"Version pin\""
       ],
@@ -62,7 +59,6 @@
         "button \"Update channel: Beta\"",
         "button \"Update channel: Developer\"",
         "button \"Update channel: Stable\"",
-        "button[role=switch] \"Automatic update checks\"",
         "input \"Check every\"",
         "input \"Version pin\""
       ]
@@ -87,7 +83,6 @@
         "button \"Update channel: Beta\"",
         "button \"Update channel: Developer\"",
         "button \"Update channel: Stable\"",
-        "button[role=switch] \"Automatic update checks\"",
         "input \"Check every\"",
         "input \"Version pin\""
       ],
@@ -103,7 +98,6 @@
         "button \"Update channel: Beta\"",
         "button \"Update channel: Developer\"",
         "button \"Update channel: Stable\"",
-        "button[role=switch] \"Automatic update checks\"",
         "input \"Check every\"",
         "input \"Version pin\""
       ],
@@ -119,7 +113,6 @@
         "button \"Update channel: Beta\"",
         "button \"Update channel: Developer\"",
         "button \"Update channel: Stable\"",
-        "button[role=switch] \"Automatic update checks\"",
         "input \"Check every\"",
         "input \"Version pin\""
       ],
@@ -136,7 +129,6 @@
         "button \"Update channel: Beta\"",
         "button \"Update channel: Developer\"",
         "button \"Update channel: Stable\"",
-        "button[role=switch] \"Automatic update checks\"",
         "input \"Check every\"",
         "input \"Version pin\""
       ]

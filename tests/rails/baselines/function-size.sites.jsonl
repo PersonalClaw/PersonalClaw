@@ -76,7 +76,6 @@
 {"site": "src/personalclaw/guardrails/budgets.py::SpendMeter.admit", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 107, "complexity": 32}
 {"site": "src/personalclaw/guardrails/model_call.py::ModelCallGuard._guarded", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 256, "complexity": 31}
 {"site": "src/personalclaw/history.py::HistoryConsolidator._consolidate_locked", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 262, "complexity": 52}
-{"site": "src/personalclaw/hooks.py::run_script_hook", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 310, "complexity": 38}
 {"site": "src/personalclaw/inbound/capture_import.py::_absorb_sse_payload", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 48, "complexity": 31}
 {"site": "src/personalclaw/inbound/capture_import.py::adapt_json", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 103, "complexity": 33}
 {"site": "src/personalclaw/inbound/capture_store.py::_extract_tool_calls", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 71, "complexity": 32}

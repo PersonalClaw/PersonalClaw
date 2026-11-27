@@ -1157,6 +1157,9 @@ export interface AppSummary {
   /** A multi-instance provider: it has NO app-level settings — its settings live on each of its
    *  instances, which are added, edited, tested and removed in Settings → Providers. */
   configuredPerInstance?: boolean
+  /** An automation action: it has NO app-level settings — its fields are set on each automation
+   *  that runs it, in the automation's action on the Automations page. */
+  configuredPerAutomation?: boolean
   /** A provider of it runs its engine in a child process with a Python environment of its own,
    *  which Configure offers to install (Install engine). */
   sidecar?: boolean
@@ -2701,6 +2704,10 @@ export interface WorkflowRunDetailData {
   /** Paused at a cap: Resume raises what it reached, or, where its dollar cap could not count a
    *  step that had no price, goes on without counting that step. */
   at_budget?: boolean
+  /** Paused because its earlier steps did not record the tokens they used, so its token budget
+   *  cannot be checked: its Resume goes on with no token budget, the one resume that does not pause
+   *  it again. `error` says so in words. */
+  tokens_unrecorded?: boolean
   // The containing project (empty when unscoped) — the run view scopes its per-project
   // judge-guidance control on this, since that guidance writes through the project and is
   // what reaches this run's worker and judge sessions.
@@ -3758,6 +3765,9 @@ export interface Trigger extends ListPlace {
   // A web watch's last check of its page; null for any other kind, or a watch not checked yet. While
   // its `can_fire` is false, `warnings` carries its `said` (`dashboard/handlers/triggers.py`).
   last_check?: TriggerCheck | null
+  // A file automation's folders that are not on this machine, which a sentence among its `warnings`
+  // names (`triggers/file_watch.py` `folders_not_here`); empty for any other kind.
+  folders_not_here?: string[]
   // A webhook automation's address and its sender tokens; null for any other kind.
   webhook?: WebhookDoor | null
   // schedule fields (kind=schedule)
@@ -10797,11 +10807,12 @@ export const api = {
       consented({ enabled }, c, shown))),
   /** Resume all: switch on every automation a restore holds (`triggers/restore_hold.py`), each the
    *  way its own switch would. One that refuses — its action needs your yes, which its own switch
-   *  asks for — stays held, with why. */
+   *  asks for — stays held, with why. Each resumed one carries what it should be told as it
+   *  starts again (`warnings`): a file automation whose folder is not on this machine. */
   resumeRestoredTriggers: () =>
     post<{
       ok: boolean
-      resumed: Array<{ id: string; name: string }>
+      resumed: Array<{ id: string; name: string; warnings?: string[] }>
       still_held: Array<{ id: string; name: string; reason: string }>
     }>('/api/triggers/restore-hold/resume'),
   deleteStoreTrigger: (rawId: string) => del(`/api/triggers/store:${encodeURIComponent(rawId)}`),

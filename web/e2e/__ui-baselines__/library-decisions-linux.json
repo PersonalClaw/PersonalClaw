@@ -2,10 +2,7 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Open chat\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
+        "button \"Open chat\""
       ],
       "390": [
         "button \"Open chat\""
@@ -28,10 +25,7 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Open chat\"",
-        "button[role=radio] \"Files\"",
-        "button[role=radio] \"Library\"",
-        "button[role=radio] \"Memory\""
+        "button \"Open chat\""
       ],
       "390": [
         "button \"Open chat\""

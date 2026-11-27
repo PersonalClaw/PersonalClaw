@@ -2,27 +2,19 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Enable persistent sessions\"",
         "button \"New session\"",
-        "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "390": [
-        "button \"Enable persistent sessions\"",
         "button \"New session\"",
-        "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "412": [
-        "button \"Enable persistent sessions\"",
         "button \"New session\"",
-        "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "768": [
-        "button \"Enable persistent sessions\"",
         "button \"New session\"",
-        "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ]
     },
@@ -35,27 +27,19 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Enable persistent sessions\"",
         "button \"New session\"",
-        "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "390": [
-        "button \"Enable persistent sessions\"",
         "button \"New session\"",
-        "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "412": [
-        "button \"Enable persistent sessions\"",
         "button \"New session\"",
-        "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "768": [
-        "button \"Enable persistent sessions\"",
         "button \"New session\"",
-        "button \"New terminal session\"",
         "select \"Sandbox for new terminal sessions\""
       ]
     },

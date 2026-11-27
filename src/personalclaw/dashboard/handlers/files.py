@@ -2326,7 +2326,10 @@ async def api_file_git_log(request: web.Request) -> web.Response:
         limit = 20
     # NUL-delimited fields per commit, record-separated by newline, so subjects
     # with arbitrary punctuation parse cleanly.
-    fmt = "%h%x00%s%x00%cr%x00%an"
+    # The FULL hash (`%H`): the cockpit's address and links take 7 to 40 characters, and a short
+    # one (`core.abbrev` can be 4) was opened but never written to the address, so a reload lost
+    # it; a copied short hash also goes ambiguous as the repository grows. The panel shows it short.
+    fmt = "%H%x00%s%x00%cr%x00%an"
     out = (await _git(["log", f"-{limit}", f"--pretty=format:{fmt}"], repo)).out
     commits: list[dict] = []
     for line in out.splitlines():

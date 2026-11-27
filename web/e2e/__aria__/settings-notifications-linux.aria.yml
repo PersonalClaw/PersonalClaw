@@ -88,7 +88,19 @@
     - 'button "Delivery mode for App update available: Notify"': Notify
     - 'button "Delivery mode for App update available: Digest"': Digest
     - button "Show delivery detail for App update available": detail
-    - text: cron Scheduled job failed
+    - text: channel Someone new wrote to you
+    - 'button "Delivery mode for Someone new wrote to you: Never"': Never
+    - 'button "Delivery mode for Someone new wrote to you: Badge"': Badge
+    - 'button "Delivery mode for Someone new wrote to you: Notify" [pressed]': Notify
+    - 'button "Delivery mode for Someone new wrote to you: Digest"': Digest
+    - button "Show delivery detail for Someone new wrote to you": detail
+    - text: cron Automations paused by the budget
+    - 'button "Delivery mode for Automations paused by the budget: Never"': Never
+    - 'button "Delivery mode for Automations paused by the budget: Badge"': Badge
+    - 'button "Delivery mode for Automations paused by the budget: Notify" [pressed]': Notify
+    - 'button "Delivery mode for Automations paused by the budget: Digest"': Digest
+    - button "Show delivery detail for Automations paused by the budget": detail
+    - text: Scheduled job failed
     - 'button "Delivery mode for Scheduled job failed: Never"': Never
     - 'button "Delivery mode for Scheduled job failed: Badge"': Badge
     - 'button "Delivery mode for Scheduled job failed: Notify" [pressed]': Notify
@@ -112,7 +124,13 @@
     - 'button "Delivery mode for Triggers brought over for review: Notify" [pressed]': Notify
     - 'button "Delivery mode for Triggers brought over for review: Digest"': Digest
     - button "Show delivery detail for Triggers brought over for review": detail
-    - text: guardrails Earned autonomy revoked
+    - text: guardrails Action held for your approval
+    - 'button "Delivery mode for Action held for your approval: Never"': Never
+    - 'button "Delivery mode for Action held for your approval: Badge"': Badge
+    - 'button "Delivery mode for Action held for your approval: Notify" [pressed]': Notify
+    - 'button "Delivery mode for Action held for your approval: Digest"': Digest
+    - button "Show delivery detail for Action held for your approval": detail
+    - text: Earned autonomy revoked
     - 'button "Delivery mode for Earned autonomy revoked: Never"': Never
     - 'button "Delivery mode for Earned autonomy revoked: Badge" [pressed]': Badge
     - 'button "Delivery mode for Earned autonomy revoked: Notify"': Notify
@@ -190,6 +208,12 @@
     - 'button "Delivery mode for MCP tool description changed: Notify"': Notify
     - 'button "Delivery mode for MCP tool description changed: Digest"': Digest
     - button "Show delivery detail for MCP tool description changed": detail
+    - text: MCP sign-in ended
+    - 'button "Delivery mode for MCP sign-in ended: Never"': Never
+    - 'button "Delivery mode for MCP sign-in ended: Badge"': Badge
+    - 'button "Delivery mode for MCP sign-in ended: Notify" [pressed]': Notify
+    - 'button "Delivery mode for MCP sign-in ended: Digest"': Digest
+    - button "Show delivery detail for MCP sign-in ended": detail
     - text: planning Planning proposal
     - 'button "Delivery mode for Planning proposal: Never"': Never
     - 'button "Delivery mode for Planning proposal: Badge" [pressed]': Badge

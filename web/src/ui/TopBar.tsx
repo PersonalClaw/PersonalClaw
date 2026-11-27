@@ -36,7 +36,9 @@ function useRightPanelOpen(): boolean {
  *     title font's glyph box is about 1.25 em in title-l's 1.2 em line, and `truncate`'s
  *     overflow hidden on both axes cut its top and bottom at 200% text zoom (50 px in 48). An
  *     `overflow-x: hidden` would not do: it turns `overflow-y: visible` into `auto`.
- *     Scoped by `[data-type]` so it hits the page title, not sibling chips/buttons. Matched
+ *     Scoped by `[data-type]` so it hits the page title, not sibling chips, and `:not(button)`
+ *     since a `Button` carries `data-type` too: a back button beside the title took `min-w-0` and
+ *     `pr-s` and was a 40 px target at the compact widths in spite of its TOUCH_TARGET. Matched
  *     as a DESCENDANT, not a direct child: three of the six wrap the title one level deeper
  *     (`learning`/`workflows` in a `<div>`) or make it a flex container whose own child
  *     overflows (`inbox`), so a `>` selector reached only half the family.
@@ -59,7 +61,7 @@ const TITLE_TRUNCATES = [
   // every ancestor between the slot and the title must allow shrinking, else the innermost
   // flex box keeps `min-width: auto` and the text still overflows.
   '[&_div]:min-w-0',
-  '[&_[data-type]]:min-w-0 [&_[data-type]]:overflow-x-clip [&_[data-type]]:text-ellipsis [&_[data-type]]:whitespace-nowrap [&_[data-type]]:pr-s',
+  '[&_[data-type]:not(button)]:min-w-0 [&_[data-type]:not(button)]:overflow-x-clip [&_[data-type]:not(button)]:text-ellipsis [&_[data-type]:not(button)]:whitespace-nowrap [&_[data-type]:not(button)]:pr-s',
 ].join(' ')
 
 /** How a `HeaderActions` cluster inside this bar moves the bar's row below the shell corners.

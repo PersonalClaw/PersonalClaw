@@ -623,7 +623,10 @@ sidebar's lanes recognise the row as the approval they already list (`mirroredAp
 **No model's verdict can hide one.** `system/agent_request`, the kind the row rides, is a
 *decision* (`NotificationKind.decision`): work is parked on the answer. So are
 `loop/needs_input` (workflow gates, blocked loops, sign-in handoffs, control-bridge
-confirmations), `agent/room_paused` and the `approval/requested` ping. A decision is never
+confirmations), `agent/room_paused`, the `approval/requested` ping, and the four notices that
+were plain warnings: `channel/unknown_sender` (an unpaired sender's Allow or Deny),
+`cron/budget_paused` (automations paused by the spend ceiling), `mcp/sign_in_ended` and
+`guardrails/action_held` (an action the denylist held for approval). A decision is never
 `verifiable` — `notification_kinds.register` refuses the pair — so the second-opinion pass
 never runs on one: the row is open and its notification fires the moment it is raised, with no
 model call in front of either. `PUT /api/notifications/rules` refuses `verify` for a decision

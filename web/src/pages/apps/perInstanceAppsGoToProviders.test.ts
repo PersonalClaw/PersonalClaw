@@ -35,8 +35,11 @@ describe('Configure on an app configured per instance', () => {
   })
 
   it('names the action for what it does, on every surface that offers it', () => {
-    // The card menu (native + non-native), the context menu, and the detail panel.
-    expect((code.match(/Manage instances/g) ?? []).length).toBeGreaterThanOrEqual(5)
+    // The card menu (native + non-native) and the context menu name it through one label, and the
+    // detail panel's two buttons name it too.
+    expect(code).toMatch(/app\.configuredPerInstance \? 'Manage instances'/)
+    expect((code.match(/label=\{configureLabel\(item\)\}|label: configureLabel\(item\)/g) ?? []).length).toBeGreaterThanOrEqual(3)
+    expect((code.match(/> Manage instances<\/Button>/g) ?? []).length).toBe(2)
     expect(code).toMatch(/onManageInstances=\{\(\) => nav\('settings\/models\?section=providers'\)\}/)
   })
 
