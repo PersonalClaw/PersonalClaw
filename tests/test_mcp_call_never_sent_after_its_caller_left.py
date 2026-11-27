@@ -221,9 +221,10 @@ def _registry(recorder: Recorder) -> McpClientRegistry:
 
 @pytest.mark.asyncio
 async def test_a_call_queued_past_its_deadline_is_dropped_unsent(recorder, monkeypatch):
-    """A slow call is out; a second call waits behind it past its deadline. The second is never
-    sent, and says so; the first was sent, and says it may have gone through. A call after them
-    is answered as it always was."""
+    """Two slow calls are ahead; a third waits behind them past its deadline. The connection sends
+    the second once the first's deadline passes, and the second holds it again, so the third is
+    never sent, and says so; the two slow ones were sent, and say they may have gone through. A
+    call after them is answered as it always was."""
     monkeypatch.setattr(mcp_client, "_CALL_TIMEOUT_SECS", _DEADLINE)
     reg = _registry(recorder)
     conn = reg.get(NAME)
@@ -232,23 +233,29 @@ async def test_a_call_queued_past_its_deadline_is_dropped_unsent(recorder, monke
         assert {"slow_save", "save"} <= {tool.name for tool in await conn.list_tools()}
         first = asyncio.create_task(conn.call_tool("slow_save", {"note": "first"}))
         await recorder.until_received(1)  # the first call is out, and the server is on it
-        second = await conn.call_tool("save", {"note": "second"})
-        first_answer = await first
+        second = asyncio.create_task(conn.call_tool("slow_save", {"note": "second"}))
+        await asyncio.sleep(0.2)  # queued behind the first
+        queued = await conn.call_tool("save", {"note": "queued"})
+        first_answer, second_answer = await first, await second
         recorder.release()
         monkeypatch.setattr(mcp_client, "_CALL_TIMEOUT_SECS", _ROOMY)
-        # Sent behind the second, so by its answer the second has left the queue.
+        # Sent behind the others, so by its answer the queued one has left the queue.
         third = await conn.call_tool("save", {"note": "third"})
     finally:
         await reg.shutdown_all()
 
-    assert recorder.received() == [("slow_save", "first"), ("save", "third")]
-    ok, said = second
+    assert recorder.received() == [
+        ("slow_save", "first"),
+        ("slow_save", "second"),
+        ("save", "third"),
+    ]
+    ok, said = queued
     assert ok is False and said.startswith("MCP tool 'save' was not sent: "), said
     assert "Nothing reached the server" in said, said
-    ok, said = first_answer
-    assert ok is True, said
-    assert said.startswith("MCP tool 'slow_save' may have gone through: "), said
-    assert "failed" not in said and "timed out" not in said, said
+    for ok, said in (first_answer, second_answer):
+        assert ok is True, said
+        assert said.startswith("MCP tool 'slow_save' may have gone through: "), said
+        assert "failed" not in said and "timed out" not in said, said
     assert third == (True, "saved third")
 
 
@@ -257,7 +264,7 @@ async def test_a_pooled_server_never_sends_another_chats_call_after_it_left(
     pooled_recorder, monkeypatch
 ):
     """One connection serves every chat for a server that shares it. A call from a second chat
-    waiting behind the first chat's slow call is dropped unsent at its deadline, as its own
+    waiting behind the first chat's slow calls past its deadline is dropped unsent, as its own
     chat's would be."""
     monkeypatch.setattr(mcp_client, "_CALL_TIMEOUT_SECS", _DEADLINE)
     reg = _registry(pooled_recorder)
@@ -266,15 +273,22 @@ async def test_a_pooled_server_never_sends_another_chats_call_after_it_left(
     try:
         first = asyncio.create_task(mine.call_tool("slow_save", {"note": "from chat a"}))
         await pooled_recorder.until_received(1)
+        again = asyncio.create_task(mine.call_tool("slow_save", {"note": "chat a again"}))
+        await asyncio.sleep(0.2)  # queued behind the first
         second = await theirs.call_tool("save", {"note": "from chat b"})
         await first
+        await again
         pooled_recorder.release()
         monkeypatch.setattr(mcp_client, "_CALL_TIMEOUT_SECS", _ROOMY)
         third = await theirs.call_tool("save", {"note": "chat b again"})
     finally:
         await reg.shutdown_all()
 
-    assert pooled_recorder.received() == [("slow_save", "from chat a"), ("save", "chat b again")]
+    assert pooled_recorder.received() == [
+        ("slow_save", "from chat a"),
+        ("slow_save", "chat a again"),
+        ("save", "chat b again"),
+    ]
     assert second[0] is False and "was not sent" in second[1], second
     assert third == (True, "saved chat b again")
 
@@ -359,7 +373,9 @@ async def test_over_streamable_http_a_server_that_ends_mid_call_is_answered_at_t
     http_recorder, monkeypatch
 ):
     """The Streamable HTTP client does not tell its session when a response stream breaks, so a
-    call out when its server ends is answered at its deadline, in the same words."""
+    call out when its server ends is answered at its deadline, in the same words. The connection
+    is free from then, so the call waiting behind it is sent, and with the server gone it may
+    have gone through too: nothing tells the client it never reached a server."""
     monkeypatch.setattr(mcp_client, "_CALL_TIMEOUT_SECS", _DEADLINE)
     reg = _registry(http_recorder)
     conn = reg.get(NAME)
@@ -369,7 +385,8 @@ async def test_over_streamable_http_a_server_that_ends_mid_call_is_answered_at_t
     finally:
         await reg.shutdown_all()
 
-    _assert_out_and_waiting(first, second)
+    for tool, (ok, said) in (("slow_save", first), ("save", second)):
+        assert ok is True and said.startswith(f"MCP tool '{tool}' may have gone through: "), said
     assert http_recorder.received() == [("slow_save", "first")]
 
 

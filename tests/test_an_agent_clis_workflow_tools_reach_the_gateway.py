@@ -30,6 +30,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
+import tree_under_test
 
 from personalclaw import mcp_core, session_restrictions, started_work
 from personalclaw.action_providers import services as action_services
@@ -213,6 +214,10 @@ async def _tool_server(
         "PERSONALCLAW_PORT": str(gw.port),
         "PERSONALCLAW_SESSION_KEY": key,
     }
+    # Built from nothing, so it does not inherit the run's path: the tool server imports the tree
+    # under test, not whichever clone the venv's editable install points at, whose `mcp_core`
+    # may still read an answer's `error` as a call that got no answer.
+    tree_under_test.put_first(env)
     requests = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}] + [
         {
             "jsonrpc": "2.0",
@@ -290,6 +295,40 @@ async def test_a_workflow_an_agent_cli_starts_runs_to_completion_as_its_chats(ga
     # Started by the chat the tool server serves, as a start the tool makes in the gateway is.
     assert run.origin.session_key == KEY
     assert run.origin.kind == OriginKind.CHAT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", [RunStatus.FAILED, RunStatus.CANCELLED])
+async def test_a_run_that_ended_with_an_error_reads_as_it_ended(gateway, ending):
+    """🔴 Before: "Could not read the run …: <the run's own error>", coded WF_GATEWAY_UNANSWERED,
+    for a run the gateway read and answered: its status says why it ended, under `error`, and the
+    tool server read that field as its own failed call. The built-in agent was told the status."""
+    said = "the step 'fetch' needs a url and its config names none"
+    run = store.create(WorkflowRun(id="", workflow_name="two-steps", status=ending))
+    run.error_message = said
+    store.save(run)
+    [(ok, text)] = await _tool_server(gateway, ("workflow_status", {"run_id": run.id}))
+    assert ok, text
+    assert "WF_GATEWAY_UNANSWERED" not in text and "Could not read the run" not in text, text
+    body = _body(text)
+    assert (body["status"], body["error"]) == (ending.value, said), body
+    # As the gateway's own status answer has it: what the built-in agent is told.
+    here = service.status(run.id)
+    assert (here["status"], here["error"]) == (body["status"], body["error"]), here
+
+
+@pytest.mark.asyncio
+async def test_a_run_the_gateway_has_no_record_of_still_reads_as_a_refusal(gateway):
+    """The control: a call the gateway refused is still the call's failure, in its words."""
+    [(ok, text)] = await _tool_server(gateway, ("workflow_status", {"run_id": "deadbeef"}))
+    assert not ok, text
+    assert "deadbeef" in text, text
+
+
+def test_only_a_call_that_got_no_answer_is_marked_failed():
+    """The helpers' own failures carry the mark; an answer that names an `error` does not."""
+    assert mcp_core.call_failed(mcp_core._unanswered("GET", "/api/x", 1.0))
+    assert not mcp_core.call_failed({"status": "failed", "error": "why it ended"})
 
 
 @pytest.mark.asyncio

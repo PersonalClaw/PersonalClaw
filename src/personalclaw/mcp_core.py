@@ -934,6 +934,19 @@ def _resolve_session_key() -> str:
 _ERROR_TEXT_CAP = 500
 
 
+#: The key each of these helpers puts beside the ``error`` of a call that got no answer or was
+#: refused (:func:`call_failed`). An answer's own fields can name an ``error``: a failed run's
+#: status says why it ended, and was read as the call's own failure ("Could not read the run").
+#: No route answers with this key.
+CALL_FAILED = "call_failed"
+
+
+def call_failed(reply: dict[str, Any]) -> bool:
+    """Whether *reply*, from :func:`_get`, :func:`_post` or :func:`_delete`, is the call's own
+    failure (no answer, an unreadable one, a refusal) rather than the gateway's answer."""
+    return bool(reply.get(CALL_FAILED))
+
+
 def _refused(exc: urllib.error.HTTPError, *, made: bool = False) -> dict:
     """What a call the gateway answered with an error status returns: the gateway's own answer.
 
@@ -956,15 +969,18 @@ def _refused(exc: urllib.error.HTTPError, *, made: bool = False) -> dict:
     except ValueError:
         body = None
     if not isinstance(body, dict):
-        failed: dict[str, Any] = {"error": f"HTTP {exc.code}: {text or exc.reason}"}
+        failed: dict[str, Any] = {
+            "error": f"HTTP {exc.code}: {text or exc.reason}",
+            CALL_FAILED: True,
+        }
         if made and exc.code >= 500:
             failed["answer_lost"] = True
         return failed
     error = body.get("error")
     if isinstance(error, dict):
         sentence = str(error.get("message") or error.get("code") or f"HTTP {exc.code}")
-        return {**body, "error": sentence, "error_detail": error}
-    return {**body, "error": str(error) if error else f"HTTP {exc.code}: {text}"}
+        return {**body, "error": sentence, "error_detail": error, CALL_FAILED: True}
+    return {**body, "error": str(error) if error else f"HTTP {exc.code}: {text}", CALL_FAILED: True}
 
 
 #: How long a tool waits for the gateway to answer a read or a delete (``_get``, ``_delete``),
@@ -1004,7 +1020,11 @@ def _unanswered(method: str, path: str, budget: float) -> dict:
     its query, which holds what was asked."""
     call = f"{method} {path.split('?', 1)[0]}"
     logger.warning("The gateway did not answer %s within %s s", call, f"{budget:g}")
-    return {"error": f"the gateway did not answer {call} within {budget:g} s", "timed_out": True}
+    return {
+        "error": f"the gateway did not answer {call} within {budget:g} s",
+        "timed_out": True,
+        CALL_FAILED: True,
+    }
 
 
 # Each request goes to this gateway through ``home_gateway.open_loopback``: never through a proxy
@@ -1035,7 +1055,7 @@ def _post(path: str, body: dict | None = None, *, timeout: float | None = None) 
             method="POST",
         )
     except Exception as e:  # no gateway to name or no credential: nothing was sent
-        return {"error": str(e)}
+        return {"error": str(e), CALL_FAILED: True}
     try:
         with home_gateway.open_loopback(req, timeout=budget) as resp:
             raw = resp.read()
@@ -1048,12 +1068,16 @@ def _post(path: str, body: dict | None = None, *, timeout: float | None = None) 
         # transport a ValueError for an address that is not this machine's; anything else was
         # raised once the request was sent, waiting for its answer.
         if isinstance(e, (urllib.error.URLError, ValueError)):
-            return {"error": str(e)}
-        return {"error": str(e) or type(e).__name__, "answer_lost": True}
+            return {"error": str(e), CALL_FAILED: True}
+        return {"error": str(e) or type(e).__name__, "answer_lost": True, CALL_FAILED: True}
     try:
         return json.loads(raw)
     except ValueError:
-        return {"error": "the gateway's answer could not be read", "answer_lost": True}
+        return {
+            "error": "the gateway's answer could not be read",
+            "answer_lost": True,
+            CALL_FAILED: True,
+        }
 
 
 def _get(path: str, *, timeout: float | None = None) -> dict:
@@ -1070,7 +1094,7 @@ def _get(path: str, *, timeout: float | None = None) -> dict:
     except Exception as e:
         if _timed_out(e):
             return _unanswered("GET", path, budget)
-        return {"error": str(e)}
+        return {"error": str(e), CALL_FAILED: True}
 
 
 def _delete(path: str, body: dict | None = None) -> dict:
@@ -1089,7 +1113,7 @@ def _delete(path: str, body: dict | None = None) -> dict:
     except Exception as e:
         if _timed_out(e):
             return _unanswered("DELETE", path, GATEWAY_READ_TIMEOUT_SECS)
-        return {"error": str(e)}
+        return {"error": str(e), CALL_FAILED: True}
 
 
 class GatewayMade(NamedTuple):

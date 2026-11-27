@@ -21,14 +21,17 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import os
+import threading
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Sequence
 
 from personalclaw import bounded_log
-from personalclaw.atomic_write import atomic_write
+from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.durability import home_paths
 
 logger = logging.getLogger(__name__)
@@ -348,6 +351,97 @@ def _newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for _at, row in timed] + untimed[::-1]
 
 
+def _line(row: dict[str, Any]) -> str:
+    """*row* as one line of a history file, every character past ASCII escaped.
+
+    Escaped, not written as UTF-8: a run's text can hold a lone surrogate (a JSON ``\\ud800`` in a
+    payload decodes to one), which UTF-8 cannot encode, and the write raised. Its row was never
+    written, so its History lost it and the hourly cap's count (`count_since`) passed over it.
+    Escaped, the row is plain JSON that reads back to the same text."""
+    return json.dumps(row, ensure_ascii=True) + "\n"
+
+
+@dataclass
+class _Lines:
+    """One read of a history file (`ScheduleRunStore._read`): its rows, and the lines in it that
+    are not UTF-8, as they are, for a rewrite to keep."""
+
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    not_utf8: list[bytes] = field(default_factory=list)
+
+
+#: The history files already said in the log to hold a line that is not UTF-8, so a file read on
+#: every fire says it once, not on every read.
+_SAID_NOT_UTF8: set[str] = set()
+
+#: Runs whose row could not be written (a full disk, a history folder that cannot be written), by
+#: history folder and job: when each started. A run with no row was in no count of its job's runs,
+#: so :meth:`ScheduleRunStore.count_since` adds these in, for as long as they can fall in a window
+#: (:data:`_UNWRITTEN_KEPT_SECS`). In this process only: a run this process could not write is one
+#: this process ran.
+_UNWRITTEN: dict[tuple[str, str], list[float]] = {}
+_UNWRITTEN_LOCK = threading.Lock()
+_UNWRITTEN_KEPT_SECS = 2 * 3600.0
+#: Each folder and job whose runs could not be recorded, said once in the log.
+_SAID_UNWRITTEN: set[tuple[str, str]] = set()
+
+
+def counts_in_the_window(row: dict[str, Any]) -> bool:
+    """Whether a run row counts among its job's runs in a window (:meth:`ScheduleRunStore.
+    count_since`), its time aside: a run of yours does not, nor one that did no work (a
+    suppression, a refusal, a payload the injection screen stopped)."""
+    from personalclaw.triggers import run_source
+    from personalclaw.triggers.models import INERT_OUTCOMES, Outcome
+
+    # A run of YOURS is not counted (manual fires bypass the hourly cap): the cap
+    # exists to stop the machine running away on its own, and you pressing Run is not the
+    # machine running away. Counting your runs would let you lock yourself out of your own
+    # automation. Only yours: a run an agent, an app or a program asked for is the
+    # automation firing for someone nobody answers, and it counts as its clock's fires do.
+    if run_source.yours(run_source.of_row(row)):
+        return False
+    # 🔴 A SUPPRESSION IS NOT A FIRE. Since suppressed fires began persisting their
+    # typed row here (no silent drops), this window would otherwise count
+    # them — measured, 5 quiet-hours skips read as 5 fires, so a trigger held by its own
+    # quiet window would consume the hourly cap it never used and then be refused for
+    # "running away". The cap exists to bound work the machine DID.
+    #
+    # Keyed on `INERT_OUTCOMES`, the same set `history.is_inert` uses, rather than a local
+    # list of `skipped_*` strings: one definition of "this did nothing" for both surfaces.
+    if str(row.get("status") or "") in INERT_OUTCOMES:
+        return False
+    # Nor is a fire refused before its action ran, because something it needs is gone
+    # (`run_record.record_refusal`, tagged `refused`): it did no work, and counted it would
+    # hold the automation's first runs once what it needs is back.
+    if str(row.get("trigger") or "") == "refused":
+        return False
+    # Nor is a payload the injection screen stopped (`gateway._record_blocked_fire`, its
+    # status and trigger both `blocked_injection`): refused before anything ran, it did no
+    # work, and counted, enough of them would hold the automation's real fires as running
+    # away.
+    return str(row.get("status") or "") != Outcome.BLOCKED_INJECTION.value
+
+
+def _unwritten_since(folder: str, job_id: str, since: float) -> int:
+    """How many of *job_id*'s runs whose row *folder* could not write started at or after
+    *since*."""
+    with _UNWRITTEN_LOCK:
+        return sum(1 for at in _UNWRITTEN.get((folder, job_id), ()) if at >= since)
+
+
+def _say_not_utf8(path: Path, count: int) -> None:
+    key = str(path)
+    if key in _SAID_NOT_UTF8:
+        return
+    _SAID_NOT_UTF8.add(key)
+    logger.warning(
+        "Run history %s holds %d line(s) that are not UTF-8: each is skipped, and kept as it is "
+        "when the file is rewritten",
+        path,
+        count,
+    )
+
+
 class ScheduleRunStore:
     """JSONL-per-job store of :class:`ScheduleRun` records, owned by the service.
 
@@ -386,32 +480,70 @@ class ScheduleRunStore:
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
 
-    @staticmethod
-    def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-        """Lock-free read; tolerates a partial trailing line (concurrent append)."""
-        rows: list[dict[str, Any]] = []
+    def _read_jsonl(self, path: Path) -> list[dict[str, Any]]:
+        """Lock-free read; tolerates a partial trailing line (concurrent append), and a line that
+        is not UTF-8 (:meth:`_read`)."""
+        return self._read(path).rows
+
+    def _read(self, path: Path) -> _Lines:
+        """The rows of *path*, and the lines it holds that are not UTF-8, as they are.
+
+        Read as bytes and decoded a line at a time: a byte that is not UTF-8 (an append a crash
+        cut inside a character, a damaged disk block) spoils its own line only. Read as text, it
+        raised out of the whole read, and every reader of the file failed from then on: the
+        automation's History, the list's last run, the record of each later run (the append
+        trims, so it reads the file again), and the hourly cap's count, which then let fires
+        through. Such a line is skipped here, said once in the log, and handed to a rewrite to
+        keep (:meth:`_write_jsonl`). A line that is not JSON is a torn append and skipped, as
+        before.
+
+        Only a file inside the history's folder is read: every path here is a job's file
+        (:meth:`_job_path`) or the index, under it, and the read checks the very path it opens,
+        by where it really is, so no job id and no link takes it elsewhere. A path outside reads
+        as a file that is not there.
+        """
+        read = _Lines()
+        real = os.path.realpath(path)
+        root = os.path.realpath(self._dir)
+        if not real.startswith(root + os.sep):
+            logger.warning("run history: refused a read outside its folder: %s", path)
+            return read
         try:
-            with path.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rows.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        # Partial final line from an in-flight append — skip it.
-                        continue
+            raw = Path(real).read_bytes()
         except FileNotFoundError:
-            return []
+            return read
         except OSError:
             logger.debug("Failed reading run history %s", path, exc_info=True)
-            return []
-        return rows
+            return read
+        for line in raw.split(b"\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                text = line.decode("utf-8")
+            except UnicodeDecodeError:
+                read.not_utf8.append(line)
+                continue
+            try:
+                read.rows.append(json.loads(text))
+            except json.JSONDecodeError:
+                # Partial final line from an in-flight append — skip it.
+                continue
+        if read.not_utf8:
+            _say_not_utf8(path, len(read.not_utf8))
+        return read
 
     @staticmethod
-    def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-        content = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
-        atomic_write(path, content, mode=0o600)
+    def _write_jsonl(path: Path, rows: list[dict[str, Any]], kept: Sequence[bytes] = ()) -> None:
+        """Write *rows* to *path*, after the lines *kept* as they were: lines that are not UTF-8
+        (:meth:`_read`) hold no row and no time, so they go first and are written back byte for
+        byte, never decoded and never dropped by a rewrite or a trim."""
+        content = "".join(_line(row) for row in rows)
+        if not kept:
+            atomic_write(path, content, mode=0o600)
+            return
+        data = b"".join(line + b"\n" for line in kept) + content.encode("utf-8")
+        atomic_write_bytes(path, data, mode=0o600)
 
     # ── Write ─────────────────────────────────────────────────────────
 
@@ -432,36 +564,77 @@ class ScheduleRunStore:
         run.error = _redact_stored(run.error)
         run.job_name = _redact_stored(run.job_name)
         job_path = self._job_path(run.job_id)
-        with self._lock():
-            self._dir.mkdir(parents=True, exist_ok=True)
-            # The work this row names ended before the row was written: it is written as it ended.
-            early = (
-                _EARLY_ENDINGS.pop((str(self._dir), run.job_id, run.work_id), None)
-                if run.work_id and run.status in UNSETTLED_STATUSES
-                else None
+        # Whether the run's row is on its job's file, the one its count reads (`count_since`).
+        written = False
+        try:
+            with self._lock():
+                self._dir.mkdir(parents=True, exist_ok=True)
+                # The work this row names ended before the row was written: it is written as it
+                # ended.
+                early = (
+                    _EARLY_ENDINGS.pop((str(self._dir), run.job_id, run.work_id), None)
+                    if run.work_id and run.status in UNSETTLED_STATUSES
+                    else None
+                )
+                if early is not None:
+                    run.status = early["status"]
+                    run.summary, run.trace, run.error = (
+                        early["summary"],
+                        early["trace"],
+                        early["error"],
+                    )
+                    run.finished_at = max(run.started_at, early["finished_at"])
+                    run.duration_ms = int((run.finished_at - run.started_at) * 1000)
+                    run.trigger = _exit_after(run.trigger, early)
+                # Full record (with trace) on the per-job file.
+                with job_path.open("a", encoding="utf-8") as fh:
+                    fh.write(_line(run.to_dict(include_trace=True)))
+                written = True
+                try:
+                    job_path.chmod(0o600)
+                except OSError:
+                    pass
+                # Lightweight row (no trace) on the cross-job index.
+                with self._index.open("a", encoding="utf-8") as fh:
+                    fh.write(_line(run.to_dict(include_trace=False)))
+                try:
+                    self._index.chmod(0o600)
+                except OSError:
+                    pass
+                self._rotate_job_locked(run.job_id)
+                self._rotate_index_locked()
+        except Exception as exc:
+            if not written:
+                self._count_unwritten(run, exc)
+            raise
+
+    def _count_unwritten(self, run: ScheduleRun, exc: BaseException) -> None:
+        """Keep a run whose row could not be written among its job's runs for the windows it can
+        fall in (:data:`_UNWRITTEN`), and say once per job why its runs are not being recorded.
+
+        A run with no row was in no count of its job's runs: it had run, and every count read off
+        the history passed over it.
+        """
+        key = (str(self._dir), run.job_id)
+        try:
+            counted = counts_in_the_window(run.to_dict(include_trace=False))
+        except Exception:  # noqa: BLE001 - a run whose row cannot be read still ran
+            counted = True
+        if counted:
+            at = float(run.started_at or time.time())
+            with _UNWRITTEN_LOCK:
+                cutoff = time.time() - _UNWRITTEN_KEPT_SECS
+                kept = [t for t in _UNWRITTEN.get(key, ()) if t >= cutoff]
+                _UNWRITTEN[key] = [*kept, at]
+        if key not in _SAID_UNWRITTEN:
+            _SAID_UNWRITTEN.add(key)
+            logger.warning(
+                "A run of %s could not be recorded in %s (%s); it still counts among its runs "
+                "in the window, and the next one tries again.",
+                run.job_id,
+                self._dir,
+                exc,
             )
-            if early is not None:
-                run.status = early["status"]
-                run.summary, run.trace, run.error = early["summary"], early["trace"], early["error"]
-                run.finished_at = max(run.started_at, early["finished_at"])
-                run.duration_ms = int((run.finished_at - run.started_at) * 1000)
-                run.trigger = _exit_after(run.trigger, early)
-            # Full record (with trace) on the per-job file.
-            with job_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(run.to_dict(include_trace=True), ensure_ascii=False) + "\n")
-            try:
-                job_path.chmod(0o600)
-            except OSError:
-                pass
-            # Lightweight row (no trace) on the cross-job index.
-            with self._index.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(run.to_dict(include_trace=False), ensure_ascii=False) + "\n")
-            try:
-                self._index.chmod(0o600)
-            except OSError:
-                pass
-            self._rotate_job_locked(run.job_id)
-            self._rotate_index_locked()
 
     def rewrite_sync(self, change: Callable[[dict[str, Any]], dict[str, Any]]) -> bool:
         """Pass every row of the history through *change*, under the lock, and write back each
@@ -473,10 +646,10 @@ class ScheduleRunStore:
         changed = False
         with self._lock():
             for path in sorted(self._dir.glob("*.jsonl")):
-                rows = self._read_jsonl(path)
-                rewritten = [change(row) for row in rows]
-                if rewritten != rows:
-                    self._write_jsonl(path, rewritten)
+                read = self._read(path)
+                rewritten = [change(row) for row in read.rows]
+                if rewritten != read.rows:
+                    self._write_jsonl(path, rewritten, read.not_utf8)
                     changed = True
         return changed
 
@@ -527,7 +700,8 @@ class ScheduleRunStore:
         }
         job_path = self._job_path(job_id)
         with self._lock():
-            rows = self._read_jsonl(job_path)
+            read = self._read(job_path)
+            rows = read.rows
             named = [row for row in rows if row.get("work_id") == work_id]
             if not named:
                 key = (str(self._dir), job_id, work_id)
@@ -540,12 +714,12 @@ class ScheduleRunStore:
                 return False
             run_id = row.get("run_id")
             _settle_row(row, ending, with_trace=True)
-            self._write_jsonl(job_path, rows)
-            index = self._read_jsonl(self._index)
-            for entry in index:
+            self._write_jsonl(job_path, rows, read.not_utf8)
+            index = self._read(self._index)
+            for entry in index.rows:
                 if entry.get("job_id") == job_id and entry.get("run_id") == run_id:
                     _settle_row(entry, ending, with_trace=False)
-            self._write_jsonl(self._index, index)
+            self._write_jsonl(self._index, index.rows, index.not_utf8)
         return True
 
     def unsettled_row(self, job_id: str, work_id: str) -> dict[str, Any] | None:
@@ -613,9 +787,6 @@ class ScheduleRunStore:
         return await asyncio.to_thread(self._list_for_job_sync, job_id, offset, limit)
 
     def _count_since_sync(self, job_id: str, since: float) -> int:
-        from personalclaw.triggers import run_source
-        from personalclaw.triggers.models import INERT_OUTCOMES, Outcome
-
         rows = self._read_jsonl(self._job_path(job_id))
         total = 0
         for row in rows:
@@ -623,38 +794,10 @@ class ScheduleRunStore:
                 started = float(row.get("started_at") or 0.0)
             except (TypeError, ValueError):
                 continue
-            if started < since:
-                continue
-            # A run of YOURS is not counted (manual fires bypass the hourly cap): the cap
-            # exists to stop the machine running away on its own, and you pressing Run is not the
-            # machine running away. Counting your runs would let you lock yourself out of your own
-            # automation. Only yours: a run an agent, an app or a program asked for is the
-            # automation firing for someone nobody answers, and it counts as its clock's fires do.
-            if run_source.yours(run_source.of_row(row)):
-                continue
-            # 🔴 A SUPPRESSION IS NOT A FIRE. Since suppressed fires began persisting their
-            # typed row here (no silent drops), this window would otherwise count
-            # them — measured, 5 quiet-hours skips read as 5 fires, so a trigger held by its own
-            # quiet window would consume the hourly cap it never used and then be refused for
-            # "running away". The cap exists to bound work the machine DID.
-            #
-            # Keyed on `INERT_OUTCOMES`, the same set `history.is_inert` uses, rather than a local
-            # list of `skipped_*` strings: one definition of "this did nothing" for both surfaces.
-            if str(row.get("status") or "") in INERT_OUTCOMES:
-                continue
-            # Nor is a fire refused before its action ran, because something it needs is gone
-            # (`run_record.record_refusal`, tagged `refused`): it did no work, and counted it would
-            # hold the automation's first runs once what it needs is back.
-            if str(row.get("trigger") or "") == "refused":
-                continue
-            # Nor is a payload the injection screen stopped (`gateway._record_blocked_fire`, its
-            # status and trigger both `blocked_injection`): refused before anything ran, it did no
-            # work, and counted, enough of them would hold the automation's real fires as running
-            # away.
-            if str(row.get("status") or "") == Outcome.BLOCKED_INJECTION.value:
-                continue
-            total += 1
-        return total
+            if started >= since and counts_in_the_window(row):
+                total += 1
+        # With each run whose row could not be written: it ran, and has no row to count.
+        return total + _unwritten_since(str(self._dir), job_id, since)
 
     async def count_since(self, job_id: str, since: float) -> int:
         """How many runs this job recorded at or after `since` (a UTC epoch), yours left out, and
@@ -729,10 +872,10 @@ class ScheduleRunStore:
         the file and a file grouped by class would read out of order.
         """
         path = self._job_path(job_id)
-        rows = self._read_jsonl(path)
-        if len(rows) <= _MAX_RECORDS_PER_JOB:
+        read = self._read(path)
+        if len(read.rows) <= _MAX_RECORDS_PER_JOB:
             return
-        rows = bounded_log.in_time_order(rows, at="started_at")
+        rows = bounded_log.in_time_order(read.rows, at="started_at")
         from personalclaw.triggers.models import INERT_OUTCOMES
 
         sup_idx = [i for i, r in enumerate(rows) if str(r.get("status") or "") in INERT_OUTCOMES]
@@ -745,7 +888,7 @@ class ScheduleRunStore:
         keep_suppressed = sup_idx[-_MAX_SUPPRESSED_PER_JOB:]
         keep_work = work_idx[-(_MAX_RECORDS_PER_JOB - len(keep_suppressed)) :]
         keep = sorted(set(keep_suppressed) | set(keep_work))
-        self._write_jsonl(path, [rows[i] for i in keep])
+        self._write_jsonl(path, [rows[i] for i in keep], read.not_utf8)
 
     def _rotate_index_locked(self) -> None:
         """Trim the cross-job index, bounding how much of it ONE job may hold.
@@ -766,11 +909,11 @@ class ScheduleRunStore:
         busy jobs and room to spare keeps everything, so nothing regresses for an install that never
         hits the cap.
         """
-        rows = self._read_jsonl(self._index)
-        if len(rows) <= _MAX_INDEX_RECORDS:
+        read = self._read(self._index)
+        if len(read.rows) <= _MAX_INDEX_RECORDS:
             return
         # In time order first (`bounded_log`), so each job's own tail is its newest runs.
-        rows = bounded_log.in_time_order(rows, at="started_at")
+        rows = bounded_log.in_time_order(read.rows, at="started_at")
         per_job: dict[str, list[int]] = {}
         for i, r in enumerate(rows):
             per_job.setdefault(str(r.get("job_id") or ""), []).append(i)
@@ -778,7 +921,9 @@ class ScheduleRunStore:
         for idxs in per_job.values():
             keep.update(idxs[-_MAX_INDEX_PER_JOB:])
         # Then the global cap, on the fair-shared set, kept in time order.
-        self._write_jsonl(self._index, [rows[i] for i in sorted(keep)[-_MAX_INDEX_RECORDS:]])
+        self._write_jsonl(
+            self._index, [rows[i] for i in sorted(keep)[-_MAX_INDEX_RECORDS:]], read.not_utf8
+        )
 
     def _rotate_all_sync(self) -> None:
         """Rotate every job file + the index. Runs once at gateway boot.
@@ -848,9 +993,11 @@ class ScheduleRunStore:
                 pass
             except OSError:
                 logger.debug("Failed deleting run history %s", path, exc_info=True)
-            # Drop the job's rows from the cross-job index.
-            rows = [r for r in self._read_jsonl(self._index) if r.get("job_id") != job_id]
-            self._write_jsonl(self._index, rows)
+            # Drop the job's rows from the cross-job index. A line that is not UTF-8 names no job,
+            # so it stays.
+            index = self._read(self._index)
+            rows = [r for r in index.rows if r.get("job_id") != job_id]
+            self._write_jsonl(self._index, rows, index.not_utf8)
 
     async def delete_for_job(self, job_id: str) -> None:
         import asyncio

@@ -21,9 +21,11 @@ of it fails until the folder is deleted by hand. So a program that has not said 
 still running when its connection stops waiting for it, is left to finish on its own, for up to
 :data:`FINISH_SECS`. A start of the same program meanwhile waits for that one rather than starting a
 second beside it, and when it ends its server is looked at again (`mcp_discovery.look_again`). A
-program that has spoken is a running server and is stopped as before, and so is the next silent
-start of a server left to finish once already that has not answered since, until its owner presses
-Retry or changes it: a server slow to start every time is not installing.
+start that begins while another start of the program has not said a word yet waits too: two
+connections to one server that start together start one program, and at most one is ever left to
+finish. A program that has spoken is a running server and is stopped as before, and so is the next
+silent start of a server left to finish once already that has not answered since, until its owner
+presses Retry or changes it: a server slow to start every time is not installing.
 """
 
 from __future__ import annotations
@@ -110,6 +112,9 @@ class _Finishing:
 
 #: The programs left to finish starting, by what each runs (:func:`_program`).
 _finishing: dict[tuple[str, ...], _Finishing] = {}
+#: The programs a start is under way for that has not said a word, ended or been left to finish
+#: yet, by what each runs: a start of the same program meanwhile waits (:func:`_wait_for_earlier`).
+_starting: dict[tuple[str, ...], "asyncio.Future[None]"] = {}
 #: The servers whose start was left to finish once and that have not answered since: the next start
 #: that does not answer is stopped. Its owner's Retry, or a change to it, gives it its time again
 #: (:func:`forget_left`).
@@ -145,8 +150,9 @@ async def stdio_streams(
     It is started in the one environment a server is started in (`mcp_discovery.stdio_spawn_env`),
     its command found on that environment's ``PATH`` (:class:`CommandNotFound`, before anything is
     started, when it is not), through the resource ceiling. While an earlier start of the same
-    program is still finishing (see the module's docstring), this one waits for it before it starts
-    anything; its own deadline can end that wait, and nothing here ends the earlier start.
+    program has not said a word yet, or is still finishing (see the module's docstring), this one
+    waits for it before it starts anything; its own deadline can end that wait, and nothing here
+    ends the earlier start.
 
     *read* carries each line the server writes to stdout as a ``SessionMessage`` (or the error that
     parsing it raised, as the SDK's own client does), and ends when the server closes stdout. What
@@ -180,29 +186,27 @@ async def stdio_streams(
         raise CommandNotFound(command)
     args = [str(a) for a in spec.get("args") or []]
     program = _program(resolved, args, cwd)
-    earlier = _finishing.get(program)
-    if earlier is not None and earlier.task.get_loop() is not asyncio.get_running_loop():
-        # Left by a loop that has gone (an earlier gateway in this process): nothing waits on it.
-        del _finishing[program]
-        earlier = None
-    if earlier is not None:
-        # A second start beside it would install into the same place at the same time.
-        # `asyncio.wait`, not `await`: this start's deadline cancels the wait, not the earlier one.
-        run.waiting = True
-        await asyncio.wait({earlier.task})
-        run.waiting = False
-    proc = await create_subprocess_limited(
-        resolved,
-        *args,
-        profile=PROFILE_TOOL,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-        cwd=cwd,
-        # Its own process group, so stopping it stops what it started (a package manager's build).
-        start_new_session=True,
-    )
+    await _wait_for_earlier(program, run)
+    # Under way from here until it speaks, ends or is left to finish: one start of it at a time.
+    starting: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+    _starting[program] = starting
+    try:
+        proc = await create_subprocess_limited(
+            resolved,
+            *args,
+            profile=PROFILE_TOOL,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            cwd=cwd,
+            # Its own process group, so stopping it stops what it started (a package manager's
+            # build).
+            start_new_session=True,
+        )
+    except BaseException:
+        _done_starting(program, starting)
+        raise
     read_send, read_recv = anyio.create_memory_object_stream[Any](0)
     write_send, write_recv = anyio.create_memory_object_stream[Any](0)
     stderr_done = anyio.Event()
@@ -221,6 +225,7 @@ async def stdio_streams(
                     if not run.spoke:
                         run.spoke = True
                         _left_unanswered.discard(server)
+                        _done_starting(program, starting)
                     item: Any
                     # A line that is not a message is handed on as its error: the session decides
                     # what it means, as with the SDK's own client.
@@ -298,6 +303,45 @@ async def stdio_streams(
         # Once its pumps are gone, so that what it writes is read by one reader at a time.
         if run.left_to_finish:
             _leave_to_finish(server, program, proc)
+        # After it is left to finish, so a start waiting on this one goes on to wait for that.
+        _done_starting(program, starting)
+
+
+async def _wait_for_earlier(program: tuple[str, ...], run: StdioRun) -> None:
+    """Wait, before *program* is started, for an earlier start of it that has not said a word yet
+    and for one left to finish: a second start beside it would install into the same place at the
+    same time. One left by a loop that has gone (an earlier gateway in this process) is dropped:
+    nothing waits on it. `asyncio.wait`, not `await`: this start's deadline cancels the wait, never
+    the earlier start."""
+    loop = asyncio.get_running_loop()
+    while True:
+        earlier = _finishing.get(program)
+        if earlier is not None and earlier.task.get_loop() is not loop:
+            del _finishing[program]
+            earlier = None
+        starting = _starting.get(program)
+        if starting is not None and starting.get_loop() is not loop:
+            del _starting[program]
+            starting = None
+        waits: set[asyncio.Future[Any]] = {
+            future
+            for future in (earlier.task if earlier else None, starting)
+            if future is not None and not future.done()
+        }
+        if not waits:
+            return
+        run.waiting = True
+        await asyncio.wait(waits)
+        run.waiting = False
+
+
+def _done_starting(program: tuple[str, ...], starting: asyncio.Future[None]) -> None:
+    """The start *starting* stands for has spoken, ended or been left to finish: a start of
+    *program* waiting on it goes on (to wait for the one left to finish, if it was)."""
+    if not starting.done():
+        starting.set_result(None)
+    if _starting.get(program) is starting:
+        del _starting[program]
 
 
 def _may_finish(run: StdioRun, server: str, stdout_ended: bool) -> bool:
