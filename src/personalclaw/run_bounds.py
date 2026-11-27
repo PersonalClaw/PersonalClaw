@@ -12,7 +12,9 @@ command, the path a native file tool is given):
   held the same way as an unlisted one. An **unattended** run is refused such a command; an
   **attended** one asks a person, with the host named on the card, whatever would otherwise have
   answered for it (Trust, YOLO, a standing grant, a hook's auto-approve). Only the listed host
-  goes ahead unasked, because the list is the owner's own answer for it.
+  goes ahead unasked, because the list is the owner's own answer for it, and, under YOLO in a
+  chat of hers she is watching, a command that only fetches from hosts it names, none on Denied
+  (:func:`fetched_from`, ``approval_grants.yolo_fetch_hosts``): a network command that sends asks.
 * **Writes.** An unattended run changes files only inside its own folders: the folder it works in
   (a workspace, or a code loop's worktree), the folders it was given (a loop's own folder, a
   project's context folder, the files an automation may change) and its own temporary folder
@@ -366,6 +368,9 @@ class Reach:
     deletes: ProtectedDelete = NOTHING
     #: Each way it gives git a commit's author or committer itself (``CommandEffects.identity``).
     identity: tuple[str, ...] = ()
+    #: It only fetches from every host it reaches: a shell command whose reading says it sends
+    #: nothing of this machine's (``CommandEffects.sends``). Never so of any other call's reach.
+    only_fetches: bool = False
 
     @property
     def network(self) -> bool:
@@ -402,15 +407,17 @@ def effects_reach(
     (``$TMPDIR`` being the run's *scratch* folder)."""
     hosts: tuple[str, ...] = ()
     unnamed_host = False
+    only_fetches = False
     if effects.network:
         hosts = unlisted(effects.hosts, policy, declared=declared)
         unnamed_host = effects.host_unread
+        only_fetches = not effects.sends
     paths: tuple[str, ...] = ()
     unnamed_path = False
     if within is not None and effects.writes:
         paths = outside(effects.targets, cwd=cwd, within=within, scratch=scratch)
         unnamed_path = effects.target_unread
-    return Reach(hosts, unnamed_host, paths, unnamed_path)
+    return Reach(hosts, unnamed_host, paths, unnamed_path, only_fetches=only_fetches)
 
 
 def call_reach(
@@ -642,8 +649,9 @@ def ask_note(reach: Reach) -> str:
         notes.append(
             sentence[0].upper()
             + sentence[1:]
-            + ". A command that reaches a host off that list, or one it does not name, is always "
-            "asked about, whatever this chat or its agent allows."
+            + ". A command that reaches a host off that list, or one it does not name, is asked "
+            "about whatever this chat or its agent allows, except a download YOLO runs in a chat "
+            "of your own in the dashboard."
         )
     if reach.deletes:
         notes.append(
@@ -717,12 +725,46 @@ def put_to_a_person(event: Any, *, session_key: str, cwd: str) -> bool:
     (``secret_file_grants``), it reaches a host off the allowed hosts, or one its command does not
     name, or it deletes one of the owner's protected folders, or a path its command does not name
     (:mod:`personalclaw.protected_folders`), or it gives git a commit's author or committer
-    itself. No grant answers it."""
+    itself. No grant answers it, but YOLO a fetch from hosts its command names, in a chat of hers
+    she is watching (:func:`fetched_from`, ``approval_grants.stands_for_call``)."""
     from personalclaw.secret_file_grants import asked_of
 
     if asked_of(event):
         return True
     return _event_reach(event, session_key, cwd).asks
+
+
+def fetched_from(event: Any, *, session_key: str, cwd: str) -> tuple[str, ...]:
+    """The hosts off the allowed hosts a call put to an approval gate, run in the folder *cwd*,
+    only fetches from, when they are all that put it to a person (:func:`put_to_a_person`): each
+    one its command names, none on Denied hosts, the command sending nothing of this machine's to
+    any host it reaches (``CommandEffects.sends``), and no URL in it carrying a secret or a long
+    query out (``security.scan_exfiltration_urls``), nor any key or token the credential screen
+    knows anywhere in it (``security.redact_credentials``). ``()`` for every other call, and for a
+    run whose egress tier reaches nothing. What YOLO may answer past the list
+    (``approval_grants.yolo_fetch_hosts``)."""
+    from personalclaw.net.guard import host_matches
+    from personalclaw.secret_file_grants import asked_of
+    from personalclaw.security import redact_credentials, scan_exfiltration_urls
+    from personalclaw.task_modes import shell_call_command
+
+    if asked_of(event):
+        return ()
+    reach = _event_reach(event, session_key, cwd)
+    if not reach.hosts or not reach.only_fetches or replace(reach, hosts=()).asks:
+        return ()
+    policy = shell_egress_policy(session_key)
+    if policy is None or any(host_matches(h, tuple(policy.deny_hosts)) for h in reach.hosts):
+        return ()
+    title = str(getattr(event, "title", "") or "")
+    runs = shell_call_command(
+        title,
+        str(getattr(event, "tool_kind", "") or ""),
+        getattr(event, "tool_input", ""),
+        getattr(event, "risk_level", "") or "",
+    )
+    text = f"{title}\n{runs}"
+    return () if scan_exfiltration_urls(text) or redact_credentials(text)[1] else reach.hosts
 
 
 def screen(hooks: Any, event: Any, session_key: str, cwd: str) -> tuple[Any, bool]:
@@ -970,6 +1012,7 @@ __all__ = [
     "event_note",
     "native_check",
     "put_to_a_person",
+    "fetched_from",
     "attended",
     "network_sentence",
     "outside",

@@ -119,6 +119,11 @@ class CommandEffects:
     ``identity`` names each way it gives git the author or committer of a commit itself, past the
     identity git is configured with, as the command spells it: a setting (``user.email`` in
     ``git -c`` or ``git config``), ``git commit --author``, a variable (``GIT_AUTHOR_EMAIL``).
+
+    ``sends``: the network facet may send something of this machine's to a host it reaches. Every
+    reach a reading names sends, unless its program's reader holds it to a known fetch, one that
+    only brings data here (:func:`_fetches`): a package manager's install, ``git clone`` and its
+    kin, ``curl`` and ``wget`` given only download options.
     """
 
     writes: bool = False
@@ -132,6 +137,7 @@ class CommandEffects:
     removes: frozenset[Removal] = frozenset()
     removes_unread: bool = False
     identity: frozenset[str] = frozenset()
+    sends: bool = False
 
     @property
     def reads_only(self) -> bool:
@@ -150,6 +156,7 @@ class CommandEffects:
             removes=self.removes | other.removes,
             removes_unread=self.removes_unread or other.removes_unread,
             identity=self.identity | other.identity,
+            sends=self.sends or other.sends,
         )
 
 
@@ -160,7 +167,7 @@ _WRITES = CommandEffects(writes=True, target_unread=True)
 #: A delete is a write to the world, so it is shown as one too.
 _DELETES = CommandEffects(writes=True, deletes=True, target_unread=True)
 #: The network, at a host the command does not name.
-_NETWORK = CommandEffects(network=True, host_unread=True)
+_NETWORK = CommandEffects(network=True, host_unread=True, sends=True)
 
 
 def _who(identity: frozenset[str]) -> CommandEffects:
@@ -179,8 +186,33 @@ def _deletes_in(*paths: str) -> CommandEffects:
 
 
 def _reaches(*hosts: str) -> CommandEffects:
-    """The network, at each of *hosts*."""
+    """The network, at each of *hosts*, which it may send something of this machine's."""
+    return CommandEffects(network=True, hosts=frozenset(h for h in hosts if h), sends=True)
+
+
+def _fetches(*hosts: str) -> CommandEffects:
+    """The network, at each of *hosts*, only to fetch from them: it sends nothing of this
+    machine's. Only a reader that knows its program's form does nothing else calls it."""
     return CommandEffects(network=True, hosts=frozenset(h for h in hosts if h))
+
+
+def _fetched(reach: CommandEffects, word: Word, *, bare: bool = False) -> CommandEffects:
+    """*reach*, where *word* (a URL, a repository, a package spec) reaches, as a fetch: one that
+    names its hosts only. A host it does not name still sends, and so does a URL that carries a
+    password (``https://user:secret@host/``), which it hands its host. *bare*: a word with no
+    scheme is a URL too, as ``curl`` and ``wget`` take it."""
+    if reach.host_unread or not reach.hosts or _carries_a_password(word, bare=bare):
+        return reach
+    return _fetches(*reach.hosts)
+
+
+def _carries_a_password(word: Word, *, bare: bool) -> bool:
+    match = _SCHEME.search(word.text)
+    url = word.text[match.start() :] if match else ("http://" + word.text if bare else "")
+    try:
+        return bool(url) and urlsplit(url).password is not None
+    except ValueError:
+        return True
 
 
 def command_effects(command: str) -> CommandEffects:
@@ -288,6 +320,7 @@ def _relayed(effects: CommandEffects) -> CommandEffects:
         effects,
         host_unread=effects.host_unread or effects.network,
         target_unread=effects.target_unread or effects.writes,
+        sends=effects.sends or effects.network,
     )
 
 
@@ -1351,9 +1384,20 @@ _GIT_NET_LONG_VALUED = _longs(
 )
 
 
+#: The git network subcommands that only download from the repository they name.
+_GIT_FETCHING = frozenset({"clone", "fetch", "pull", "ls-remote"})
+#: Their options that change nothing of where they reach or what they send. Given any other (a
+#: setting, a program to run, a server option, submodules from wherever they point), it sends.
+_GIT_FETCH_OPTIONS = frozenset(
+    "-q --quiet -v --verbose --progress --depth --branch -b --single-branch --no-tags --ff-only "
+    "--rebase --no-rebase --filter".split()
+)
+
+
 def _git_remote_op(sub: str) -> _Read:
     """``git clone``/``fetch``/``pull``/``push``/``ls-remote``: the repository it reaches, and
-    what it writes here."""
+    what it writes here. A ``push`` sends whatever it names; the rest fetch, given only
+    :data:`_GIT_FETCH_OPTIONS`."""
 
     def read(args: list[Word]) -> CommandEffects:
         scan = _scan(
@@ -1365,7 +1409,10 @@ def _git_remote_op(sub: str) -> _Read:
         repository = scan.operands[0] if scan.operands else None
         if sub == "push" and "--repo" in scan.values:
             repository = scan.values["--repo"][-1]
-        effects = _UNREAD | _git_repository(repository)
+        reach = _git_repository(repository)
+        if sub in _GIT_FETCHING and not scan.unknown and scan.seen <= _GIT_FETCH_OPTIONS:
+            reach = _fetched(reach, repository) if repository is not None else reach
+        effects = _UNREAD | reach
         if sub == "clone":
             folder = scan.operands[1] if len(scan.operands) > 1 else Word(".")
             effects = effects | _target_of(folder)
@@ -1764,6 +1811,13 @@ _CURL_WRITES = (
 _CURL_VIA = "-x --proxy --preproxy --socks4 --socks4a --socks5 --socks5-hostname --doh-url".split()
 #: Options that send it somewhere its command line does not name.
 _CURL_ELSEWHERE = frozenset({"--connect-to", "--resolve", "-K", "--config", "--variable"})
+#: The options of a curl that only downloads: none sends a body, a form, a file, a header, a user,
+#: a cookie or a configuration, nor goes another way. Given any other, it sends (``sends``).
+_CURL_FETCH_OPTIONS = frozenset(
+    "-s -S -L -f -o -O -I -k -C -# --silent --show-error --location --fail --output "
+    "--remote-name --head --compressed --retry --max-time --connect-timeout --create-dirs "
+    "--output-dir --progress-bar".split()
+)
 
 
 def _curl(args: list[Word]) -> CommandEffects:
@@ -1778,8 +1832,10 @@ def _curl(args: list[Word]) -> CommandEffects:
     urls = [*scan.operands, *scan.values.get("--url", [])]
     if not urls or scan.unknown or scan.seen & _CURL_ELSEWHERE:
         effects = effects | _NETWORK
+    fetches = not scan.unknown and scan.seen <= _CURL_FETCH_OPTIONS
     for word in urls:
-        effects = effects | _url_reach(word, bare=True)
+        reach = _url_reach(word, bare=True)
+        effects = effects | (_fetched(reach, word, bare=True) if fetches else reach)
     for word in _value_words(scan, _CURL_VIA):
         effects = effects | _url_reach(word, bare=True)
     for word in _value_words(scan, _CURL_WRITES):
@@ -1827,6 +1883,13 @@ _WGET_DOCUMENT = ("-O", "--output-document")
 _WGET_FOLDER = ("-P", "--directory-prefix")
 _WGET_LOGS = ("-o", "--output-file", "-a", "--append-output", "--save-cookies", "--warc-file")
 _WGET_ELSEWHERE = frozenset({"-i", "--input-file", "-e", "--execute", "--config"})
+#: The options of a wget that only downloads (its two-letter negations are read apart). Given any
+#: other (a body, a post, a method, a header, a list or configuration it reads), it sends.
+_WGET_FETCH_OPTIONS = frozenset(
+    "-q -O -P -c -N -r -l -np -nd -nH -nc -nv --quiet --output-document --directory-prefix "
+    "--continue --timestamping --recursive --level --no-parent --no-clobber --no-verbose "
+    "--tries --timeout --mirror".split()
+)
 
 
 def _wget(args: list[Word]) -> CommandEffects:
@@ -1840,8 +1903,10 @@ def _wget(args: list[Word]) -> CommandEffects:
     effects = _UNREAD
     if not scan.operands or scan.unknown or scan.seen & _WGET_ELSEWHERE:
         effects = effects | _NETWORK
+    fetches = not scan.unknown and scan.seen <= _WGET_FETCH_OPTIONS
     for word in [*scan.operands, *scan.values.get("-B", []), *scan.values.get("--base", [])]:
-        effects = effects | _url_reach(word, bare=True)
+        reach = _url_reach(word, bare=True)
+        effects = effects | (_fetched(reach, word, bare=True) if fetches else reach)
     documents = _value_words(scan, _WGET_DOCUMENT)
     folders = _value_words(scan, _WGET_FOLDER)
     for word in documents:
@@ -2066,6 +2131,9 @@ class _Manager:
     #: Options that install outside the folder it runs in.
     elsewhere: frozenset[str] = frozenset()
     shorthand: bool = False
+    #: Subcommands that only fetch what they install (``sends`` off): never one that publishes,
+    #: logs in, reports or runs what it fetches.
+    only_fetches: frozenset[str] = frozenset()
 
 
 def _manager(manager: _Manager) -> _Read:
@@ -2098,14 +2166,19 @@ def _manager_effects(manager: _Manager, args: Sequence[Word]) -> CommandEffects:
         sub, specs = "", scan.operands[:1]
     if scan.seen & manager.offline:
         return _UNREAD
+    # An option its reading does not know may name a proxy or a registry it goes to instead
+    # (npm takes any of its settings so), so the command then sends.
+    fetch = sub in manager.only_fetches and not scan.unknown
     effects = _UNREAD
     if not scan.seen & manager.no_default:
-        effects = effects | _reaches(*manager.registry)
+        effects = effects | (_fetches if fetch else _reaches)(*manager.registry)
     for word in _value_words(scan, manager.index):
         if word.opaque or _SCHEME.search(word.text):
-            effects = effects | _url_reach(word)
+            reach = _url_reach(word)
+            effects = effects | (_fetched(reach, word) if fetch else reach)
     for word in specs:
-        effects = effects | _spec_reach(word, shorthand=manager.shorthand)
+        reach = _spec_reach(word, shorthand=manager.shorthand)
+        effects = effects | (_fetched(reach, word) if fetch else reach)
     folders = _value_words(scan, manager.into)
     for word in folders:
         effects = effects | _target_of(word)
@@ -2128,11 +2201,13 @@ _PIP = _Manager(
     index=("-i", "--index-url", "--extra-index-url", "-f", "--find-links", "--proxy"),
     into=("-t", "--target", "--prefix", "--root", "-d", "--dest", "-w", "--wheel-dir"),
     no_default=frozenset({"--no-index"}),
+    only_fetches=frozenset({"install", "download", "wheel"}),
 )
 
 _UV_PIP = replace(
     _PIP,
     fetching=frozenset({"install", "sync", "compile"}),
+    only_fetches=frozenset({"install", "sync", "compile"}),
     index=(
         "-i",
         "--index-url",
@@ -2147,8 +2222,10 @@ _UV_PIP = replace(
 #: uv's own subcommands that resolve or install from its index.
 _UV_FETCHING = frozenset({"add", "sync", "lock"})
 _UV_TOOL_FETCHING = frozenset({"install", "run", "upgrade"})
-_UV = replace(_UV_PIP, fetching=_UV_FETCHING, local=_UV_FETCHING, into=())
-_UVX = replace(_UV_PIP, fetching=frozenset(), into=())
+_UV = replace(
+    _UV_PIP, fetching=_UV_FETCHING, local=_UV_FETCHING, into=(), only_fetches=_UV_FETCHING
+)
+_UVX = replace(_UV_PIP, fetching=frozenset(), into=(), only_fetches=frozenset())
 
 
 def _uv(args: list[Word]) -> CommandEffects:
@@ -2195,11 +2272,13 @@ _NPM = _Manager(
     offline=frozenset({"--offline"}),
     elsewhere=frozenset({"-g", "--global", "--location"}),
     shorthand=True,
+    only_fetches=_NPM_LOCAL,
 )
 _NPX = replace(
     _NPM,
     fetching=frozenset(),
     local=frozenset(),
+    only_fetches=frozenset(),
     valued="pc",
     long_valued=_NPM.long_valued | _longs("package call"),
     into=(),
@@ -2224,6 +2303,7 @@ _PNPM = replace(
         }
     ),
     local=frozenset({"add", "install", "i", "update", "up", "upgrade", "fetch"}),
+    only_fetches=frozenset({"add", "install", "i", "update", "up", "upgrade", "fetch"}),
 )
 _YARN = replace(
     _NPM,
@@ -2233,11 +2313,13 @@ _YARN = replace(
     ),
     local=frozenset({"add", "install", "upgrade", "up"}),
     bare_fetches=True,
+    only_fetches=frozenset({"add", "install", "upgrade", "up"}),
 )
 _BUN = replace(
     _NPM,
     fetching=frozenset({"add", "a", "install", "i", "update", "x", "outdated", "publish"}),
     local=frozenset({"add", "a", "install", "i", "update"}),
+    only_fetches=frozenset({"add", "a", "install", "i", "update"}),
 )
 
 
@@ -2474,7 +2556,7 @@ def _xargs(args: list[Word], depth: int) -> CommandEffects:
     if inner.deletes:
         inner = replace(inner, removes_unread=True)
     if inner.network:
-        inner = replace(inner, host_unread=True)
+        inner = replace(inner, host_unread=True, sends=True)
     return inner
 
 

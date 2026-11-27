@@ -1706,6 +1706,22 @@ def _turn_history(session: _ChatSession, in_flight: str, depth: int) -> tuple[li
     return prior_turns_transcript(session, in_flight, nested=depth > 0), False
 
 
+def _standing_answers(
+    grant: str, session_key: str, event: Any, cwd: str, *, watched: bool
+) -> tuple[bool, dict[str, Any]]:
+    """Whether the chat's standing *grant* answers the call *event* asks about, run in *cwd*
+    (``approval_grants.stands_for_call``; *watched*: someone watches the turn), and what its
+    ``auto_approved`` row adds: the hosts past your allowed hosts YOLO answered a fetch from."""
+    if not grant or not approval_grants.stands_for_call(
+        grant, session_key=session_key, event=event, cwd=cwd, watched=watched
+    ):
+        return False, {}
+    hosts = approval_grants.yolo_fetch_hosts(
+        grant, session_key=session_key, event=event, cwd=cwd, watched=watched
+    )
+    return True, ({"yolo_fetch_hosts": list(hosts)} if hosts else {})
+
+
 @memory_writes.runs_as_its_session
 @_says_its_phases
 async def run_chat(
@@ -4062,9 +4078,10 @@ async def run_chat(
                 # call is in work you asked for (`approval_grants`, rule 4) and the operator ceiling
                 # lets that grant stand. In a turn someone else asked for it is asked below.
                 _standing = state.standing_grant(session)
-                if _standing and approval_grants.stands_for_call(
-                    _standing, session_key=session_key, event=event, cwd=_call_folder
-                ):
+                _stands, _fetched = _standing_answers(
+                    _standing, session_key, event, _call_folder, watched=not _unattended_turn
+                )
+                if _stands:
                     await _let_through(event)
                     _tool_title = _broadcast_auto_tool(state, session, event)
                     await sel_log_async(
@@ -4086,6 +4103,7 @@ async def run_chat(
                             "reason": _standing,
                             "risk": effective_risk,
                             "decided_by": _standing,
+                            **_fetched,
                         },
                     )
                     _settle_granted(

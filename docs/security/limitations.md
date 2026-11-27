@@ -988,8 +988,12 @@ command it runs (`run_bounds`, `apps/launch_egress.py`):
   or a command that reaches one it does not name (a git remote by name, a URL in a variable, a
   proxy or a registry set in a variable for it), is refused in an unattended run (a loop, a
   schedule, a subagent nobody watches) and asked about in an attended one, with the host on the
-  card, whatever Trust, YOLO or a standing grant would have said. In a run whose egress tier is not
-  `all`, a command that goes ahead still runs with no network at all, whatever it names (§18).
+  card, whatever Trust, YOLO or a standing grant would have said, with one exception: with YOLO
+  on, a chat of your own in the dashboard runs a network command that only downloads from a host
+  it names, such as an install or a clone, unless that host is on Denied hosts. A network command
+  that sends anything still asks, and so do a host the command doesn't name and a download link
+  carrying a key or token PersonalClaw recognises. In a run whose egress tier is not `all`, a
+  command that goes ahead still runs with no network at all, whatever it names (§18).
   A program an app's code starts may also reach a host its manifest declares for that program, which
   its install review names; every such launch leaves an egress row in the audit log, and one toward
   any other host is stopped before it starts.
