@@ -301,12 +301,12 @@ def test_someone_elses_work_is_held_for_you_and_audited_as_held():
 def test_while_an_incident_is_on_yolo_answers_no_fetch():
     from personalclaw.guardrails import incident
 
-    incident.activate("test")
+    incident.activate("test", by="owner")
     try:
         for command in FETCHES:
             assert not _answers(command), command
     finally:
-        incident.resume()
+        incident.resume(by="owner")
     assert _answers("pip install requests"), "the control: resumed, it is answered again"
 
 
