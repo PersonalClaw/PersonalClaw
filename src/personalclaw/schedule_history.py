@@ -21,6 +21,7 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -479,14 +480,12 @@ class ScheduleRunStore:
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
 
-    @staticmethod
-    def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    def _read_jsonl(self, path: Path) -> list[dict[str, Any]]:
         """Lock-free read; tolerates a partial trailing line (concurrent append), and a line that
         is not UTF-8 (:meth:`_read`)."""
-        return ScheduleRunStore._read(path).rows
+        return self._read(path).rows
 
-    @staticmethod
-    def _read(path: Path) -> _Lines:
+    def _read(self, path: Path) -> _Lines:
         """The rows of *path*, and the lines it holds that are not UTF-8, as they are.
 
         Read as bytes and decoded a line at a time: a byte that is not UTF-8 (an append a crash
@@ -497,10 +496,20 @@ class ScheduleRunStore:
         through. Such a line is skipped here, said once in the log, and handed to a rewrite to
         keep (:meth:`_write_jsonl`). A line that is not JSON is a torn append and skipped, as
         before.
+
+        Only a file inside the history's folder is read: every path here is a job's file
+        (:meth:`_job_path`) or the index, under it, and the read checks the very path it opens,
+        by where it really is, so no job id and no link takes it elsewhere. A path outside reads
+        as a file that is not there.
         """
         read = _Lines()
+        real = os.path.realpath(path)
+        root = os.path.realpath(self._dir)
+        if not real.startswith(root + os.sep):
+            logger.warning("run history: refused a read outside its folder: %s", path)
+            return read
         try:
-            raw = path.read_bytes()
+            raw = Path(real).read_bytes()
         except FileNotFoundError:
             return read
         except OSError:
