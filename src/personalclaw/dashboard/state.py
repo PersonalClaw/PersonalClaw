@@ -1478,7 +1478,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             self._knowledge_store = KnowledgeStore(os.path.join(db_dir, "knowledge.db"))
         return self._knowledge_store
 
-    _YOLO_TTL = trust_mode.YOLO_DASHBOARD_TTL_SECS  # 6h dashboard ceiling
+    _YOLO_TTL = trust_mode.YOLO_DASHBOARD_TTL_SECS  # the dashboard's ceiling
 
     def enable_yolo(self, *, from_config: bool = False) -> None:
         """Enable YOLO mode — auto-approve all tools globally.

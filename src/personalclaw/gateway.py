@@ -980,7 +980,7 @@ class GatewayOrchestrator:
         # Check both YOLO sources: channel handler (!yolo on) and dashboard UI.
         # Both must honor their TTL — use is_yolo_active() (which expires on
         # read), NOT the raw _yolo field, or an expired dashboard YOLO would
-        # keep auto-approving channel tool calls past its 6h ceiling.
+        # keep auto-approving channel tool calls past its ceiling.
         if is_yolo_mode() or (self.dashboard_state and self.dashboard_state.is_yolo_active()):
             return approval_grants.YOLO, None
         if not self.dashboard_state:
