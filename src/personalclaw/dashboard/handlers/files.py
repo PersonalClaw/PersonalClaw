@@ -306,16 +306,33 @@ async def api_reveal_path(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+def _sending_chat(state: DashboardState, work: str) -> Any:
+    """The chat running here that the work *work* is done for (``subagent_reach.chat_of``: the
+    chat whose turn it is, or the chat a helper works for), or ``None`` when it is no chat's."""
+    from personalclaw.dashboard.handlers.sessions import _live_session_key
+    from personalclaw.subagent_reach import chat_of
+
+    chat = chat_of(state, work) if work else ""
+    live = _live_session_key(state, chat) if chat else None
+    return state._sessions.get(live) if live is not None else None
+
+
 async def api_outbox_notify(request: web.Request) -> web.Response:
-    """POST /api/outbox/notify — agent sent a file, notify the user."""
+    """POST /api/outbox/notify — the agent sent a file (``notify_attachment``): its card goes into
+    the chat whose turn sent it, the work the request is for (:func:`_sending_chat`), and into no
+    other. A request that names no chat running here leaves the file in the outbox, shown nowhere:
+    it used to go to whichever chat had the newest message, which can be another conversation."""
+    from personalclaw.approval_answer import work_of_request
+
     state: DashboardState = request.app["state"]
+    who = work_of_request(request)
     try:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
 
         await sel_log_async(
             _sel().log_tool_invocation,
-            session_key="api",
+            session_key=who or "api",
             source="api",
             tool_name="notify_attachment",
             tool_kind="notify",
@@ -341,7 +358,7 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
 
         await sel_log_async(
             _sel().log_tool_invocation,
-            session_key="api",
+            session_key=who or "api",
             source="api",
             tool_name="notify_attachment",
             tool_kind="notify",
@@ -373,7 +390,7 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
 
         await sel_log_async(
             _sel().log_tool_invocation,
-            session_key="api",
+            session_key=who or "api",
             source="api",
             tool_name="notify_attachment",
             tool_kind="notify",
@@ -387,7 +404,7 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
 
         await sel_log_async(
             _sel().log_tool_invocation,
-            session_key="api",
+            session_key=who or "api",
             source="api",
             tool_name="notify_attachment",
             tool_kind="notify",
@@ -399,7 +416,7 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
 
         await sel_log_async(
             _sel().log_tool_invocation,
-            session_key="api",
+            session_key=who or "api",
             source="api",
             tool_name="notify_attachment",
             tool_kind="notify",
@@ -421,7 +438,7 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
 
             await sel_log_async(
                 _sel().log_tool_invocation,
-                session_key="api",
+                session_key=who or "api",
                 source="api",
                 tool_name="notify_attachment",
                 tool_kind="notify",
@@ -432,26 +449,26 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
                 {"error": "Only UTF-8 text or media (audio/video/image/pdf) files are supported"},
                 status=400,
             )
-    # Inject into the most recently active chat session so the card persists
-    if state._sessions:
-        active = max(
-            state._sessions.values(),
-            key=lambda s: s.messages[-1]["ts"] if s.messages else "",
-        )
-        if active and active.messages:
-            active.append("file", json.dumps(file_data))
-    state.broadcast_ws("file_ready", file_data)
+    # Its row in the chat that sent it, kept with the transcript, and the frame that draws its card
+    # there now. A frame naming no chat would reach every open chat's page, so none is sent.
+    chat = _sending_chat(state, who)
+    if chat is not None:
+        chat.append("file", json.dumps(file_data))
+        row_ts = chat.messages[-1].get("ts", "") if chat.messages else ""
+        state.broadcast_ws("file_ready", {**file_data, "session": chat.key, "ts": row_ts})
 
     await sel_log_async(
         _sel().log_tool_invocation,
-        session_key="api",
+        session_key=who or "api",
         source="api",
         tool_name="notify_attachment",
         tool_kind="notify",
         outcome="completed",
         resources=f"filename={file_data['filename']}",
     )
-    return web.json_response({"ok": True})
+    return web.json_response(
+        {"ok": True, "shown": chat is not None, "content_type": file_data["content_type"]}
+    )
 
 
 async def api_outbox_download(request: web.Request) -> web.StreamResponse:

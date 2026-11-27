@@ -67,6 +67,21 @@ export const PRIVATE_HOST_PATTERNS = Object.freeze([
   '*.ts.net',
 ])
 
+/**
+ * The hosts Android keeps in the app: the patterns above Android can also make origin rules of
+ * (`mobile/scripts/androidOriginRules.mjs`, which writes Android's copy of the navigation list
+ * at each `cap copy`). Android's WebView takes a wildcard only as a leading `*.`, so the private
+ * IP ranges are not among them: on Android, a gateway reached by its IP address opens in the
+ * browser, outside the app, and the shell says so before it goes (`boot.mjs`). A `.local` or
+ * Tailscale name keeps it in the app. Written out as literals for the same dumb line scan.
+ */
+export const ANDROID_IN_APP_PATTERNS = Object.freeze([
+  'localhost',
+  '127.0.0.1',
+  '*.local',
+  '*.ts.net',
+])
+
 /** Schemes a gateway can be reached over. */
 const ALLOWED_PROTOCOLS = Object.freeze(['http:', 'https:'])
 
@@ -95,6 +110,31 @@ export function matchesHostPattern(host, pattern) {
 /** Is `host` on the private-network rail? */
 export function isPrivateGatewayHost(host) {
   return PRIVATE_HOST_PATTERNS.some((pattern) => matchesHostPattern(host, pattern))
+}
+
+/**
+ * Whether the app on *platform* (Capacitor's `getPlatform()`: `android`, `ios` or `web`) opens
+ * the gateway at *origin* outside itself, in the browser: on Android, any host but those in
+ * {@link ANDROID_IN_APP_PATTERNS}.
+ */
+export function opensOutsideTheApp(origin, platform) {
+  if (platform !== 'android') return false
+  let host
+  try {
+    host = new URL(origin).hostname
+  } catch {
+    return false
+  }
+  return !ANDROID_IN_APP_PATTERNS.some((pattern) => matchesHostPattern(host, pattern))
+}
+
+/** What the shell says before it opens such a gateway outside the app. */
+export function outsideTheAppNotice(origin) {
+  const host = new URL(origin).hostname
+  return (
+    `${host} is an IP address, and on Android the app opens a gateway at an IP address in your ` +
+    `browser, outside the app. Reach it by its .local or Tailscale name to keep it in the app.`
+  )
 }
 
 /**

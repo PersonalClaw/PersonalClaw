@@ -111,7 +111,7 @@ export function buttonLook(variant: Variant, size: Size, shape: 'pill' | 'squirc
 export function Button({
   children, variant = 'primary', size = 'md', shape = 'pill',
   loading = false, loadingLabel, className, onClick, disabled, type = 'button', title, ariaLabel, ariaExpanded, ariaPressed,
-  ariaDescribedBy, disabledReason,
+  ariaControls, ariaDescribedBy, disabledReason,
 }: {
   children: ReactNode
   variant?: Variant
@@ -160,6 +160,9 @@ export function Button({
   // action button carries no misleading `aria-expanded`; set it only when the button folds
   // content (e.g. the runs-inbox "Show N suppressed" archive toggle).
   ariaExpanded?: boolean
+  // The id of the content a disclosure button folds, so assistive tech can go to what it opened.
+  // Set with `ariaExpanded`, never alone.
+  ariaControls?: string
   // A button acting as a SELECTED/UNSELECTED choice (a list row that stays chosen, a view toggle)
   // must announce that state, or a screen-reader user hears an identical label for the row they are
   // on and the row they are not. Separate from `ariaExpanded` on purpose: expanded means "reveals
@@ -222,6 +225,7 @@ export function Button({
       title={softOff ? undefined : title}
       aria-label={ariaLabel}
       aria-expanded={ariaExpanded}
+      aria-controls={ariaControls}
       aria-pressed={ariaPressed}
       aria-describedby={softOff ? trigger['aria-describedby'] : ariaDescribedBy}
       onPointerEnter={trigger.onPointerEnter}

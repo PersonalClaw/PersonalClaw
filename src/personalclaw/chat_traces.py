@@ -14,8 +14,9 @@ its words, and every other row and notification about it is deleted
 
 Core, beneath the dashboard that forgets a chat (``dashboard/chat_forget.py``), because the
 stores that copy the home read it too: a snapshot and a shard export leave out what a running
-Temporary chat keeps (:func:`kept_by_temporary_chats`), since such a chat is forgotten when its
-session ends and a copy would outlive it.
+Temporary chat keeps (:func:`kept_by_temporary_chats`), its helpers' folders and its workflow runs
+with it (:func:`leave_out_temporary_runs`), since such a chat is forgotten when its session ends
+and a copy would outlive it.
 """
 
 from __future__ import annotations
@@ -107,15 +108,20 @@ def _read_temporary_transcript(path: Path) -> list[dict] | None:
 
 def kept_by_temporary_chats(home: Path) -> frozenset[Path]:
     """Everything the Temporary chats in *home* keep on disk, resolved: each transcript and its
-    record, the working folder of each form of its key, and the files attached to it.
+    record, the working folder of each form of its key, and the files attached to it; the folder
+    of each helper it started, and of each one those started in turn, with its agent session's
+    files (``subagent_persistence.kept_by_helpers_of``); and the folder of each workflow run that
+    keeps a Temporary chat's mode (:func:`temporary_runs`), and of each helper its steps started.
 
     A backup or an export of *home* leaves these out. Such a chat is forgotten when its session
     ends, and a copy taken while it ran would outlive it.
     """
-    from personalclaw import chat_record
+    from personalclaw import chat_record, subagent_persistence
+    from personalclaw.session_keys import WORKFLOW_STEP
 
     sessions = home / "sessions"
     kept: set[Path] = set()
+    forms: set[str] = set()
     try:
         transcripts = sorted(sessions.glob("*.jsonl"))
     except OSError:
@@ -127,7 +133,36 @@ def kept_by_temporary_chats(home: Path) -> frozenset[Path]:
         kept.add(path.resolve())
         kept.update(p.resolve() for p in (chat_record.path_of(path), chat_record.lock_of(path)))
         name = name_of(path.stem)
+        forms |= {path.stem, name, f"dashboard:{name}"}
         for form in {path.stem, name, f"dashboard:{name}"}:
             kept.add((sessions / form).resolve())
         kept.update(Path(f).resolve() for f in attached_files(rows, home=home))
+    runs = temporary_runs(home)
+    kept.update((home / "workflows" / "runs" / run_id).resolve() for run_id in runs)
+
+    def owns(session: str) -> bool:
+        step = session.removeprefix(WORKFLOW_STEP.prefix)
+        return session in forms or (step != session and step.partition(":")[0] in runs)
+
+    if forms or runs:
+        kept |= subagent_persistence.kept_by_helpers_of(owns, home)
     return frozenset(kept)
+
+
+def temporary_runs(home: Path) -> frozenset[str]:
+    """The ids of the workflow runs in *home*'s ledger that keep a Temporary chat's mode
+    (``workflows.ownership.run_mode``): its own, and what they started in turn. Each ends and is
+    deleted with the chat (``workflows.private_runs``), so a copy taken while it ran would
+    outlive it."""
+    from personalclaw.workflows import store
+
+    return frozenset(store.ids_with_mode(home / "workflows" / "runs.db", TEMPORARY))
+
+
+def leave_out_temporary_runs(ledger: Path) -> int:
+    """Delete from *ledger*, a backup's or an export's copy of a run ledger, the rows of the runs
+    that keep a Temporary chat's mode (:func:`temporary_runs`), their bytes with them. Returns how
+    many."""
+    from personalclaw.workflows import store
+
+    return store.drop_runs(ledger, store.ids_with_mode(ledger, TEMPORARY))

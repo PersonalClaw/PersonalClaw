@@ -53,9 +53,21 @@ export const SCAN_RULE_GLOSS: Record<string, string> = Object.fromEntries(
   ),
 )
 
+/** The sentence for an execution rule found in instructions a PERSON reads and runs (a README, a
+ *  prerequisite's `how`: the scanner's `prose` surface), in place of the rule's own, which speaks
+ *  of code. Many official installers are a download piped into a shell, so it says when that is
+ *  still reasonable (#3852). Read from the same file's `_in_prose` map. */
+export const SCAN_RULE_GLOSS_IN_PROSE: Record<string, string> = Object.fromEntries(
+  Object.entries(((glossSource as Record<string, unknown>)._in_prose ?? {}) as Record<string, unknown>).filter(
+    (e): e is [string, string] => !e[0].startsWith('_') && typeof e[1] === 'string',
+  ),
+)
+
 /** The plain-language sentence for a scanner rule, or `''` for a rule this build has no gloss
  *  for. Returning empty rather than echoing the rule name keeps the row honest: a name repeated
- *  as though it were an explanation is the defect, not the fix. */
-export function ruleGloss(rule: string): string {
+ *  as though it were an explanation is the defect, not the fix. A finding on prose a person reads
+ *  (*surface* `prose`) takes the rule's sentence for prose when it has one. */
+export function ruleGloss(rule: string, surface = ''): string {
+  if (surface === 'prose' && SCAN_RULE_GLOSS_IN_PROSE[rule]) return SCAN_RULE_GLOSS_IN_PROSE[rule]
   return SCAN_RULE_GLOSS[rule] ?? ''
 }

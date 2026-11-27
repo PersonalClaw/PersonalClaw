@@ -195,7 +195,34 @@ export interface ErrorSegment { kind: 'error'; text: string; settings?: string }
  *  exactly as before: thinking is a live-stream affordance, not part of the record. */
 export interface ThinkingSegment { kind: 'thinking'; text: string }
 
-export type Segment = TextSegment | ToolSegment | ApprovalSegment | QuestionSegment | ActivitySegment | ErrorSegment | ThinkingSegment
+/** A file the agent sent in its turn (`notify_attachment`): the chat's `file` row, or the live
+ *  `file_ready` frame the gateway sends to the chat that sent it. Drawn as a card under the
+ *  answer (`transcript/SentFiles`); `path` is where it is kept in the outbox, `ts` its row's. */
+export interface FileSegment { kind: 'file'; filename: string; description?: string; size?: number; contentType?: string; path?: string; ts?: string }
+
+/** The file a `file` row or a `file_ready` frame names, or `null` for one that names none. */
+export function fileSegmentOf(raw: unknown, ts?: string): FileSegment | null {
+  let d: unknown = raw
+  if (typeof raw === 'string') {
+    try { d = JSON.parse(raw) } catch { return null }
+  }
+  if (!d || typeof d !== 'object') return null
+  const f = d as Record<string, unknown>
+  if (typeof f.filename !== 'string' || !f.filename) return null
+  const text = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
+  const stamp = text(ts) ?? text(f.ts)
+  return {
+    kind: 'file',
+    filename: f.filename,
+    ...(text(f.description) ? { description: text(f.description) } : {}),
+    ...(typeof f.size === 'number' ? { size: f.size } : {}),
+    ...(text(f.content_type) ? { contentType: text(f.content_type) } : {}),
+    ...(text(f.path) ? { path: text(f.path) } : {}),
+    ...(stamp ? { ts: stamp } : {}),
+  }
+}
+
+export type Segment = TextSegment | ToolSegment | ApprovalSegment | QuestionSegment | ActivitySegment | ErrorSegment | ThinkingSegment | FileSegment
 
 /** Fold one `chat_thinking` chunk into an assistant turn's segments: extend the
  *  trailing thinking block if the reasoning stream is uninterrupted, else open a
@@ -958,6 +985,10 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // The risk and the radius are decoded, never cast: a row another build wrote can carry
       // a level or a shape this one cannot read, and that must be no claim at all.
       lastAssistant().segments.push({ kind: 'approval', id: m.meta?.approval_id || m.meta?.tool_call_id || `perm-${turns.length}`, tool: toolName(m.meta, m.content), input: m.meta?.input || m.meta?.tool_input, purpose: m.meta?.purpose, risk: approvalRiskOf(m.meta?.risk), blastRadius: blastRadiusOf(m.meta?.blast_radius), grantAgent: m.meta?.grant_agent, reach: m.meta?.reach || '', ...(m.meta?.deny_effect ? { denyEffect: m.meta.deny_effect } : {}), ...(m.meta?.asked_for ? { askedFor: m.meta.asked_for } : {}), ...secretFileSeg(m.meta?.secret_file), confirms: confirmsOf(m.meta?.confirms, m.meta?.risk), resolved })
+    } else if (m.role === 'file') {
+      // A file the agent sent: its card goes under the answer of the turn that sent it.
+      const sent = fileSegmentOf(m.content, m.ts)
+      if (sent) lastAssistant().segments.push(sent)
     } else if (m.role === 'error') {
       // a failed turn (provider/model error) — surface it instead of a blank turn.
       const settings = (m.meta as { settings?: unknown } | undefined)?.settings
@@ -1001,7 +1032,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
 }
 
 /** The roles `hydrateTurns` renders — every other row is invisible to the transcript. */
-const TRANSCRIPT_ROLES = new Set(['user', 'assistant', 'streaming', 'tool', 'permission', 'error', 'notice'])
+const TRANSCRIPT_ROLES = new Set(['user', 'assistant', 'streaming', 'tool', 'permission', 'error', 'notice', 'file'])
 
 /** The text of the answer still being written when this history was read — the `streaming`
  *  entry, when it is the last row the transcript renders — or `null`. That entry paints the

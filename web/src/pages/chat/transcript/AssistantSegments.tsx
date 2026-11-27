@@ -22,12 +22,13 @@ import { RecallLine } from './RecallLine'
 import { TurnHelpers, helpersFromTool } from './TurnHelpers'
 import { SourcesRow } from './SourcesRow'
 import { TurnArtifacts } from './TurnArtifacts'
+import { SentFiles } from './SentFiles'
 import { turnArtifacts } from '../inspector/chatOutputs'
 import { sourceKey, turnSources } from '../turnSources'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
 import { workedFor } from '../turnRuns'
 import { waitsPastItsTurn } from '../approvalSegment'
-import { type SubagentCard, type Segment, type TextSegment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type MemoryCitation, type SkillUsed, type ReplyCut, type ServedModel, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, isRecall, skillsUsedLabel, skillsUsedTitle } from '../chatTypes'
+import { type SubagentCard, type Segment, type TextSegment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type FileSegment, type MemoryCitation, type SkillUsed, type ReplyCut, type ServedModel, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, isRecall, skillsUsedLabel, skillsUsedTitle } from '../chatTypes'
 
 // ── An assistant turn, as the transcript draws it ────────────────────────────────────────────────
 //
@@ -275,6 +276,7 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
       {sdlcNodes.length > 0 && <div className="flex flex-col gap-1">{sdlcNodes}</div>}
       {finalNodes}
       <TurnArtifacts artifacts={artifacts} />
+      <SentFiles files={segments.filter((s): s is FileSegment => s.kind === 'file')} />
       <SourcesRow sources={sources} />
       {cutOff === 'length' && !streaming && <ReplyCutNote cut="length" />}
       {modelSubstitution && !streaming && <ModelSubstitutionNote text={modelSubstitution} />}

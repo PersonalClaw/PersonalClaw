@@ -680,7 +680,9 @@ async def run_member_turn(
     # What the room says of the turn's calls, in the order they happened: each refusal, and each
     # call the member's agent CLI ran without asking.
     notes: list["ToolRefusal | UnaskedCall"] = []
-    policy, gate = posture.approval_channel(member, profile, approver, record=notes.append)
+    policy, gate = posture.approval_channel(
+        member, profile, approver, record=notes.append, session=key
+    )
     messages = read_messages(room_id)
     read_from = cursors.cursor_for(room_id, member_name)
     if read_from > len(messages):

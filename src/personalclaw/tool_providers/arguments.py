@@ -41,8 +41,8 @@ def missing_arguments(arguments: Any, input_schema: Any) -> list[str]:
     """Each argument *input_schema* requires that *arguments* lack, one line each; ``[]`` if none.
 
     ``[]`` too when there is no schema, or one that cannot be checked (it is not a valid schema,
-    or it points at a document this process will not fetch): the call then goes on as it would
-    have, to be asked about and to be checked by the tool itself.
+    or it refers to any document but itself, which is never opened): the call then goes on as it
+    would have, to be asked about and to be checked by the tool itself.
     """
     return _problems(arguments, input_schema, "required")
 
@@ -62,13 +62,19 @@ def _problems(arguments: Any, input_schema: Any, keyword: str) -> list[str]:
     import jsonschema
 
     try:
+        import referencing
+
         base = jsonschema.validators.validator_for(
             input_schema, default=jsonschema.validators.Draft202012Validator
         )
         base.check_schema(input_schema)
         checked = _REACH | {keyword}
         skipped = {name: _skip for name in base.VALIDATORS if name not in checked}
-        checker = jsonschema.validators.extend(base, skipped)(input_schema)
+        # Reads the schema it is given and nothing else: a reference to any other document
+        # cannot be resolved, so the check refuses nothing (an empty registry retrieves nothing).
+        checker = jsonschema.validators.extend(base, skipped)(
+            input_schema, registry=referencing.Registry()
+        )
         errors = [e for e in checker.iter_errors(arguments) if e.validator == keyword]
     except Exception:  # noqa: BLE001 - a schema that cannot be read refuses nothing
         logger.debug("tool input schema could not be checked; leaving the call to its tool")

@@ -1106,13 +1106,21 @@ async def _run_eval(args: argparse.Namespace) -> None:
     # it is the versioned library installed at ~/.personalclaw/evals/scenarios/, so
     # `personalclaw eval` runs the same files (and the same user additions) the matrix
     # runner pins. install_library() is an idempotent backfill: safe on every call.
+    from personalclaw.evals import harvest
     from personalclaw.evals.scenarios import install_library, installed_dir
 
     install_library()
     scenarios_dir = installed_dir()
+    # A harvested case whose run is a private chat's, or whose chat cannot be read, is never run.
+    withheld = harvest.withheld_cases()
 
     if args.all_scenarios:
-        scenarios = load_scenarios(scenarios_dir)
+        scenarios = [s for s in load_scenarios(scenarios_dir) if s.name not in withheld]
+        if withheld:
+            print(
+                f"Left out {len(withheld)} harvested case(s): a private chat's run, or one whose "
+                "chat could not be read"
+            )
     elif args.scenarios:
         scenarios = []
         for name in args.scenarios:
@@ -1122,6 +1130,8 @@ async def _run_eval(args: argparse.Namespace) -> None:
                 if candidate.exists():
                     resolved = candidate
                     break
+            if name in withheld:
+                _refuse(f"Error: scenario '{name}' is left out of every eval: {withheld[name]}")
             if resolved is None:
                 available = sorted(
                     f.stem
@@ -1353,6 +1363,11 @@ def _eval_harvest(args: argparse.Namespace) -> None:
         print("Skipped:")
         for reason, count in sorted(report.skipped_by_reason().items()):
             print(f"  {count} x {terminal_text(str(reason))}")
+    if report.dropped:
+        print(
+            f"Removed {len(report.dropped)} case(s) built earlier from runs of Temporary or "
+            "Incognito chats"
+        )
     if not report.cases:
         # NOT a refusal: runs existed and every one was disqualified, with a reason each.
         print(

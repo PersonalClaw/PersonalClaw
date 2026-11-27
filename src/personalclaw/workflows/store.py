@@ -283,6 +283,51 @@ def _run_to_params(run: WorkflowRun) -> dict[str, Any]:
 # ── run CRUD ─────────────────────────────────────────────────────────────────
 
 
+def ids_with_mode(db: Path, mode: str) -> list[str]:
+    """The ids of the runs in the ledger at *db*, a home's or a copy of one, whose record names
+    *mode* as the memory mode it inherited (:func:`runs_with_mode`'s test, of any ledger). None
+    when no ledger it can read is there."""
+    from personalclaw.workflows.ownership import RUN_MODE_KEY
+
+    if not Path(db).is_file():
+        return []
+    conn = connect(str(db), timeout=5.0)
+    try:
+        rows = conn.execute(
+            "SELECT id, extra FROM runs WHERE extra LIKE ? ORDER BY id", (f'%"{mode}"%',)
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return []
+    finally:
+        conn.close()
+    ids: list[str] = []
+    for run_id, extra in rows:
+        try:
+            recorded = json.loads(extra or "{}")
+        except ValueError:
+            continue
+        if isinstance(recorded, dict) and recorded.get(RUN_MODE_KEY) == mode:
+            ids.append(str(run_id))
+    return ids
+
+
+def drop_runs(db: Path, run_ids: list[str]) -> int:
+    """Delete the rows of *run_ids* from the ledger at *db*: a snapshot's copy of it, which leaves
+    them out. Their bytes go too: the pages they were on are overwritten, and the file is written
+    again without the free ones (``VACUUM``). Returns how many it deleted."""
+    if not run_ids or not Path(db).is_file():
+        return 0
+    conn = connect(str(db), timeout=5.0)
+    try:
+        conn.execute("PRAGMA secure_delete = ON")
+        with conn:
+            dropped = conn.executemany("DELETE FROM runs WHERE id = ?", [(i,) for i in run_ids])
+        conn.execute("VACUUM")
+        return int(dropped.rowcount or 0)
+    finally:
+        conn.close()
+
+
 class CallerKeyTaken(Exception):
     """A run is already kept under the caller key :func:`create` was given."""
 

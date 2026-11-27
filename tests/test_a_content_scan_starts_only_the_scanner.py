@@ -33,6 +33,8 @@ _THE_SCANNER = {
     "personalclaw.supply_chain": "the scanner",
     "personalclaw.signing": "the signature state every scan report carries",
     "personalclaw.credential_locations": "the locations the scanner's credential rule looks for",
+    "personalclaw.install_instructions": "the scanner's rules for install instructions in prose",
+    "personalclaw.scan_remote_exec": "the rule for downloaded code that is run, which both read",
 }
 
 _IMPORTED = re.compile(r"^import time:\s+\d+ \|\s+\d+ \|\s*(\S+)\s*$")

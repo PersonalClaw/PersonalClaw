@@ -9,7 +9,10 @@ optional fix branch on a confirmed failure. Everything a self-report could get w
 instead.
 
 The node reads its bundle from the **run workspace** — the same directory the ``execute`` stage
-wrote ``screenshots/`` and ``recording.mp4`` into. The engine threads that path into the action
+wrote ``screenshots/`` and ``recording.mp4`` into — or from ``bundle_subdir`` inside it, the
+scenario's own folder (``scenarios/<sha>`` in the bundled template), so each scenario of a run
+seals only what its own drive captured. A ``bundle_subdir`` that leads out of the run's folder is
+refused. The engine threads that path into the action
 payload as ``workspace`` (the artifact gate at the same dispatch seam already receives it), so the
 provider needs no coupling to the run store to find the files. Only a step's dispatch carries it
 (``base.run_identity``): an automation's fire or a lifecycle hook is no run's, whatever folder its
@@ -38,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -100,16 +104,39 @@ class SelfQaEvidenceActionProvider(ActionProvider):
             )
         workspace = run_identity(ctx, "workspace").strip()
         if not workspace:
+            # 🔴 A run works in a folder of its own only when its workflow declares one, or when
+            # it runs in a project. The bundled self-qa declares a scratch folder, so this is a
+            # workflow edited to drop it, run outside a project: say so, and how to fix it.
             return ActionResult(
                 success=False,
                 error=(
-                    "selfqa-evidence has no run workspace to seal — the engine did not thread a "
-                    "workspace into the action payload"
+                    "selfqa-evidence has no folder of this run's to seal: the run works in no "
+                    'folder of its own. Declare one in its workflow ("workspace": {"mode": '
+                    '"scratch"}), or run it in a project.'
                 ),
+                failure_class="user",
             )
 
         subdir = str(action_config.get("bundle_subdir", "") or "").strip()
-        bundle_dir = Path(workspace) / subdir if subdir else Path(workspace)
+        bundle_dir = _bundle_dir(workspace, subdir)
+        if bundle_dir is None:
+            # The seal reads, hashes and registers every file of the folder it is given, so only a
+            # folder of this run's: a subdir that leads out of it (`..`, an absolute path, a link)
+            # would seal another run's captures, or any folder at all, as this scenario's proof.
+            return ActionResult(
+                success=False,
+                error=(
+                    f"selfqa-evidence seals only one scenario's folder inside this run's: its "
+                    f"bundle_subdir {subdir!r} leads out of it, or names every scenario's, as "
+                    "the run's own folder does once it holds scenarios/ (a scenario's folder is "
+                    "scenarios/<its commit's sha>)"
+                ),
+                failure_class="user",
+            )
+        if subdir:
+            # A scenario's own folder, which its drive step may have left uncaptured: sealed empty,
+            # the gate below names what is missing, as it does for an empty run folder.
+            bundle_dir.mkdir(parents=True, exist_ok=True)
         if not bundle_dir.is_dir():
             return ActionResult(
                 success=False,
@@ -197,6 +224,28 @@ class SelfQaEvidenceActionProvider(ActionProvider):
             )
 
         return ActionResult(success=True, stdout=json.dumps(output))
+
+
+#: The folder every scenario's own folder of a self-qa run sits in, one for each commit's sha.
+SCENARIOS_ROOT = "scenarios"
+
+
+def _bundle_dir(workspace: str, subdir: str) -> Path | None:
+    """The folder the seal reads, resolved: the run's folder *workspace*, or *subdir* inside it
+    (a scenario's own, `scenarios/<sha>`); None when *subdir* leads out of it, as written or
+    through a link, or names the folder of every scenario (`scenarios/`, a sha left empty, an
+    absolute path to it, a link to it), which would seal them all as one. The run's folder itself
+    is sealed only while it holds no scenarios' folder: it would hold every scenario's captures.
+    Compared resolved, so no spelling names another folder than the one read, and a link put in
+    its place after this check is not the folder read."""
+    root = Path(os.path.realpath(workspace))
+    every = Path(os.path.realpath(root / SCENARIOS_ROOT))
+    real = Path(os.path.realpath(Path(workspace) / subdir)) if subdir else root
+    if real == root:
+        return None if every.is_dir() else root
+    if real == every or (real != root and root not in real.parents):  # `..`, absolute, a link
+        return None
+    return real
 
 
 def create_provider(config: dict[str, Any] | None = None) -> "SelfQaEvidenceActionProvider":

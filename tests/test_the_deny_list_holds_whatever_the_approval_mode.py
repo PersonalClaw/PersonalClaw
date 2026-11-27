@@ -236,7 +236,9 @@ async def test_a_room_members_command_the_deny_list_refuses_is_refused_before_yo
     profile = profile_for_session("room:r1:executor")
     you = posture.RoomApprover(identity="you", decide=AsyncMock(return_value=True))
     notes: list[Any] = []
-    policy, gate = posture.approval_channel(member, profile, you, record=notes.append)
+    policy, gate = posture.approval_channel(
+        member, profile, you, record=notes.append, session="room:r1:executor"
+    )
 
     runtime = _Runtime()
     event = _asks_to_run("a list of words", DENIED)

@@ -194,11 +194,15 @@ class SkillInstallRefused(Exception):
     def __init__(self, report: "Any", *, dangerous: bool) -> None:
         self.report = report
         self.dangerous = dangerous
+        from personalclaw.install_instructions import refusal_lines
+        from personalclaw.supply_chain import rule_gloss
+
         cats = ", ".join(sorted({f.rule for f in report.findings})) or "no specific rule"
         verb = (
             "refused (dangerous, non-overridable)" if dangerous else "needs confirmation (warning)"
         )
-        super().__init__(f"skill install {verb}: {cats}")
+        said = refusal_lines(report.findings, rule_gloss, lead=". ") if dangerous else ""
+        super().__init__(f"skill install {verb}: {cats}{said}")
 
 
 def read_skill_file_entry(path: Path, rel: str) -> "dict[str, Any]":
@@ -821,8 +825,21 @@ def install_skill_files(
     # optional scripts — the same install-time gate apps run through. A
     # ``dangerous`` verdict is terminal (never written); the scan runs on the
     # in-memory payload so nothing dangerous ever touches the filesystem.
-    from personalclaw.supply_chain import Verdict, default_scanner
+    from dataclasses import replace
 
+    from personalclaw.install_instructions import refusal_lines, surfaces
+    from personalclaw.supply_chain import Verdict, default_scanner, rule_gloss
+
+    # A SKILL.md and the Markdown it links are instructions the agent carries out, read with the
+    # execution rules a script gets; its other docs and a README are read a band lower
+    # (`install_instructions`, the same reading an app bundle's skills get).
+    prose = surfaces(
+        {
+            str(f.get("path", "")): str(f.get("contents", ""))
+            for f in files
+            if "data" not in f and str(f.get("path", "")).lower().endswith(".md")
+        }
+    )
     for file_entry in files:
         rel_path = file_entry.get("path", "")
         if not rel_path or ".." in rel_path or rel_path.startswith("/"):
@@ -839,12 +856,14 @@ def install_skill_files(
         )
         report = default_scanner.scan_text(
             contents,
-            surface="script" if is_script else "manifest",
+            surface="script" if is_script else prose.get(rel_path, "manifest"),
         )
         if report.verdict is Verdict.DANGEROUS:
             cats = ", ".join(sorted({f.rule for f in report.findings})) or "dangerous content"
+            found = [replace(f, path=rel_path) for f in report.findings]
             raise ValueError(
                 f"skill install refused: scanner flagged {rel_path!r} as dangerous ({cats})"
+                + refusal_lines(found, rule_gloss, lead=". ")
             )
 
     skill_md: str | None = None

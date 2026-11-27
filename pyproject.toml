@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 # ── Project metadata (PEP 621) ────────────────────────────────────────────────
 [project]
 name = "personalclaw"
-version = "0.4.1"
+version = "0.4.2"
 description = "Personal AI agent — chat via Slack, dashboard, or CLI with pluggable LLM providers"
 # A PEP 639 SPDX expression, emitted as `License-Expression`; the trove classifier it
 # supersedes is gone, and setuptools refuses the pair.
@@ -404,6 +404,9 @@ personalclaw = [
     # names, which is the whole defect the map removes. test_scan_rule_gloss.py proves the
     # file out of a BUILT wheel, not out of the source tree.
     "scan_rule_gloss.json",
+    # The paste sites the install scanner's paste_site_link rule knows (install_instructions.py),
+    # read when the scanner is imported: a wheel without it cannot scan an install at all.
+    "scan_paste_hosts.json",
     # The hands-free voice loop's shipped confirmation and exit phrases. voice/duplex.py reads it
     # at IMPORT for the config defaults, and web/src/ui/composer/duplex.ts imports the same file at
     # build time, so a wheel without this line fails to start rather than ship a loop with no way

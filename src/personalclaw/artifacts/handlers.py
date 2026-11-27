@@ -50,6 +50,7 @@ from personalclaw.artifacts.models import (
 )
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.file_view import read_head, whole_text
+from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import (
     MISSING,
@@ -907,6 +908,10 @@ async def api_artifact_changed(request: web.Request) -> web.Response:
     return web.json_response({"slug": slug, "change": change})
 
 
+#: What a binary artifact's bytes may do, opened as a page: load nothing, run nothing.
+_RAW_CSP = "default-src 'none'; sandbox"
+
+
 async def api_artifact_raw(request: web.Request) -> web.Response:
     """GET /api/artifacts/{slug}/raw — stream a binary artifact's bytes.
 
@@ -934,11 +939,18 @@ async def api_artifact_raw(request: web.Request) -> web.Response:
     # Immutable per (slug, version): a versioned read is content-addressable, the
     # live body changes only on edit — cache the version hard, revalidate live.
     cache = "public, max-age=31536000, immutable" if version is not None else "no-cache"
-    return web.Response(
-        body=data,
-        content_type=mime or "application/octet-stream",
-        headers={"Cache-Control": cache, "X-Content-Type-Options": "nosniff"},
-    )
+    headers = {"Cache-Control": cache, "X-Content-Type-Options": "nosniff"}
+    served = (mime or "").split(";", 1)[0].strip().lower()
+    if not kind_for_mime(served):
+        # A type the store doesn't keep (a page, an SVG, none at all) is a download, never shown
+        # as itself on the dashboard's origin.
+        served = "application/octet-stream"
+        headers["Content-Disposition"] = attachment_disposition(slug)
+    if not (served == "application/pdf" and bytes(data[:5]) == b"%PDF-"):
+        # Opened in a tab of its own the bytes run nothing; an image or video element ignores
+        # the policy. A PDF goes without it, since its viewer has to run.
+        headers["Content-Security-Policy"] = _RAW_CSP
+    return web.Response(body=data, content_type=served, headers=headers)
 
 
 # ── The binary write path + the document model ──

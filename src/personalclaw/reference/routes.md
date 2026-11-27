@@ -683,7 +683,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/onboarding/state` — Record first-run progress — a partial merge into the onboarding entity state.
 - `POST /api/optimizer/optimize` — rewrite a prompt using session context.
 - `GET /api/outbox` — list files in the outbox.
-- `POST /api/outbox/notify` — agent sent a file, notify the user.
+- `POST /api/outbox/notify` — the agent sent a file (``notify_attachment``): its card goes into
 - `GET /api/outbox/{filename}` — download a file from the outbox.
 - `GET /api/packs/bundled` — List the Domain OS packs shipped in this build.
 - `POST /api/packs/bundled/{name}/install` — Build a shipped Domain OS pack and import it through the pack import pipeline.

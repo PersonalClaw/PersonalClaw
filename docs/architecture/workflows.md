@@ -1511,7 +1511,12 @@ names it. The default required kinds are the ffmpeg-independent proof (screensho
 manifest), so a degraded (ffmpeg-less) bundle is still complete and only a genuinely missing proof
 blocks; the provider returns a failed action (naming the missing kinds) to mark the run incomplete.
 The provider reads its bundle from the run workspace, threaded into the action payload as
-`workspace` at the dispatch seam (the same path the artifact gate already receives).
+`workspace` at the dispatch seam (the same path the artifact gate already receives). The template
+declares a scratch workspace (`"workspace": {"mode": "scratch"}`), so every run has a folder of its
+own: the commit watch starts its runs from an automation, in no project, and before the declaration
+such a run's drive step captured into the shared agent workspace while its seal found no folder to
+read. A workflow edited to drop the declaration, run outside a project, is refused at the seal in
+words that say so (`failure_class: user`).
 
 ## The judge contract: self-approval is impossible, not discouraged
 

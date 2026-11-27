@@ -36,7 +36,7 @@ def outbox(tmp_path):
 async def _client(outbox) -> TestClient:
     app = web.Application()
     state = MagicMock()
-    state._sessions = {}  # no active session → notify skips the append, still 200
+    state._sessions = {}  # no chat sent it → the file stays in the outbox, still 200
     state.broadcast_ws = MagicMock()
     app["state"] = state
     app.router.add_post("/api/outbox/notify", api_outbox_notify)
@@ -56,11 +56,9 @@ async def test_notify_accepts_mp3_with_content_type(outbox, mock_sel) -> None:
             "/api/outbox/notify", json={"filename": "clip.mp3", "path": str(f)}
         )
         assert resp.status == 200
-        # The broadcast carries the derived content_type.
-        state = client.app["state"]
-        args = state.broadcast_ws.call_args
-        assert args[0][0] == "file_ready"
-        assert args[0][1]["content_type"] == "audio/mpeg"
+        # The answer carries the derived content_type (the card's frame goes only to the chat
+        # that sent the file: ``test_a_sent_file_lands_in_the_chat_that_sent_it``).
+        assert (await resp.json())["content_type"] == "audio/mpeg"
     finally:
         await client.close()
 
@@ -89,8 +87,7 @@ async def test_notify_accepts_utf8_text(outbox, mock_sel) -> None:
             "/api/outbox/notify", json={"filename": "note.txt", "path": str(f)}
         )
         assert resp.status == 200
-        ct = client.app["state"].broadcast_ws.call_args[0][1]["content_type"]
-        assert ct == "text/plain"
+        assert (await resp.json())["content_type"] == "text/plain"
     finally:
         await client.close()
 

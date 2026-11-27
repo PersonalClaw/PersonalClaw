@@ -605,6 +605,18 @@ def _sqlite_rows(db: Path, table: str) -> list[dict]:
     return out
 
 
+def _exported_db_copy(entry: inv.StateEntry, src: Path, workdir: Path) -> Path | None:
+    """The copy of *entry*'s database an export reads (:func:`_consistent_db_copy`). A Temporary
+    chat's runs are never copied out of the run ledger, as its transcript is not
+    (``chat_traces.leave_out_temporary_runs``)."""
+    copy = _consistent_db_copy(src, workdir)
+    if copy is not None and entry.path == "workflows/runs.db":
+        from personalclaw.chat_traces import leave_out_temporary_runs
+
+        leave_out_temporary_runs(copy)
+    return copy
+
+
 def _consistent_db_copy(src: Path, workdir: Path) -> Path | None:
     """A consistent scratch copy of a live database via the backup API."""
     dst = workdir / src.name
@@ -751,7 +763,7 @@ def export_shards(
             result.entries += 1
 
             if entry.kind == inv.KIND_SQLITE:
-                copy = _consistent_db_copy(src, workdir)
+                copy = _exported_db_copy(entry, src, workdir)
                 if copy is None:
                     result.skipped[entry.id] = "database unreadable"
                     continue

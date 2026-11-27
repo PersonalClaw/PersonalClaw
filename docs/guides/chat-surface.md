@@ -283,6 +283,11 @@ stopped, and the run, any run it started, and what they produced are deleted. So
 its still waiting for your Allow: its ask leaves your Inbox. An **Incognito** chat's runs are kept,
 as its transcript is, until you delete the chat: then they go the same way.
 
+So do the helpers (subagents) a chat starts, whenever it started them, and the helpers they start:
+when a Temporary chat ends, or you delete any chat, a helper still working is stopped, and what
+each one kept (its task, its state and what it wrote) is removed with the chat. A backup or an
+export taken while a Temporary chat is open leaves out its helpers and its workflow runs.
+
 Nor does the learning log keep its words: a turn of such a chat records nothing of the skills it
 brought up, where an ordinary chat's turn records each one with its message. What an earlier
 version recorded of an Incognito or Temporary chat's turns is removed when PersonalClaw starts. A

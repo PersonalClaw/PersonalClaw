@@ -15,9 +15,10 @@ work ran (``SubagentInfo.starter_ended``), which would take the work up again.
   earlier turn of the same chat started is that turn's, which ended without being stopped, so it
   goes on.
 * A chat's deletion ends every helper the chat started, whenever it started them
-  (:func:`end_chat`, from ``chat_forget.delete_chats``), and what each started in turn. Their
-  sessions are sealed first, so a write one is still making as its stop lands keeps nothing. The
-  chat's own workflow runs go on, as they did: a run has a page of its own.
+  (:func:`end_chat`, from ``chat_forget.delete_chats``), and what each started in turn, and so does
+  a Temporary chat's end (``chat_forget.end_temporary_chat``). Their sessions are sealed first, so
+  a write one is still making as its stop lands keeps nothing. The chat's own workflow runs go on,
+  as they did: a run has a page of its own.
 * A workflow run's ending ends what its steps started (:func:`end_run`, from
   ``RunController._finish`` and ``service.delete_run``): what the session of one of its steps'
   subagents (``subagent:<id>``) started, and what four step kinds launched (:func:`_end_launched`):
@@ -68,6 +69,10 @@ TURN_STOPPED = "its chat turn was stopped"
 #: deleted."
 CHAT_DELETED = "its chat was deleted"
 
+#: How what a Temporary chat started reads once its session's end ends it, as its runs do
+#: (``workflows.private_runs.ENDED``): "Stopped because its Temporary chat ended."
+TEMPORARY_ENDED = "its Temporary chat ended"
+
 
 class Ended(NamedTuple):
     """What an ending reached: the runs whose cancel it asked, the subagents it stopped (a
@@ -82,6 +87,17 @@ class Ended(NamedTuple):
 
 def _agents(subagents: Any) -> list[Any]:
     return list(getattr(subagents, "all_agents", None) or [])
+
+
+def ended_by(subagents: Any) -> Callable[[str], bool | None]:
+    """Whether the helper *subagents* runs under an id has ended, or ``None`` when it runs none
+    by it: what ``subagent_persistence.forget_helpers`` asks before it removes a folder."""
+
+    def ended(agent_id: str) -> bool | None:
+        info = subagents.get(agent_id) if subagents is not None else None
+        return None if info is None else bool(info.done)
+
+    return ended
 
 
 def _started_since(created_at: str, since: float) -> bool:
@@ -264,10 +280,13 @@ def _end_waiting_asks(
         return 0
 
 
-async def end_chat(state: Any, name: str, *, stop_runs: bool = False) -> Ended:
-    """Chat *name* is being deleted (``chat_forget.delete_chats``): end every subagent it started,
-    whenever it started them, what each of them started in turn, and what still waits for your
-    Allow for it, saying :data:`CHAT_DELETED`. Called after its turn is stopped and before what it
+async def end_chat(
+    state: Any, name: str, *, stop_runs: bool = False, clause: str = CHAT_DELETED
+) -> Ended:
+    """Chat *name* is being deleted (``chat_forget.delete_chats``), or its Temporary session has
+    ended (``chat_forget.end_temporary_chat``, saying :data:`TEMPORARY_ENDED`): end every subagent
+    it started, whenever it started them, what each of them started in turn, and what still waits
+    for your Allow for it, saying *clause*. Called after its turn is stopped and before what it
     kept is purged. Each subagent's session is sealed first, marked as work whose chat nothing can
     say any more (``session_restrictions.mark_unreadable``), so what one still writes as its stop
     lands keeps nothing and what it reads finds nothing; and its report starts no turn and tells
@@ -284,7 +303,7 @@ async def end_chat(state: Any, name: str, *, stop_runs: bool = False) -> Ended:
             supervisor=getattr(state, "workflows", None),
             asks=state,
             owns=owns,
-            clause=CHAT_DELETED,
+            clause=clause,
             its_own_runs=stop_runs,
             seal=True,
         )
@@ -397,6 +416,23 @@ def _end_its_fanout(subagents: Any, key: str) -> None:
         end(key)
     except Exception:
         logger.warning("could not end the fan-out key %s", key, exc_info=True)
+
+
+def forget_step_helpers(run_id: str, supervisor: Any) -> None:
+    """Run *run_id* is being deleted (``workflows.service.delete_run``), what its steps started
+    ended (:func:`end_run`): remove the folder of each helper its steps started, and of each one
+    those started in turn, with its agent session's files, once it has ended
+    (``subagent_persistence.forget_helpers``). What they kept goes with the run. Never raises: the
+    run's own deletion goes on."""
+    from personalclaw import subagent_persistence
+    from personalclaw.workflows.ownership import owned_key
+
+    steps = owned_key(run_id, "_")[:-1]  # the session key of each of its steps, without the step
+    ended = ended_by(getattr(getattr(supervisor, "_state", None), "subagents", None))
+    try:
+        subagent_persistence.forget_helpers(lambda key: key.startswith(steps), ended=ended)
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.warning("could not remove the helper folders of run %s", run_id, exc_info=True)
 
 
 def _stopped(ending: str) -> bool:

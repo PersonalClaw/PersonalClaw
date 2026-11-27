@@ -2563,7 +2563,7 @@ def _handle_skills(args) -> None:  # noqa: ANN001
                 # tells a CLI user what the skill would be allowed to DO, which is the only
                 # question a refusal leaves them. Indented under its row, and omitted rather
                 # than echoing the rule name when this build has no sentence for it.
-                gloss = rule_gloss(f.rule)
+                gloss = rule_gloss(f.rule, getattr(f, "surface", ""))
                 if gloss:
                     lines.append(f"       {gloss}")
             hidden = len(exc.report.findings) - _SKILL_FINDINGS_SHOWN

@@ -201,8 +201,8 @@ async def web_fetch(
     """Fetch + extract a URL through the guarded pipeline.
 
     ``require_provenance`` gates on ``session_key`` having been given the link (the module
-    docstring says by whom). A call with no session has no conversation to check against,
-    and ``require_provenance=False`` is for a caller whose URL no model chose. The egress
+    docstring says by whom). A call with no session has no conversation to have given it, so
+    it is refused; ``require_provenance=False`` is for a caller whose URL no model chose. The egress
     guard always applies, and holds the fetch to the egress tier of the run it is made for.
 
     ``render`` runs the page through a headless browser (Playwright) so client-rendered
@@ -233,8 +233,9 @@ async def web_fetch(
         )
 
     # ① provenance gate: the conversation must have been given this link, by the user or by a
-    #    web tool. Checked before ②, which still decides where the fetch may go.
-    if require_provenance and session_key and not url_provenance(session_key, url):
+    #    web tool. Checked before ②, which still decides where the fetch may go. With no session
+    #    there is no conversation to have given it, so the link is refused.
+    if require_provenance and (not session_key or not url_provenance(session_key, url)):
         return FetchOutcome(
             ok=False,
             url=url,

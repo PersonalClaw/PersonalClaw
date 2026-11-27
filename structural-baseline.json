@@ -229,6 +229,7 @@
       "command_identity",
       "command_operands",
       "command_patterns",
+      "command_senders",
       "command_shell",
       "command_unsplit",
       "context_gauge",
@@ -246,6 +247,7 @@
       "home_paths",
       "http_errors",
       "ids",
+      "install_instructions",
       "instants",
       "known_value_forms",
       "loaded_modules",
@@ -289,6 +291,7 @@
       "request_validation",
       "resource_limits",
       "safety_flags",
+      "scan_remote_exec",
       "schedule_trigger",
       "search_snippets",
       "security_audit",
@@ -328,6 +331,11 @@
       },
       {
         "release": "0.4.1",
+        "startup_units": 73,
+        "units": 276
+      },
+      {
+        "release": "0.4.2",
         "startup_units": 73,
         "units": 276
       }

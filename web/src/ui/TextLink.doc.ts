@@ -23,6 +23,7 @@ const doc: UiDoc = {
     { name: 'aria-expanded', description: 'For a link used as a disclosure toggle (e.g. a "Show N more" reveal): the expanded state, plumbed to the rendered <a>/<button> so the control announces it rather than relying on a flipping label alone.' },
     { name: 'aria-controls', description: 'The id of the region a disclosure link opens — the other half of the `aria-expanded` pairing, so assistive tech can go from the control to what it governs (the pairing `DisclosureCard` carries).' },
     { name: 'title', description: 'Native tooltip text.' },
+    { name: 'download', description: 'For a link to a file (href set): the name the browser saves it under, as <a download> does, instead of opening it.' },
     { name: 'className', description: 'Extra layout (ml-auto, mt-1.5, normal-case) — tokens only, no raw hex/px.' },
   ],
   bestPractices: [

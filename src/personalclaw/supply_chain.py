@@ -45,6 +45,8 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 # One source of truth for "touches a credential/secret path" (IMDS, ~/.aws, …).
+from personalclaw import install_instructions as ii
+from personalclaw import scan_remote_exec as rx
 from personalclaw.credential_locations import CREDENTIAL_LOCATIONS
 
 # Artifact-signature state carried on every report. signing.py imports nothing
@@ -195,6 +197,9 @@ class ScanReport:
     surfaces_scanned: list[str] = field(default_factory=list)
     tier: TrustTier = TrustTier.COMMUNITY
     signature: SignatureInfo = field(default_factory=SignatureInfo)
+    #: Each install instruction the scan read as prose (#3852): ``{surface, path, findings}``,
+    #: the count of findings from it, none included, so the review says what it checked.
+    scanned: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -202,6 +207,7 @@ class ScanReport:
             "tier": self.tier.value,
             "findings": [f.to_dict() for f in self.findings],
             "surfaces_scanned": list(self.surfaces_scanned),
+            "scanned": [dict(s) for s in self.scanned],
             "signature": self.signature.to_dict(),
         }
 
@@ -227,7 +233,10 @@ _DESTRUCTIVE_TARGET_END = r"""(?:\s|;|["'`)\\]|$)"""
 
 # High-confidence DANGEROUS patterns (terminal). Reserved for unambiguous malice
 # so the non-overridable floor doesn't trap legitimate skills.
-_DANGEROUS_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+#: A rule's pattern: a compiled pattern, or an execution rule's read in capped windows.
+_Rule = re.Pattern[str] | rx.CappedPattern
+
+_DANGEROUS_SCRIPT: tuple[tuple[str, _Rule], ...] = (
     # destructive-root: rm -rf / , rm -rf ~ , rm -rf $HOME, rm -fr /
     (
         "destructive_root",
@@ -256,17 +265,15 @@ _DANGEROUS_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     # not in `(?:sd|nvme|disk)`, so `> /dev/null` stays out of the terminal tier.
     (
         "disk_wipe",
-        re.compile(
-            r"(?:\bmkfs\.\w+|\bdd\s+[^\n]*\bof=/dev/(?:sd|nvme|disk)|>\s*/dev/(?:sd|nvme|disk))"
+        re.compile(  # dd's gap is bounded: unbounded, a line of `dd dd dd …` reads in square time
+            r"(?:\bmkfs\.\w+|\bdd\s+[^\n]{0,500}?\bof=/dev/(?:sd|nvme|disk)"
+            r"|>\s*/dev/(?:sd|nvme|disk))"
         ),
     ),
-    # pipe-to-shell exec of remote content: curl|wget … | sh/bash
-    (
-        "remote_exec_pipe",
-        re.compile(r"\b(?:curl|wget|fetch)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b"),
-    ),
-    # obfuscated exec: base64 -d | sh , echo … | base64 -d | bash
-    ("obfuscated_exec", re.compile(r"base64\s+(?:--decode|-d|-D)\b[^\n|]*\|\s*(?:ba|z|da)?sh\b")),
+    # remote content handed to something that runs it, and a decoded payload piped into a shell
+    # (echo … | base64 -d | bash): execution rules, read in capped windows (`scan_remote_exec`)
+    ("remote_exec_pipe", rx.CappedPattern(rx.REMOTE_EXEC)),
+    ("obfuscated_exec", rx.CappedPattern(rx.OBFUSCATED_EXEC)),
 )
 
 #: The DANGEROUS rules decided on the AST rather than on a regex (issue #2607) — see the
@@ -280,6 +287,8 @@ _NATIVE_DESTRUCTION_RULES: tuple[str, ...] = (
     "destructive_walk",  # walks a whole tree and deletes what it yields
     "destructive_truncate",  # blanks a file the OS owns
 )
+#: Why a Python file nested deeper than the parser goes is refused (``nested_too_deep``).
+_TOO_DEEP = "this file couldn't be read safely: nested too deeply"
 
 #: Node's one way to start a program: ``exec``, ``execSync``, ``spawn``, ``fork`` and ``execFile``
 #: all come from this module, so naming it names them all. The ``node_exec`` rule reads it, and so
@@ -287,9 +296,9 @@ _NATIVE_DESTRUCTION_RULES: tuple[str, ...] = (
 _CHILD_PROCESS_RE = re.compile(r"\bchild_process\b")
 
 # WARNING-band script patterns (overridable): notable but not proof of malice.
-_WARNING_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+_WARNING_SCRIPT: tuple[tuple[str, _Rule], ...] = (
     ("eval_exec", re.compile(r"\beval\s*[\"'(]")),
-    ("pipe_to_shell", re.compile(r"\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b")),  # any pipe-to-shell
+    ("pipe_to_shell", rx.CappedPattern(rx.PIPE_TO_SHELL)),  # any pipe-to-shell
     ("curl_network", re.compile(r"\b(?:curl|wget)\b")),
     ("sudo_use", re.compile(r"\bsudo\b")),
     ("python_exec", re.compile(r"\b(?:os\.system|subprocess\.(?:call|run|Popen)|exec\(|eval\()")),
@@ -325,7 +334,7 @@ _INJECTION_PROSE: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 _SCRIPT_EXTS = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".rb", ".pl", ".ps1"}
 # Text surfaces scanned for injection / invisible-Unicode (skill + app manifests).
 _MANIFEST_NAMES = {"skill.md", "app.json", "readme.md", "manifest.json"}
-_TEXT_SUFFIXES = {".md", ".json", ".yaml", ".yml"}
+_TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".json", ".yaml", ".yml"}
 #: The largest file the scanner reads. Every file a rule reads is read WHOLE up to this, and
 #: one past it is an ``unscanned_file`` finding — never a silent pass. The rules run at about
 #: 12 MB/s (a 13 MB bundled worker takes one second), so this sits above the largest built
@@ -419,12 +428,26 @@ def load_scan_rule_gloss() -> dict[str, str]:
     return gloss
 
 
-def rule_gloss(rule: str) -> str:
-    """The sentence for ``rule``, or ``''`` for a rule this build has no gloss for.
+@lru_cache(maxsize=1)
+def load_scan_rule_gloss_in_prose() -> dict[str, str]:
+    """The sentence for an execution rule found in instructions a person reads and runs (the
+    file's ``_in_prose`` map), in place of the rule's own, which speaks of code."""
+    raw = json.loads(SCAN_RULE_GLOSS_PATH.read_text(encoding="utf-8")).get("_in_prose") or {}
+    return {k: v for k, v in raw.items() if not k.startswith("_") and isinstance(v, str)}
+
+
+def rule_gloss(rule: str, surface: str = "") -> str:
+    """The sentence for ``rule``, or ``''`` for a rule this build has no gloss for; for a
+    finding on prose a person reads (*surface* ``prose``), its sentence for prose, when the
+    rule has one.
 
     Returning empty rather than echoing the rule name keeps the row honest: a name
     repeated as though it were an explanation is the defect, not the fix. Mirrors
     ``ruleGloss()`` in ``web/src/lib/scanFindings.ts`` exactly — same file, same answer."""
+    if surface == "prose":
+        prose = load_scan_rule_gloss_in_prose().get(rule)
+        if prose:
+            return prose
     return load_scan_rule_gloss().get(rule, "")
 
 
@@ -1163,7 +1186,7 @@ def _analyse_python(text: str) -> _FileFacts:
     unreadable = _FileFacts(False, [], [], set(), set(), set(), set(), set())
     try:
         tree = ast.parse(text)
-    except (SyntaxError, ValueError):  # ValueError: NUL bytes / oversized literals
+    except (SyntaxError, ValueError, MemoryError, RecursionError):  # NUL bytes, too deep
         return unreadable
     commentary = _commentary_spans(text, tree)
     if commentary is None:
@@ -1682,6 +1705,13 @@ def _rule_spans(text: str, rule: str) -> list[tuple[int, int]]:
     return []
 
 
+def _overlong(text: str, rel: str, surface: str) -> list[Finding]:
+    """A line longer than the execution rules read at once (``scan_remote_exec.LINE_CAP``)."""
+    long = rx.overlong_line(text)
+    note = None if long is None else f"L{long[0]}: {long[1]:,} characters on one line"
+    return [] if note is None else [Finding(surface, Verdict.LOW, "overlong_line", rel, note)]
+
+
 def _on_comment_only_line(text: str, pos: int) -> bool:
     """True when ``pos`` sits on a line whose first non-space char opens a comment — the
     same predicate :func:`_strip_line_comments` uses, evaluated on raw offsets."""
@@ -1750,7 +1780,7 @@ def _scope_by_reachability(findings: list[Finding], *, reach: _BundleReach | Non
 
 #: The pattern each WARNING-band script rule reports on, re-run to find its matches outside
 #: commentary. ``reads_sensitive_path`` is the credential-path set the rule is built from.
-_WARNING_RULE_PATTERNS: dict[str, "re.Pattern[str]"] = {
+_WARNING_RULE_PATTERNS: dict[str, _Rule] = {
     "reads_sensitive_path": _SENSITIVE_RE,
     **dict(_WARNING_SCRIPT),
 }
@@ -2300,14 +2330,16 @@ def _scan_native_destruction(text: str, rel: str) -> list[Finding]:
     uses for the regex catalog — emitted in :data:`_NATIVE_DESTRUCTION_RULES` order so a
     report is deterministic.
 
-    A file that does not parse yields NOTHING. That is a recall limit and not a pass: the
-    text catalogs still judge every byte of it, and the reachability pass still reports
-    ``unparseable`` for whatever they matched. Guessing at a broken parse tree is how a
-    scanner ends up flagging a docstring that forbids the very call it names."""
+    A file that does not parse yields NOTHING: a recall limit, not a pass, since the text
+    catalogs still judge every byte and the reachability pass reports ``unparseable`` for what
+    they matched. A file nested deeper than the parser goes, which no interpreter runs either,
+    is refused (``nested_too_deep``): there is no reading it safely."""
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):  # ValueError: NUL bytes / oversized literals
         return []
+    except (MemoryError, RecursionError):
+        return [Finding("script", Verdict.DANGEROUS, "nested_too_deep", rel, _TOO_DEEP)]
     ctx = _NativeCtx(aliases=_import_aliases(tree), bindings=_single_bindings(tree))
     hits: dict[str, ast.AST] = {}
     for node in ast.walk(tree):
@@ -2360,6 +2392,7 @@ class SkillScanner:
         py_texts: dict[str, str] = {}
         loader_texts: dict[str, str] = {}
         manifest_text: str | None = None
+        md_texts: dict[str, str] = {}  # every prose file, for its install instructions
         opaque: list[str] = []  # Python/loader files the walk could not read (L4)
         paths: list[str] = []  # every file, read or not: what an import could load
 
@@ -2407,12 +2440,18 @@ class SkillScanner:
                     loader_texts[rel] = text
                 if rel == "app.json":
                     manifest_text = text
+                if suffix in ii.PROSE_SUFFIXES:
+                    md_texts[rel] = text
                 if is_script:
                     surfaces.add("script")
                     findings.extend(self._scan_script(text, rel))
                 if text_surface:
                     surfaces.add(text_surface)
                     findings.extend(self._scan_text(text, rel, text_surface))
+
+        scanned = self._scan_install_instructions(md_texts, manifest_text, findings)
+        if scanned:
+            surfaces.update(s["surface"] for s in scanned)
 
         # ONE analysis of the bundle, shared by both passes, and only when there is a
         # finding to ask about.
@@ -2436,22 +2475,48 @@ class SkillScanner:
             findings=findings,
             surfaces_scanned=sorted(surfaces),
             tier=tier,
+            scanned=scanned,
         )
+
+    def _scan_install_instructions(
+        self, md_texts: dict[str, str], manifest_text: str | None, findings: list[Finding]
+    ) -> list[dict[str, Any]]:
+        """Read a tree's install instructions as the code they stand for (``install_instructions``):
+        its skills' instructions and docs and its READMEs, from the walk's own text, and each
+        prerequisite's ``how`` in ``app.json``. Adds their findings to *findings*, and answers
+        what was read, with each one's finding count."""
+        scanned: list[dict[str, Any]] = []
+        read = [
+            (text, rel, kind)
+            for rel, kind in ii.surfaces(md_texts).items()
+            for text in [md_texts[rel]]
+        ]
+        read += [
+            (how, ii.prerequisite_path(name), ii.PROSE)
+            for name, how in ii.prerequisite_hows(manifest_text)
+        ]
+        for text, rel, kind in sorted(read, key=lambda r: r[1]):
+            found = self._scan_instructions(text, rel, kind)
+            findings.extend(found)
+            scanned.append({"surface": kind, "path": rel, "findings": len(found)})
+        return scanned
 
     def scan_text(self, text: str, *, surface: str = "manifest") -> ScanReport:
         """Scan a single text blob. Community tier. ``surface="script"`` runs the
-        full destructive-script ruleset (the skill-install gate); any other
-        surface runs the prose/injection + invisible-char rules (the memory-write
-        injection gate).
+        full destructive-script ruleset (the skill-install gate); a prose surface of
+        ``install_instructions`` (a skill's instructions, its other docs, a README) runs the
+        prose rules and its install-instruction rules; any other surface runs the
+        prose/injection + invisible-char rules (the memory-write injection gate).
 
         NO reachability scoping here, by construction: a bare blob has no bundle around
         it, so non-reachability cannot be proved and the default-deny answer stands. A
         DANGEROUS blob stays DANGEROUS."""
-        findings = (
-            self._scan_script(text, "")
-            if surface == "script"
-            else self._scan_text(text, "", surface)
-        )
+        if surface == "script":
+            findings = self._scan_script(text, "")
+        else:
+            findings = self._scan_text(text, "", surface)
+            if surface in ii.SURFACES:
+                findings += self._scan_instructions(text, "", surface)
         return ScanReport(
             verdict=self._aggregate(findings, TrustTier.COMMUNITY),
             findings=findings,
@@ -2533,7 +2598,21 @@ class SkillScanner:
             if m:
                 out.append(Finding("script", Verdict.WARNING, rule, rel, _evidence(text, m)))
         out.extend(self._scan_invisible(text, rel, "script"))
-        return out
+        return out + _overlong(text, rel, "script")
+
+    def _scan_instructions(self, text: str, rel: str, surface: str) -> list[Finding]:
+        """The execution rules and the install-instruction rules over prose *text*, each finding
+        in the band its *surface* gives it (``install_instructions.band_on``)."""
+        script = {rule: (pat, "dangerous") for rule, pat in _DANGEROUS_SCRIPT}
+        script.update((rule, (pat, "warning")) for rule, pat in _WARNING_SCRIPT)
+        rules = [(rule, *script[rule]) for rule in ii.EXECUTION_RULES] + list(ii.RULES)
+        out: list[Finding] = []
+        for rule, pat, band in rules:
+            m = pat.search(text)
+            if m:
+                severity = Verdict(ii.band_on(surface, band))
+                out.append(Finding(surface, severity, rule, rel, _evidence(text, m)))
+        return out + _overlong(text, rel, surface)
 
     def _scan_text(self, text: str, rel: str, surface: str) -> list[Finding]:
         out: list[Finding] = []

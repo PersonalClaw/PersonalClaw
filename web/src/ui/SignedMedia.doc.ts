@@ -63,7 +63,7 @@ const docs: UiDoc[] = [
     description: 'A TextLink whose href is a gateway URL the browser follows itself, signed the same way. Every other TextLink prop is passed through as TextLink takes it.',
     props: [
       { name: 'href', description: 'Where it goes. A gateway /api route is signed; any other URL is used as it is.' },
-      ...['aria-controls', 'aria-expanded', 'aria-label', 'children', 'className', 'disabled', 'external', 'icon', 'iconPosition', 'iconSize', 'ink', 'onClick', 'size', 'title']
+      ...['aria-controls', 'aria-expanded', 'aria-label', 'children', 'className', 'disabled', 'download', 'external', 'icon', 'iconPosition', 'iconSize', 'ink', 'onClick', 'size', 'title']
         .map((name) => ({ name, description: `Passed through to TextLink, as TextLink takes ${name}.` })),
     ],
     ...shared,

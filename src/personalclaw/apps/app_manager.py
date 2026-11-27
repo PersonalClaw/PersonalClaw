@@ -71,10 +71,11 @@ from personalclaw.apps.update_recovery import (  # noqa: F401 — called here
 )
 from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.durability import sqlite_files
+from personalclaw.install_instructions import refusal_lines
 from personalclaw.security import mask_child_output
 from personalclaw.sel import sel
 from personalclaw.signing import SignatureInfo, SignatureState, verify_bundle
-from personalclaw.supply_chain import ScanReport, TrustTier, Verdict, default_scanner
+from personalclaw.supply_chain import ScanReport, TrustTier, Verdict, default_scanner, rule_gloss
 
 if TYPE_CHECKING:
     from packaging.requirements import Requirement
@@ -734,7 +735,8 @@ def _review(staged: Path, *, origin: str, action: str) -> "_Reviewed | _Refused"
             InstallResult(
                 ok=False,
                 scan=report,
-                error=f"{action} refused: scanner flagged dangerous content",
+                error=f"{action} refused: scanner flagged dangerous content"
+                + refusal_lines(report.findings, rule_gloss, lead=": "),
                 **facts,
             ),
             audit_error="scan: dangerous",

@@ -40,6 +40,8 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import ipaddress
+import json
 import logging
 import os
 import re
@@ -49,13 +51,14 @@ import tempfile
 import threading
 import time
 import weakref
-from collections.abc import Callable, Iterable, Sequence
+from collections import deque
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from personalclaw import protected_folders
-from personalclaw.command_effects import DEVICES, CommandEffects, command_effects
+from personalclaw.command_effects import DEVICES, CommandEffects, command_effects, url_host
 from personalclaw.file_scope import PATH_TOOLS
 from personalclaw.periodic_sweep import PeriodicSweep
 from personalclaw.protected_folders import NOTHING, ProtectedDelete
@@ -105,6 +108,224 @@ def unlisted(hosts: Iterable[str], policy: Any, *, declared: Sequence[str] = ())
         ):
             out.append(host)
     return tuple(out)
+
+
+#: A reach whose host is not read.
+_UNREAD: tuple[frozenset[str], bool] = (frozenset(), True)
+#: A value that begins with a scheme, slashes or none: ``https:host`` names a host to a WHATWG
+#: reader (a browser, Node).
+_SCHEME_START = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*):")
+#: The schemes a WHATWG reader treats as special: ``\\`` is ``/``, and ``https:host``,
+#: ``https:/host`` and ``https:\\host`` name a host.
+_SPECIAL_SCHEMES = frozenset({"http", "https", "ws", "wss", "ftp"})
+#: A character no URL a reader takes the same way holds: whitespace, a backslash, a control.
+_AMBIGUOUS_VALUE = re.compile(r"[\\\s\x00-\x1f\x7f]")
+
+
+def _names_a_host(host: str) -> bool:
+    """Whether a bare value's *host* is one: a name with a dot, ``localhost`` or an IP address."""
+    if "." in host or host == "localhost":
+        return True
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def argument_reach(value: str, *, bare: bool = False) -> tuple[frozenset[str], bool] | None:
+    """Where a tool's argument *value* reaches when it is a URL, read as the tool that receives it
+    would read it: the hosts it reaches and whether it reaches one it does not name (readers could
+    disagree on it). ``None`` for a value that is no URL, or one that reaches no host (``file:``).
+
+    A value that begins with two slashes (``//host/x``, or with a backslash, which is not read) is
+    one, as a tool resolving it against a base reads it. A value that begins with a scheme followed
+    by ``//`` is one, whatever the scheme
+    (``redis://``, ``s3://``); one of the special schemes (``https:``…) is one with no slashes, one
+    slash or a backslash too. Such a form, and any URL holding whitespace (around it too), a
+    backslash or a control character, is not read: its host is unread whichever reading is right,
+    so it is never a listed host or a given link. *bare*: the value's key names a place (``url``,
+    ``host``…), so a value with no scheme is read as ``curl`` reads a bare host, and counts when it
+    names a host with a dot, an IP address or ``localhost``."""
+    text = value.strip()
+    if not text:
+        return None
+    lead = len(text) - len(text.lstrip("/\\"))
+    if lead >= 2 and (text[lead : lead + 1].isalnum() or text[lead : lead + 1] == "["):
+        # Scheme-relative: a tool that resolves it against a base (a client's, a page's) reaches
+        # it, and a WHATWG reader takes any run of slashes and backslashes there as two slashes.
+        # Under a key that names no place it is one only as one word: `//go:build linux\n…` and
+        # `// TODO` open a file's text.
+        if not bare and re.search(r"\s", value.strip()):
+            return None
+        if text[:lead] != "//" or _AMBIGUOUS_VALUE.search(value):
+            return _UNREAD
+        host = url_host("http:" + text)
+        return _UNREAD if host is None else (frozenset({host}), False) if host else None
+    match = _SCHEME_START.match(text)
+    if (
+        match is not None
+        and bare
+        and match.group(1).lower() not in _SPECIAL_SCHEMES
+        and text[match.end() : match.end() + 1].isdigit()
+    ):
+        match = None  # `localhost:8080`, `host.example:8443/x`: a host and its port
+    if match is not None:
+        scheme = match.group(1).lower()
+        transport = scheme.rsplit("+", 1)[-1]
+        rest = text[match.end() :]
+        if rest.startswith("//"):
+            host = None if _AMBIGUOUS_VALUE.search(value) else url_host(text)
+        elif transport in _SPECIAL_SCHEMES:
+            return _UNREAD  # `https:host`, `https:/host`, `https:\\host`: readers differ
+        else:
+            return None  # `mailto:`, `data:`, prose with a colon
+        if host is None:
+            return _UNREAD
+        return None if host == "" else (frozenset({host}), False)
+    if not bare or not (text[0].isalnum() or text[0] == "["):
+        return None
+    host = url_host("http://" + text.split()[0])
+    if host is None:
+        return _UNREAD
+    if not _names_a_host(host):
+        return None  # a word (`prod`), a number, a street address
+    return _UNREAD if _AMBIGUOUS_VALUE.search(value) else (frozenset({host}), False)
+
+
+#: The words a key ends in when its value names a place even with no scheme (``{"host": "x"}``,
+#: ``serverAddress``, ``hosts``): read as ``curl`` reads a bare host (``argument_reach``).
+_PLACE_WORDS = frozenset(
+    {
+        "url",
+        "uri",
+        "href",
+        "link",
+        "endpoint",
+        "host",
+        "hostname",
+        "domain",
+        "server",
+        "address",
+        "proxy",
+        "ip",
+    }
+)
+#: Those a key may end in run together with the word before it (``imageurl``); ``ip`` only as a
+#: word of its own (``serverIp``, ``ip``), as ``zip`` and ``clip`` end in it too.
+_PLACE_ENDINGS = tuple(sorted(_PLACE_WORDS - {"ip"}))
+#: Which strings a link's consent may come from: the first this many of a call's arguments.
+_ARGUMENT_STRINGS = 64
+#: How much of a call's arguments is read at all (values, of every depth): past it, the call
+#: reaches a host it does not name.
+_ARGUMENT_LIMIT = 4096
+#: The built-in agent's tools whose ``url`` the conversation's own links consent to
+#: (``web.fetch``'s provenance): the exact link, given by the owner or a tool's result.
+_CONSENTED_TOOLS = frozenset({"web_fetch", "web_extract"})
+
+
+def _may_hold_a_url(value: object) -> bool:
+    try:
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        text = str(value)
+    return ":/" in text or ":\\" in text or "//" in text or "\\\\" in text
+
+
+def _singular(word: str) -> str:
+    if word.endswith("ies"):
+        return word[:-3] + "y"
+    if word.endswith("es") and word[:-2] in _PLACE_WORDS:
+        return word[:-2]
+    return word[:-1] if word.endswith("s") else word
+
+
+def _names_a_place(key: str) -> bool:
+    """Whether *key* ends in a word that names a place, one or many (``hosts``, ``proxies``)."""
+    words = re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+", key)
+    last = words[-1].lower() if words else ""
+    if last in _PLACE_WORDS or _singular(last) in _PLACE_WORDS:
+        return True
+    lowered = key.lower()
+    return lowered.endswith(_PLACE_ENDINGS) or _singular(lowered).endswith(_PLACE_ENDINGS)
+
+
+def _argument_strings(value: object) -> tuple[list[tuple[str, str, int]], bool]:
+    """Each string in a call's arguments in the order they are written, with its key and depth (a
+    top-level value is at 2); and whether the arguments run past what is read at all
+    (:data:`_ARGUMENT_LIMIT`), or hold a value of no JSON kind that may hold a URL."""
+    found: list[tuple[str, str, int]] = []
+    queue: deque[tuple[str, object, int]] = deque([("", value, 1)])
+    read = 0
+    while queue:
+        key, item, depth = queue.popleft()
+        read += 1
+        if read > _ARGUMENT_LIMIT:
+            return found, True
+        if isinstance(item, str):
+            found.append((key, item, depth))
+        elif isinstance(item, Mapping):
+            queue.extend((str(k), v, depth + 1) for k, v in item.items())
+        elif isinstance(item, (list, tuple)):
+            queue.extend((key, v, depth + 1) for v in item)
+        elif not isinstance(item, (int, float, bool, type(None))) and _may_hold_a_url(item):
+            return found, True
+    return found, False
+
+
+def _consented(
+    title: str, tool_kind: str, key: str, depth: int, url: str, session_key: str
+) -> bool:
+    """Whether the conversation was given *url* itself, for the built-in agent's web fetch."""
+    if tool_kind or title not in _CONSENTED_TOOLS or key != "url" or depth != 2 or not session_key:
+        return False
+    try:
+        from personalclaw.web.fetch import url_provenance
+
+        return bool(url_provenance(session_key, url))
+    except Exception:  # noqa: BLE001 - security surface: a reader that fails consents to nothing
+        logger.warning("run bounds: a link's provenance is unreadable", exc_info=True)
+        return False
+
+
+def argument_network(
+    title: str, tool_kind: str, tool_input: object, *, session_key: str
+) -> tuple[tuple[str, ...], bool]:
+    """The hosts past the allowed hosts that a call names in its arguments, and whether it
+    reaches one it does not name: every URL argument (:func:`argument_reach`) and every
+    bare host under a key that names a place, read against the shell's policy
+    (:func:`shell_egress_policy`), so a host a ``curl`` may reach unasked is one a tool may too.
+
+    Every string is read, whatever its depth. A host readers could disagree on, an agent CLI's
+    input that is no JSON and may hold a URL, and arguments past what is read at all
+    (:data:`_ARGUMENT_LIMIT`) are hosts it does not name. The built-in agent's ``web_fetch`` and
+    ``web_extract`` reach the exact link the conversation was given unasked
+    (``web.fetch.url_provenance``), from their top-level ``url`` among the first
+    :data:`_ARGUMENT_STRINGS` strings; no other tool, and no other link, does."""
+    if not tool_kind and title in PATH_TOOLS:
+        return (), False  # a file tool's arguments name files
+    args = tool_input
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            return (), _may_hold_a_url(args)
+    strings, unread = _argument_strings(args)
+    hosts: set[str] = set()
+    for at, (key, text, depth) in enumerate(strings):
+        reached = argument_reach(text, bare=_names_a_place(key))
+        if reached is None:
+            continue
+        named, unnamed = reached
+        if (
+            not unnamed
+            and at < _ARGUMENT_STRINGS
+            and _consented(title, tool_kind, key, depth, text, session_key)
+        ):
+            continue  # a link the conversation was given, read the same by every reader
+        hosts |= named
+        unread = unread or unnamed
+    return (unlisted(hosts, shell_egress_policy(session_key)) if hosts else ()), unread
 
 
 # ── Writes ───────────────────────────────────────────────────────────────────────────────────────
@@ -456,8 +677,9 @@ def call_reach(
             scratch=scratch,
         )
         return replace(reach, deletes=deletes, identity=identity)
-    if deletes or identity:
-        return Reach(deletes=deletes, identity=identity)
+    hosts, unnamed = argument_network(title, tool_kind, tool_input, session_key=session_key)
+    if deletes or identity or hosts or unnamed:
+        return Reach(hosts, unnamed, deletes=deletes, identity=identity)
     arg = FILE_WRITES.get(title)
     if within is None or arg is None or not declared_level(declared):
         return NOWHERE
@@ -500,7 +722,11 @@ def tool_call_reach(
     shell has *scratch* as ``TMPDIR`` when it has one (``shell_env``)."""
     from personalclaw.task_modes import shell_command
 
-    if tool_name not in FILE_WRITES and not shell_command(tool_name, "", tool_input, declared):
+    if (
+        tool_name not in FILE_WRITES
+        and not shell_command(tool_name, "", tool_input, declared)
+        and argument_network(tool_name, "", tool_input, session_key=session_key) == ((), False)
+    ):
         return NOWHERE, ()
     within = places(roots(), scratch) if roots is not None else None
     reach = call_reach(

@@ -77,7 +77,24 @@ rendered content cannot steer the app onto an arbitrary origin wearing the app's
 
 If you reach your gateway through a public reverse proxy, add that host to `allowNavigation` **and**
 to `PRIVATE_HOST_PATTERNS` in `www/shell/network.mjs` — deliberately, in a diff. A test asserts the
-two lists agree, so changing one alone reds the gate.
+two lists agree, so changing one alone reds the gate. On Android it also goes in
+`ANDROID_IN_APP_PATTERNS` (below).
+
+### On Android, a gateway at an IP address opens outside the app
+
+On Android, Capacitor hands each `allowNavigation` entry to the WebView as an origin rule too, and
+the WebView accepts a wildcard only as a leading `*.`.
+So Android's copy of the list holds only `localhost`, `127.0.0.1`, `*.local` and `*.ts.net`
+(`ANDROID_IN_APP_PATTERNS`): every `cap copy` runs `scripts/androidOriginRules.mjs` (the
+`capacitor:copy:after` hook in `package.json`), which writes Android's `capacitor.config.json`
+again with only the entries Android accepts, says which it left out, and fails if the copy wrote
+no Android config. iOS keeps the whole list. `android/` is generated and never committed, and
+`npm run build:android` runs `cap sync android` first, so every build is of a copy the hook wrote.
+An `android/` folder synced before the hook existed keeps the earlier list until it is synced again.
+
+A gateway reached by its IP address on Android opens in the browser, outside the app. The app
+says so before it goes and opens it only on **Open in browser**. Reach the gateway by its `.local`
+or Tailscale name to keep it in the app.
 
 The `172.` octets are spelled out one at a time because a glob cannot say "16 through 31", and
 `172.*` would hand the shell most of a public /8. Tailscale is matched by MagicDNS name rather than

@@ -407,6 +407,14 @@ def _call_reason(grant: str) -> str:
     return "batch_task_allowed" if grant == approval_grants.BATCH_TASK else "parent_policy_auto"
 
 
+def _declared(event: Any, session_key: str, client: Any) -> str:
+    """What a child agent's call declares answers it (``approval_grants.declared_answer``), run in
+    the folder its client works in."""
+    return approval_grants.declared_answer(
+        event, session_key=session_key, cwd=run_bounds.runtime_folder(client)
+    )
+
+
 class SubagentManager:
     """Spawn and track isolated background agents."""
 
@@ -2088,7 +2096,7 @@ class SubagentManager:
                     # asks nobody, as a native agent's never does: an ACP child asks about every
                     # call, so it is answered here, past the grants and hooks above, and never
                     # relayed to a person.
-                    if unasked := approval_grants.declared_answer(event):
+                    if not to_a_person and (unasked := _declared(event, session_key, client)):
                         await approve(
                             decided_by=unasked,
                             metadata={"subagent_id": info.id, "reason": unasked},

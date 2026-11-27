@@ -13,6 +13,7 @@ import json
 import pytest
 from app_roots import first_party_app
 
+from personalclaw import mcp_core
 from personalclaw.net.client import FetchResponse
 from personalclaw.web import fetch as wf
 from personalclaw.web.fetch import web_extract
@@ -245,9 +246,14 @@ async def test_tool_web_extract_returns_json(monkeypatch):
     _patch_fetch(monkeypatch, _resp("<html><body><p>body</p></body></html>", url="https://x.com/p"))
     _patch_llm(monkeypatch, '{"title": "T", "ok": true}')
     WebToolProvider = _web_tool_provider_cls()
-    res = await WebToolProvider().invoke(
-        "web_extract", {"url": "https://x.com/p", "instructions": "title, ok"}
-    )
+    wf.record_seen_urls("s1", ["https://x.com/p"])  # the link the session was given
+    token = mcp_core.set_current_session_key("s1")
+    try:
+        res = await WebToolProvider().invoke(
+            "web_extract", {"url": "https://x.com/p", "instructions": "title, ok"}
+        )
+    finally:
+        mcp_core.reset_current_session_key(token)
     assert res.success is True
     assert json.loads(res.output) == {"title": "T", "ok": True}
     assert res.metadata["citations"] == ["https://x.com/p"]
