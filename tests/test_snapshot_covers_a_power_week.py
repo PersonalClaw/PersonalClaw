@@ -69,7 +69,7 @@ def _a_week(home: Path) -> dict[str, str]:
     rotated = log.rotate(archive=True)
     assert rotated["rotated"] and rotated["entries_before"] == 3, rotated
 
-    incident.activate("drill: a human stopped unattended work")
+    incident.activate("drill: a human stopped unattended work", by="owner")
     incident.reset_incident_mirror()
 
     stats.record_routing_stats(

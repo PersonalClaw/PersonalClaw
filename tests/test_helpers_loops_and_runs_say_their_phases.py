@@ -878,10 +878,10 @@ async def test_a_running_loop_says_it_is_held_while_incident_mode_holds_it(tmp_p
             orch._start_incident_watch()
             try:
                 await asyncio.sleep(0.05)
-                incident.activate("a drill")
+                incident.activate("a drill", by="owner")
                 await until(("queued", "Held until incident mode is off"))
                 chat_phase.end(w.state, worker)
-                incident.resume()
+                incident.resume(by="owner")
                 await until(("thinking", "Running"))
             finally:
                 orch._incident_watch_task.cancel()

@@ -8,6 +8,7 @@ The lifecycle layer exposed over HTTP, plus the backend reverse-proxy:
     POST   /api/apps                      — install from source (path | git URL), with consent
     POST   /api/apps/{name}/enable        — enable (run onEnable, register)
     POST   /api/apps/{name}/disable       — disable
+    POST   /api/apps/{name}/capabilities/{capability}/on|off — one capability's own switch
     POST   /api/apps/{name}/update        — atomic update from source
     DELETE /api/apps/{name}               — deactivate | ?remove=1 remove-keep-data
                                             | ?force=1 remove-everything (dep ledger)
@@ -102,9 +103,14 @@ def register_app_routes(app: web.Application) -> None:
     app.router.add_get("/api/apps/{name}/uninstall-preview", api_app_uninstall_preview)
     app.router.add_get("/api/apps/{name}/config", api_app_config_get)
     app.router.add_put("/api/apps/{name}/config", api_app_config_put)
-    from personalclaw.dashboard.handlers import app_accounts, app_capability_config
+    from personalclaw.dashboard.handlers import (
+        app_accounts,
+        app_capability_config,
+        app_capability_switch,
+    )
 
     app_capability_config.register_routes(app)
+    app_capability_switch.register_routes(app)
     app_accounts.register_routes(app)
     app.router.add_post("/api/apps/{name}/agent-run", api_app_agent_run)
     app.router.add_get("/api/apps/{name}/agent-run/{run_id}", api_app_agent_run_status)
@@ -443,11 +449,55 @@ def _installed_rows(
                 # was installed from, when an update can come from there ("" otherwise).
                 "updateSource": update_source_for(app),
                 # Each account's connection health, apart from its settings, and each
-                # capability's last good report and the account fields it waits for (#3842).
-                **(health.get(name) or {"accounts": [], "capabilities": []}),
+                # capability's last good report and the account fields it waits for (#3842),
+                # with its own switch (#3843); its status is added on the loop.
+                **_with_switches(app, health.get(name)),
             }
         )
     return out
+
+
+def _with_switches(
+    app: dict[str, Any], health: dict[str, list[dict[str, Any]]] | None
+) -> dict[str, list[dict[str, Any]]]:
+    """*app*'s health rows (``_health_rows``), each capability's with its switch (``on``), read
+    from the installed record *app* was listed from."""
+    from personalclaw.apps.capability_switches import is_on, readable
+    from personalclaw.apps.manager import InstalledApp
+
+    rows = health or {"accounts": [], "capabilities": []}
+    meta = InstalledApp.from_dict(app)
+    for cap in rows["capabilities"]:
+        cid = str(cap.get("id", ""))
+        cap["on"] = is_on(meta, cid)
+        cap["_readable"] = readable(meta, cid)  # taken off on the loop (`_capability_states`)
+    return rows
+
+
+def _capability_states(row: dict[str, Any]) -> dict[str, Any]:
+    """Each capability's status on an installed app's row, and the app's one line about them
+    (``capabilitySummary``), from the gateway's own state: read on the loop, as ``_app_status``
+    is. A row with no capabilities gets neither."""
+    from personalclaw.apps.capability_switches import capability_status, summary
+
+    caps = row.get("capabilities") or []
+    if not caps:
+        return {}
+    label = str(row.get("displayName") or row["name"])
+    enabled = bool(row.get("enabled"))
+    statuses = []
+    for cap in caps:
+        status = capability_status(
+            row["name"],
+            cap["id"],
+            on=cap["on"],
+            app_enabled=enabled,
+            app_label=label,
+            readable=cap.pop("_readable", True),
+        )
+        cap.update(status.to_wire())
+        statuses.append((str(cap.get("label") or cap["id"]), status))
+    return {"capabilitySummary": summary(label, statuses, app_enabled=enabled)}
 
 
 def _bundled_rows(extensions: list[Any], have: set[str]) -> list[dict[str, Any]]:
@@ -581,6 +631,7 @@ async def api_apps_list(request: web.Request) -> web.Response:
     installed, bundled = await asyncio.to_thread(_read_rows, request.app.get("state"), extensions)
     for row in installed:
         row.update(_app_status(row["name"]))
+        row.update(_capability_states(row))
     return web.json_response({"apps": installed + bundled})
 
 

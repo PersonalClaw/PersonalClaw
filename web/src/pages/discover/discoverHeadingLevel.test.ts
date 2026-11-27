@@ -125,6 +125,11 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //     told, Secrets) with an h3 under it (`H1 > H2 > H3`). Panel-level, correctly nested.
     //   · `library/PowerTabPanel` JOINED it: the Graph tab's panel is titled by an h2, and a name picked
     //     in it heads its own part with an h3 (its Linked to and Where it is mentioned are h4s). Panel-level.
+    // 2026-11-26, re-done again:
+    //   · `settings/GuardrailsPanel` JOINED it: inside the Incident kill switch `Section` (an h2), the
+    //     review shown before Resume ("Before you resume") and the summary after it ("Unattended work
+    //     runs again") each head their own region with an h3 (`H1 > H2 > H3`). Panel-level, correctly
+    //     nested.
     expect(withH3.sort(), 'files still using h3').toEqual([
       'pages/chat/beside/LoopBeside.tsx',
       'pages/chat/transcript/SourcesRow.tsx',
@@ -133,6 +138,8 @@ describe("Discover's area headings sit one rung under the page title", () => {
       'pages/library/PowerTabPanel.tsx',
       'pages/library/setup/SetupPanel.tsx',
       'pages/projects/ProjectAbout.tsx',
+      // The incident review and resumed summary, sub-regions of the Incident kill switch section.
+      'pages/settings/GuardrailsPanel.tsx',
       'pages/settings/VoicePanel.tsx',
       'pages/settings/VoiceProfilesSection.tsx',
       'pages/workflows/IntrospectPanel.tsx',

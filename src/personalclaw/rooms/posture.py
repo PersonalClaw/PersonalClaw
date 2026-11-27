@@ -36,11 +36,9 @@ about which of two postures is narrower.
 **``approval`` is deliberately NOT a member axis.** It is the ROOM's, it is always the ask
 posture, and the human is the sole approver. Three traps this closes, all real:
 
-* A member is never assigned ``REVIEW_ONLY`` or ``HEADLESS`` wholesale. Both carry
-  ``approval="hook_based"``, which lets a hook decide and removes the human silently. A
-  read-only critic is the room's base narrowed to ``tool_grants="read"`` — an axis, not a
-  profile name. ``get_profile`` also defaults an unknown name to ``HEADLESS``, which is a
-  second reason narrowing is expressed as axes rather than as a profile to look up.
+* A member is never assigned ``HEADLESS`` wholesale. It carries ``approval="hook_based"``,
+  which lets a hook decide and removes the human silently. A read-only critic is the room's
+  base narrowed to ``tool_grants="read"`` — an axis, not a profile name.
 * :func:`member_posture` REFUSES a base whose ``approval`` is not ``ask``. On a healthy tree
   that cannot happen, which is the point: it turns "no code path sets a member's approval"
   into a property of the running system rather than of a reading of it. The one way to reach

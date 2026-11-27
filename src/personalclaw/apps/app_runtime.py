@@ -132,13 +132,16 @@ def _retry_pending_moves() -> None:
     """Each installed app's pending capability moves, run again
     (``capability_lifecycle.retry_pending_moves``), its record written when one changed."""
     from personalclaw.apps.capability_lifecycle import retry_pending_moves
-    from personalclaw.apps.manager import _read_installed, _write_installed, list_apps
+    from personalclaw.apps.manager import _read_installed, _write_installed, list_apps, record_lock
 
     for info in list_apps():
         name = str(info.get("name") or "")
-        meta = _read_installed(name) if name else None
-        if meta is not None and retry_pending_moves(meta):
-            _write_installed(name, meta)
+        if not name:
+            continue
+        with record_lock(name):
+            meta = _read_installed(name)
+            if meta is not None and retry_pending_moves(meta):
+                _write_installed(name, meta)
 
 
 def load(*manifests: AppManifest) -> None:
@@ -181,10 +184,18 @@ def record(manifest: AppManifest) -> None:
 
 def _load_in_process(manifest: AppManifest) -> None:
     """What of an app a process holds itself: its providers (enabling them imports its code),
-    prompts, skills and proposal kinds — registered before anything the app runs can use them."""
+    prompts, skills and proposal kinds — registered before anything the app runs can use them.
+
+    Every capability is listed, and only those switched on are built
+    (``capability_switches``): one that is off reads no settings and starts nothing."""
+    from personalclaw.apps.capability_switches import switched_on
+
     if manifest.all_providers():
         try:
-            _provider_registry().register(manifest, enabled=True)
+            registry = _provider_registry()
+            registry.register(manifest)
+            for capability in switched_on(manifest):
+                registry.enable(manifest.name, capability)
         except Exception:  # noqa: BLE001 — the rest of the app still starts
             logger.exception("app %s: provider registration failed", manifest.name)
     _seed_prompts(manifest)

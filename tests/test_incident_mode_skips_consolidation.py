@@ -47,11 +47,11 @@ def test_the_after_turn_pass_is_skipped_and_its_offset_kept() -> None:
 
     async def run() -> tuple[int, int]:
         with patch.object(c, "_consolidate", new_callable=AsyncMock) as m:
-            incident.activate("a drill")
+            incident.activate("a drill", by="owner")
             c.maybe_consolidate("chat-1")
             await asyncio.gather(*c._tasks, return_exceptions=True)
             skipped_calls = m.await_count
-            incident.resume()
+            incident.resume(by="owner")
             c.maybe_consolidate("chat-1")
             await asyncio.gather(*c._tasks, return_exceptions=True)
             return skipped_calls, m.await_count
@@ -68,11 +68,11 @@ def test_the_idle_pass_is_skipped() -> None:
 
     async def run() -> tuple[int, int]:
         with patch.object(c, "_consolidate", new_callable=AsyncMock) as m:
-            incident.activate("a drill")
+            incident.activate("a drill", by="owner")
             c.check_idle_sessions()
             await asyncio.gather(*c._tasks, return_exceptions=True)
             held = m.await_count
-            incident.resume()
+            incident.resume(by="owner")
             c.check_idle_sessions()
             await asyncio.gather(*c._tasks, return_exceptions=True)
             return held, m.await_count
@@ -95,7 +95,7 @@ def test_an_ending_session_is_not_consolidated_but_still_sealed() -> None:
             patch.object(type(c), "_svc", new=svc),
             patch("personalclaw.memory_vault.mirror_after_consolidation"),
         ):
-            incident.activate("a drill")
+            incident.activate("a drill", by="owner")
             ran = await c.consolidate_session("chat-1")
             return ran, m.await_count
 
@@ -110,7 +110,7 @@ def test_the_background_compression_pass_is_skipped() -> None:
 
     log = MagicMock()
     with patch("personalclaw.bg_compress._eligible_keys", return_value=["chat-1"]) as eligible:
-        incident.activate("a drill")
+        incident.activate("a drill", by="owner")
         assert asyncio.run(run_bg_compression_pass(log)) == []
     eligible.assert_not_called()
     log.prune_orphan_summaries.assert_not_called()
@@ -123,7 +123,7 @@ def test_the_consolidate_command_says_incident_mode_is_why(capsys: pytest.Captur
     consolidator.consolidate_session = AsyncMock(return_value=False)
     conv_log = MagicMock()
     conv_log.has_log.return_value = True
-    incident.activate("a drill")
+    incident.activate("a drill", by="owner")
     with (
         patch.object(cli_server, "_build_consolidator", return_value=(consolidator, conv_log)),
         pytest.raises(SystemExit) as exit_,

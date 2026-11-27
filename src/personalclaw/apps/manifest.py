@@ -74,6 +74,9 @@ class CronEntry:
     env: dict[str, str] = field(default_factory=dict)  # environment variables for the job
     persistent_session: bool = True  # whether to carry context between runs
     silent: bool = False  # suppress dashboard notifications
+    #: The capability id the job belongs to (#3843): it is scheduled only while that capability is
+    #: switched on. Empty for a job of the app's own, scheduled while the app is on.
+    capability: str = ""
     not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +97,8 @@ class CronEntry:
             d["persistent_session"] = False
         if self.silent:
             d["silent"] = True
+        if self.capability:
+            d["capability"] = self.capability
         return d
 
     @classmethod
@@ -110,6 +115,7 @@ class CronEntry:
                 data.get("persistent_session"), field="cron entry persistent_session", default=True
             ),
             silent=strict_bool(data.get("silent"), field="cron entry silent"),
+            capability=str(data.get("capability", "") or ""),
         )
         entry.not_booleans = _not_booleans(data, "persistent_session", "silent")
         return entry
@@ -1942,7 +1948,7 @@ class AppManifest:
                 errors.append(
                     f"cron entry {cron.name!r} must specify either 'every' or 'cron_expr'"
                 )
-            errors += _refusals(f"cron entry {cron.name!r}: ", cron.not_booleans)
+            errors += self._cron_refusals(cron)
 
         # #3501. ``permissions.memory`` is a boolean; the ``"app-scoped"``/``"shared"`` tier
         # vocabulary is gone. Refused by NAME rather than reinterpreted, because both
@@ -2253,6 +2259,25 @@ class AppManifest:
         from personalclaw.apps.capability_ids import capability_ids
 
         return capability_ids(self)
+
+    def _cron_refusals(self, cron: CronEntry) -> list[str]:
+        """A cron entry's refusals past its schedule: a flag that is no boolean, and a capability
+        the app does not declare (#3843)."""
+        errors = _refusals(f"cron entry {cron.name!r}: ", cron.not_booleans)
+        if cron.capability and cron.capability not in self._declared_ids():
+            errors.append(
+                f"cron entry {cron.name!r} belongs to the capability {cron.capability!r}, "
+                "which the app does not declare"
+            )
+        return errors
+
+    def _declared_ids(self) -> set[str]:
+        """The capability ids the app declares, or none when they cannot be told apart (that
+        refusal is :meth:`_validate_providers`')."""
+        try:
+            return set(self.capability_ids())
+        except ValueError:
+            return set()
 
     def _validate_providers(self) -> list[str]:
         """Each provider's own refusals, then the ones for the ids and labels that tell them

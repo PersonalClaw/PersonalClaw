@@ -249,7 +249,7 @@ async def test_a_backend_that_crashes_says_why_on_its_panel_and_in_the_doctor(
     import asyncio
 
     from personalclaw.apps.app_secret import read_app_secret
-    from personalclaw.resilience import doctor
+    from personalclaw.resilience import app_probes, doctor
 
     monkeypatch.delenv(backend_runtime.SKIP_ENV, raising=False)
     caplog.set_level(logging.WARNING)
@@ -292,7 +292,7 @@ async def test_a_backend_that_crashes_says_why_on_its_panel_and_in_the_doctor(
             caplog.text
         )
 
-        probe = await doctor._probe_apps(doctor.DoctorContext(home=tmp_path))
+        probe = await app_probes.probe_apps(doctor.DoctorContext(home=tmp_path))
         assert not probe.ok
         assert probe.detail == f"1 backend not running (brokenfeed exited with code 1: {cause})"
         assert probe.evidence["backends"]["brokenfeed"]["exit"] == ended

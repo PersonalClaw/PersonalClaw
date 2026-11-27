@@ -98,7 +98,7 @@ def test_a_loop_workers_next_cycle_is_held_while_incident_mode_is_on(
     svc = _Deliverer()
     monkeypatch.setattr("personalclaw.triggers.nudge._INSTANCE", svc)
 
-    incident.activate("a drill")
+    incident.activate("a drill", by="owner")
     delivered, skipped = asyncio.run(IP.poll(store_, None, _ok, now=NOW + 61, base_dir=tmp_path))
     assert delivered == 0
     assert svc.delivered == [], "a loop started a new cycle with incident mode on"
@@ -107,7 +107,7 @@ def test_a_loop_workers_next_cycle_is_held_while_incident_mode_is_on(
     assert (state.cycle_count, state.armed_at) == (0, NOW), "a held cycle advanced its state"
 
     # The switch off: the SAME cycle fires on the next poll, with nothing for the owner to do.
-    incident.resume()
+    incident.resume(by="owner")
     delivered, _skipped = asyncio.run(IP.poll(store_, None, _ok, now=NOW + 62, base_dir=tmp_path))
     assert delivered == 1
     assert svc.delivered == ["nudge:worker"]
@@ -142,7 +142,7 @@ def test_a_plain_idle_trigger_is_held_too(tmp_path: Path) -> None:
         ran.append(payload.get("trigger_id", ""))
         return {"status": "ok"}
 
-    incident.activate("a drill")
+    incident.activate("a drill", by="owner")
     delivered, skipped = asyncio.run(
         IP.poll(store_, sessions, runner, now=NOW + 61, base_dir=tmp_path)
     )
@@ -267,7 +267,7 @@ def test_the_turn_in_flight_is_stopped_and_the_loop_stays_running() -> None:
     key = manager.session_key(loop.id)
     wd = _watchdog(key, running=True)
 
-    incident.activate("a drill")
+    incident.activate("a drill", by="owner")
     asyncio.run(wd._poll_once())
     assert wd._state.sessions.stopped == [
         f"dashboard:{key}"
@@ -287,7 +287,7 @@ def test_a_held_loop_is_not_failed_as_a_silent_worker(monkeypatch: pytest.Monkey
     # The worker has been silent for longer than the deadline allows.
     monkeypatch.setattr(W, "_unresponsive_deadline", lambda _idle: -1)
 
-    incident.activate("a drill")
+    incident.activate("a drill", by="owner")
     asyncio.run(wd._poll_once())
     fresh = store.get(loop.id)
     assert fresh.status == LoopStatus.RUNNING.value, fresh.error_message
@@ -312,12 +312,12 @@ def test_the_watchdog_does_no_cycle_work_while_held_and_resumes_after(
     monkeypatch.setattr(W.supervisor, "done_signal", _done_signal)
     _write_finding(loop.id, 1)
 
-    incident.activate("a drill")
+    incident.activate("a drill", by="owner")
     asyncio.run(wd._poll_once())
     assert checks == [], "the watchdog ran a done-ness check with incident mode on"
     assert loop_files.credited_cycles(loop.id) == 0
 
-    incident.resume()
+    incident.resume(by="owner")
     asyncio.run(wd._poll_once())
     assert checks == [loop.id], "the held cycle was never credited once the switch was off"
     assert loop_files.credited_cycles(loop.id) == 1
@@ -332,12 +332,12 @@ def test_a_turn_the_hold_ended_is_not_counted_as_a_worker_failure() -> None:
 
     async def _turns() -> None:
         # The gateway reports each turn from its event loop, and a failure ends the run there.
-        incident.activate("a drill")
+        incident.activate("a drill", by="owner")
         wd.record_turn_outcome(loop.id, ok=False)
         wd.record_turn_outcome(loop.id, ok=False)
         assert store.get(loop.id).status == LoopStatus.RUNNING.value
 
-        incident.resume()  # and the count still works when the switch is off
+        incident.resume(by="owner")  # and the count still works when the switch is off
         wd.record_turn_outcome(loop.id, ok=False)
         wd.record_turn_outcome(loop.id, ok=False)
         await asyncio.gather(*wd._endings)
@@ -457,7 +457,9 @@ def _drive_one_cycle(tmp_path: Path, on_turn: Any) -> tuple[list[str], list[tupl
 def test_a_cycle_abandons_its_reprompts_once_incident_mode_is_on(tmp_path: Path) -> None:
     """A cycle whose turn wrote no finding re-prompts the worker up to three times — each one a
     fresh run of model calls. Thrown during the turn, the switch ends the cycle there."""
-    calls, _rearms = _drive_one_cycle(tmp_path, lambda _sess: incident.activate("a drill"))
+    calls, _rearms = _drive_one_cycle(
+        tmp_path, lambda _sess: incident.activate("a drill", by="owner")
+    )
     assert len(calls) == 1, f"a held loop's cycle ran {len(calls)} turns"
 
 
@@ -466,7 +468,7 @@ def test_the_turn_the_hold_stopped_is_not_booked_as_the_workers_error(tmp_path: 
     held cycle must not count the turn the hold stopped against the worker."""
 
     def _stopped_by_the_hold(sess: Any) -> None:
-        incident.activate("a drill")
+        incident.activate("a drill", by="owner")
         sess._last_turn_errored = True  # what a runtime killed mid-call may report
 
     _calls, rearms = _drive_one_cycle(tmp_path, _stopped_by_the_hold)
@@ -485,7 +487,7 @@ def test_a_running_loops_views_say_it_is_held_and_why() -> None:
     store.update_status(paused.id, LoopStatus.PAUSED)
     assert store.get_redacted(loop.id)["held"] == ""
 
-    incident.activate("a drill")
+    incident.activate("a drill", by="owner")
     assert store.get_redacted(loop.id)["held"] == INCIDENT_HOLD
     rows = {row["id"]: row for row in store.list_redacted()}
     assert rows[loop.id]["held"] == INCIDENT_HOLD
@@ -493,7 +495,7 @@ def test_a_running_loops_views_say_it_is_held_and_why() -> None:
     assert rows[paused.id]["held"] == ""
     assert "incident mode" in INCIDENT_HOLD.lower() and "turned off" in INCIDENT_HOLD
 
-    incident.resume()
+    incident.resume(by="owner")
     assert store.get_redacted(loop.id)["held"] == ""
 
 
@@ -520,7 +522,7 @@ def test_a_planner_pass_waits_out_the_switch_without_timing_out(
     svc.get_by_session.return_value = _Nudge("N1", planner.key)
 
     async def _go() -> str:
-        incident.activate("a drill")
+        incident.activate("a drill", by="owner")
         task = asyncio.create_task(
             runner.run_planner_pass(
                 state,
@@ -546,7 +548,7 @@ def test_a_planner_pass_waits_out_the_switch_without_timing_out(
         assert state.sessions.stopped, "the planner pass ended before it saw the switch"
         await asyncio.sleep(0.5)  # well past the pass's own time budget, all of it held
         assert not task.done(), "a held planner pass timed out"
-        incident.resume()
+        incident.resume(by="owner")
         (files_dir / "plan_steps.json").write_text('{"steps": []}')
         return (await asyncio.wait_for(task, timeout=5)).text
 
@@ -600,7 +602,7 @@ def test_the_gateway_tells_open_pages_when_the_switch_moves() -> None:
             orch._start_incident_watch()
             try:
                 await asyncio.sleep(0.05)
-                incident.activate("a drill")
+                incident.activate("a drill", by="owner")
                 for _ in range(200):
                     if orch.dashboard_state.refreshed:
                         break

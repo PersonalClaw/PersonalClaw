@@ -32,7 +32,7 @@ from unittest.mock import patch
 import pytest
 
 from personalclaw.guardrails.budgets import Budget, BudgetVerdict
-from personalclaw.guardrails.policy import HEADLESS, REVIEW_ONLY, TOOL_READ, TOOL_READ_WRITE
+from personalclaw.guardrails.policy import HEADLESS, TOOL_READ, TOOL_READ_WRITE
 from personalclaw.rooms import posture, store
 
 
@@ -220,10 +220,10 @@ def test_the_axes_a_member_may_not_declare_are_refused_by_name_with_a_reason(ena
 
 
 def test_no_hook_based_profile_is_reachable_as_a_member_posture(enabled):
-    """The trap: ``REVIEW_ONLY``/``HEADLESS`` look like "a read-only member".
+    """The trap: ``HEADLESS`` looks like "a read-only member".
 
-    Both carry ``approval="hook_based"``, which lets a hook approve and removes the human. A
-    member is never assigned one WHOLESALE — it is the room's base narrowed on an axis — and
+    It carries ``approval="hook_based"``, which lets a hook approve and removes the human. A
+    member is never assigned it WHOLESALE — it is the room's base narrowed on an axis — and
     the two rails that make that structural are asserted together: ``approval`` is not a
     declarable axis, and the ceiling algebra independently reports ``hook_based`` as a
     WIDENING of the room's ``ask``.
@@ -231,9 +231,8 @@ def test_no_hook_based_profile_is_reachable_as_a_member_posture(enabled):
     from personalclaw.guardrails.ceiling import widening_scopes
     from personalclaw.guardrails.policy import INTERACTIVE
 
-    assert REVIEW_ONLY.approval == "hook_based" and HEADLESS.approval == "hook_based"
+    assert HEADLESS.approval == "hook_based"
     assert "approval" not in posture.MEMBER_AXES
-    assert "approval" in widening_scopes(INTERACTIVE, REVIEW_ONLY)
     assert "approval" in widening_scopes(INTERACTIVE, HEADLESS)
 
 

@@ -78,6 +78,7 @@
     - text: Apps
     - button "Investigate in chat"
     - group: App backends + interrupted updates # app backends ok
+    - group: Each app's capabilities # apps running the capabilities switched on
     - text: Serving fs
     - button "Investigate in chat"
     - group: SPA symlink + lock/PID leftovers serving/fs healthy
@@ -105,7 +106,7 @@
     - text: credentials.json moved into the credential store no credential is waiting in credentials.json to be moved
     - group: Sign-ins last no longer than the #-day limit a sign-in lasts # days, within the #-day limit
     - group: "Agents no chat started ask before they act Approval mode is Ask each time: an agent no chat started (a trigger's Invoke Agent agent, a subagent started outside a chat) asks you in your Inbox before each call that needs approval, unless its automation or loop was allowed to run on its own."
-    - text: Sandbox
+    - text: Every incident is kept in its history Every incident so far is in its history. Sandbox
     - button "Investigate in chat"
     - group: Sandbox pids/RSS enforcement pids and RSS ceilings are NOT enforced on this host — no live systemd user bus (DBUS_SESSION_BUS_ADDRESS unset and $XDG_RUNTIME_DIR/bus absent) — 'systemd-run --user' cannot connect. The NOFILE limit still applies to every spawn. No pids or RSS ceiling is configured, so nothing is being silently dropped.
     - group: POSIX resource-limits (rlimit) availability POSIX resource limits (rlimit) available — the gateway raises its own NOFILE ceiling at boot and the sandbox shim can apply rlimit ceilings.

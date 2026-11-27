@@ -100,6 +100,12 @@ PLACES: dict[tuple[str, str], tuple[typing.Callable, typing.Callable, str, objec
         "multiInstance",
         False,
     ),
+    ("ProviderConfig", "startsOn"): (
+        lambda v: {"provider": {**_SEARCH, "startsOn": v}},
+        lambda m: m.provider.startsOn,
+        "startsOn",
+        False,
+    ),
     ("SettingCondition", "value"): (
         lambda v: {
             "provider": _AGENT,

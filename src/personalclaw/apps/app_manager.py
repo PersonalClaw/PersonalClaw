@@ -48,7 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.apps import app_runtime, capability_lifecycle
+from personalclaw.apps import app_runtime, capability_lifecycle, capability_switches
 from personalclaw.apps import disclosure as app_disclosure
 from personalclaw.apps import staging as app_staging
 from personalclaw.apps import update_recovery
@@ -63,6 +63,7 @@ from personalclaw.apps.manager import (
     _write_installed,
     app_dir,
     apps_dir,
+    record_lock,
 )
 from personalclaw.apps.manifest import KEBAB_RE, AppManifest
 from personalclaw.apps.update_recovery import (  # noqa: F401 — called here
@@ -1150,6 +1151,8 @@ def install(
             )
 
         # 6. Persist installed.json + register providers.
+        held = record_lock(name)
+        held.acquire()
         meta = InstalledApp(
             name=name,
             version=manifest.version,
@@ -1163,6 +1166,7 @@ def install(
             # every later provenance surface (the Tools badge, #2627) reads the SAME
             # value the install dialog just disclosed, rather than re-deriving one.
             tier=report.tier.value,
+            capabilities=capability_switches.initial(manifest),
         )
         _write_installed(name, meta)
         # Start what the app runs — its providers, prompts, skills (through the supply-chain
@@ -1172,8 +1176,11 @@ def install(
         # they need here, and at no later start.
         from personalclaw.acp.cli_resolve import adapter_installs_allowed
 
-        with adapter_installs_allowed():
-            app_runtime.load(manifest)
+        try:
+            with adapter_installs_allowed():
+                app_runtime.load(manifest)
+        finally:
+            held.release()
         if replaced:
             app_runtime.note_restart(name, [_replaced_packages(replaced)])
         # Record this app against each shared dependency it declares (the dependency ledger),
@@ -1579,6 +1586,7 @@ def update(
 
     live = app_dir(name)
     rollback = _rollback_dir(name)
+    record_lock(name).acquire()  # to the end: nothing switches or builds from the old version
     try:
         _stage(bundle, staged, action="update")
         manifest = _load_staged_manifest(staged, action="update")
@@ -1742,6 +1750,7 @@ def update(
         return InstallResult(ok=False, name=name, error=str(exc))
     finally:
         shutil.rmtree(staged, ignore_errors=True)
+        record_lock(name).release()
 
 
 def _record_update(
@@ -1946,6 +1955,12 @@ def _adopt_as_builtin(name: str, manifest: AppManifest) -> None:
     between the copy and the record left behind.
     """
     (app_dir(name) / _APP_DATA_DIRNAME).mkdir(parents=True, exist_ok=True)
+    with record_lock(name):
+        _adopt_record(name, manifest)
+    _audit("seed", "adopted", name)
+
+
+def _adopt_record(name: str, manifest: AppManifest) -> None:
     meta = _read_installed(name)
     now = _now_iso()
     if meta is None:
@@ -1962,7 +1977,6 @@ def _adopt_as_builtin(name: str, manifest: AppManifest) -> None:
     meta.tier = TrustTier.BUILTIN.value
     meta.updatedAt = now
     _write_installed(name, meta)
-    _audit("seed", "adopted", name)
 
 
 def _bundled_native_names() -> set[str]:
@@ -2006,6 +2020,19 @@ def _holds_user_data(name: str) -> bool:
         return True
 
 
+def _retire_record(name: str, meta: InstalledApp, *, dead: bool) -> None:
+    """The record stops saying the package put it there, in both the words that say so: the
+    origin (the Store's provenance) and the tier the seed recorded, which the Tools page's badge
+    and a contested tool name read (`trust_tier_of`). Left at `builtin`, a retired app's tools
+    kept outranking an installed app's as core's own."""
+    meta.origin = "local"
+    meta.tier = _tier_for_origin(meta.origin).value
+    if dead:
+        meta.enabled = False
+    meta.updatedAt = _now_iso()
+    _write_installed(name, meta)
+
+
 def retire_orphaned_builtins(seeded: set[str], present: set[str]) -> list[str]:
     """Reconcile seed-marker names whose packaged native source is gone. Returns what changed.
 
@@ -2042,19 +2069,11 @@ def retire_orphaned_builtins(seeded: set[str], present: set[str]) -> list[str]:
         return []
     changed: list[str] = []
     for name in orphans:
-        meta = _read_installed(name)
         dead = _core_factory_is_gone(name)
-        if meta is not None:
-            # The record stops saying the package put it there, in both the words that say so:
-            # the origin (the Store's provenance) and the tier the seed recorded, which the Tools
-            # page's badge and a contested tool name read (`trust_tier_of`). Left at `builtin`,
-            # a retired app's tools kept outranking an installed app's as core's own.
-            meta.origin = "local"
-            meta.tier = _tier_for_origin(meta.origin).value
-            if dead:
-                meta.enabled = False
-            meta.updatedAt = _now_iso()
-            _write_installed(name, meta)
+        with record_lock(name):
+            meta = _read_installed(name)
+            if meta is not None:
+                _retire_record(name, meta, dead=dead)
         if dead and not _holds_user_data(name):
             shutil.rmtree(app_dir(name), ignore_errors=True)
             _audit("retire", "ok", name)
@@ -2168,81 +2187,83 @@ def enable_refusal(name: str) -> str:
 
 
 def enable(name: str, *, caller: str = "app_manager") -> bool:
-    meta = _read_installed(name)
-    if meta is None:
-        return False
-    manifest = _manifest_of(name)
-    if manifest is not None:
-        # Core compatibility gate (#1778). Install-time refusal alone is not enough: the core
-        # can be DOWNGRADED under an app that was installed against a newer one, and the
-        # app is then already on disk. The same holds for an app installed where it could
-        # run and found by the desktop app, which cannot. Checked BEFORE onEnable, so no
-        # third-party hook runs for an app this core cannot host.
-        outcome, refused = _hosting_refusal(manifest)
-        if refused:
-            logger.warning("app %s: enable refused — %s", name, refused)
-            _audit("enable", outcome, name, caller=caller, error=refused)
+    with record_lock(name):
+        meta = _read_installed(name)
+        if meta is None:
             return False
-        try:
-            _run_hook(
-                manifest.setup.onEnable,
-                cwd=app_dir(name),
-                timeout=manifest.setup.onEnableTimeout,
-                env_name="onEnable",
-            )
-        except AppLifecycleError as exc:
-            _audit("enable", "error", name, caller=caller, error=str(exc))
-            return False
-    was_enabled = meta.enabled
-    meta.enabled = True
-    meta.updatedAt = _now_iso()
-    _write_installed(name, meta)
-    if manifest is not None:
-        # Enabling is the moment the user said yes, so the app's providers may install the ACP
-        # adapter they need here — and only here and at install: a gateway start never does.
-        from personalclaw.acp.cli_resolve import adapter_installs_allowed
+        manifest = _manifest_of(name)
+        if manifest is not None:
+            # Core compatibility gate (#1778). Install-time refusal alone is not enough: the core
+            # can be DOWNGRADED under an app that was installed against a newer one, and the
+            # app is then already on disk. The same holds for an app installed where it could
+            # run and found by the desktop app, which cannot. Checked BEFORE onEnable, so no
+            # third-party hook runs for an app this core cannot host.
+            outcome, refused = _hosting_refusal(manifest)
+            if refused:
+                logger.warning("app %s: enable refused — %s", name, refused)
+                _audit("enable", outcome, name, caller=caller, error=refused)
+                return False
+            try:
+                _run_hook(
+                    manifest.setup.onEnable,
+                    cwd=app_dir(name),
+                    timeout=manifest.setup.onEnableTimeout,
+                    env_name="onEnable",
+                )
+            except AppLifecycleError as exc:
+                _audit("enable", "error", name, caller=caller, error=str(exc))
+                return False
+        was_enabled = meta.enabled
+        meta.enabled = True
+        meta.updatedAt = _now_iso()
+        _write_installed(name, meta)
+        if manifest is not None:
+            # Enabling is the moment the user said yes, so the app's providers may install the ACP
+            # adapter they need here — and only here and at install: a gateway start never does.
+            from personalclaw.acp.cli_resolve import adapter_installs_allowed
 
-        with adapter_installs_allowed():
-            if was_enabled:
-                # Already running — a provider whose start failed (or whose adapter did not
-                # install) is switched on again from Settings → Providers. Reloaded from its
-                # files, not retried on the code that failed: a second load on top of the first
-                # would leave the first load's instances running.
-                app_runtime.reload(name, manifest)
-            else:
-                app_runtime.load(manifest)
-    _audit("enable", "ok", name, caller=caller)
-    return True
+            with adapter_installs_allowed():
+                if was_enabled:
+                    # Already running — a provider whose start failed (or whose adapter did not
+                    # install) is switched on again from Settings → Providers. Reloaded from its
+                    # files, not retried on the code that failed: a second load on top of the first
+                    # would leave the first load's instances running.
+                    app_runtime.reload(name, manifest)
+                else:
+                    app_runtime.load(manifest)
+        _audit("enable", "ok", name, caller=caller)
+        return True
 
 
 def disable(name: str, *, caller: str = "app_manager") -> bool:
-    meta = _read_installed(name)
-    if meta is None:
-        return False
-    if is_native(name):
-        logger.info("app %s is native (locked) — disable refused", name)
-        _audit("disable", "refused_native", name, caller=caller)
-        return False
-    manifest = _manifest_of(name)
-    # Everything the app runs stops, and its code leaves the process: a disabled app's model type
-    # no longer builds, and enabling it again imports its files afresh.
-    app_runtime.unload(name, manifest)
-    if manifest is not None:
-        try:
-            _run_hook(
-                manifest.setup.onDisable,
-                cwd=app_dir(name),
-                timeout=manifest.setup.onDisableTimeout,
-                env_name="onDisable",
-            )
-        except AppLifecycleError as exc:
-            # Already deregistered; log but don't fail the disable (it IS disabled).
-            logger.warning("app %s onDisable hook failed: %s", name, exc)
-    meta.enabled = False
-    meta.updatedAt = _now_iso()
-    _write_installed(name, meta)
-    _audit("disable", "ok", name, caller=caller)
-    return True
+    with record_lock(name):
+        meta = _read_installed(name)
+        if meta is None:
+            return False
+        if is_native(name):
+            logger.info("app %s is native (locked) — disable refused", name)
+            _audit("disable", "refused_native", name, caller=caller)
+            return False
+        manifest = _manifest_of(name)
+        # Everything the app runs stops, and its code leaves the process: a disabled app's model
+        # type no longer builds, and enabling it again imports its files afresh.
+        app_runtime.unload(name, manifest)
+        if manifest is not None:
+            try:
+                _run_hook(
+                    manifest.setup.onDisable,
+                    cwd=app_dir(name),
+                    timeout=manifest.setup.onDisableTimeout,
+                    env_name="onDisable",
+                )
+            except AppLifecycleError as exc:
+                # Already deregistered; log but don't fail the disable (it IS disabled).
+                logger.warning("app %s onDisable hook failed: %s", name, exc)
+        meta.enabled = False
+        meta.updatedAt = _now_iso()
+        _write_installed(name, meta)
+        _audit("disable", "ok", name, caller=caller)
+        return True
 
 
 def preview_uninstall(name: str) -> list:

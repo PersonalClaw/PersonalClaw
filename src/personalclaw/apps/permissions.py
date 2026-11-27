@@ -366,6 +366,9 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     # The incident stop suspends every unattended run; resuming is the owner's decision. The
     # STOP (`POST /api/incident`) stays grantable — it is the one lever an app should have.
     "/api/incident/resume": "resuming unattended work after you stopped it",
+    # The incident history (`guardrails/incident.history`): why each stop started, who started
+    # and ended it, and your notes on it. Yours to read and annotate, never an app's.
+    "/api/incidents": "your incident history and your notes on it",
     # `trusted: true` lets a folder run and write its own project scripts.
     "/api/guardrails/project-trust": "which folders may run their own scripts",
     # A promotion lets an action type run without asking.
@@ -933,6 +936,12 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "switching an app on — its backend and MCP servers start, as you"
     ),
     "POST /api/apps/{name}/disable": OwnerOnly("switching your apps off"),
+    "POST /api/apps/{name}/capabilities/{capability}/on": OwnerOnly(
+        "switching one capability of an app on — it starts, as you"
+    ),
+    "POST /api/apps/{name}/capabilities/{capability}/off": OwnerOnly(
+        "switching one capability of your apps off"
+    ),
     "POST /api/apps/{name}/update": OwnerOnly("replacing an app's code"),
     "DELETE /api/apps/{name}": OwnerOnly("uninstalling your apps"),
     "POST /api/apps/{name}/token": OwnerOnly("minting an app's token — only you mint one"),

@@ -536,8 +536,8 @@ def _passes(home, monkeypatch, caplog, steps, *, named=True):
 
     act = {
         "add": lambda: pad.write_text(VET + PASSPORT, encoding="utf-8"),
-        "on": lambda: incident.activate("a test of the scratchpad intake"),
-        "off": incident.resume,
+        "on": lambda: incident.activate("a test of the scratchpad intake", by="owner"),
+        "off": lambda: incident.resume(by="owner"),
         "name": name_the_pad,
     }
     if named:
@@ -580,7 +580,7 @@ def _passes(home, monkeypatch, caplog, steps, *, named=True):
             with pytest.raises(asyncio.CancelledError):
                 asyncio.run(orch._file_watch_poll_loop())
     finally:
-        incident.resume()
+        incident.resume(by="owner")
     failed = [r.getMessage() for r in caplog.records if r.name == "personalclaw.gateway"]
     assert failed == [], "a pass failed and the loop went on"
     assert pads <= {str(pad)}, f"proposed from a pad this home does not name: {pads}"

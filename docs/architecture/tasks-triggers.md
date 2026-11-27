@@ -740,7 +740,9 @@ agent could name a process of this one. A backup carries them. Named
 workspaces (`workflows/workspaces`), the working folders runs share, stay on
 each machine by the same rule, and so does a chat turn kept waiting on an
 approval through a restart (its record in `chat_parked`): it is asked again,
-and its call runs, only on the machine whose turn asked.
+and its call runs, only on the machine whose turn asked. So does the incident
+history (`incidents.jsonl`): an incident is this machine's stop, and another
+machine's history merged in would say this one stopped work it never ran.
 
 **A replace restore holds what was in flight.** A replace restore brings the
 records back with the whole home, and a snapshot is a moment in the past: a run

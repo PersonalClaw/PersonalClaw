@@ -207,8 +207,10 @@ def start_job(
 
 def _desired_app_crons() -> dict[str, dict]:
     """The app triggers that SHOULD exist: for every enabled app, one entry per scheduled job
-    (:func:`schedules`). Keyed by trigger id ``app:<app>:<cron>`` → the params to register."""
+    (:func:`schedules`) whose capability, when it names one, is switched on. Keyed by trigger
+    id ``app:<app>:<cron>`` → the params to register."""
     from personalclaw.apps.app_manager import _manifest_of
+    from personalclaw.apps.capability_switches import is_on
     from personalclaw.apps.manager import _read_installed, apps_dir
 
     root = apps_dir()
@@ -228,6 +230,9 @@ def _desired_app_crons() -> dict[str, dict]:
             # The `cron` permission, an agent tier, a name to key the trigger by and a cadence to
             # fire on — `schedules` is the same predicate install consent discloses.
             if not schedules(manifest, cron):
+                continue
+            # A job of one capability runs only while that capability is switched on (#3843).
+            if cron.capability and not is_on(meta, cron.capability):
                 continue
             job_name = job_id(meta.name, cron.name)
             desired[job_name] = {

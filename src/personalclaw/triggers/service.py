@@ -930,6 +930,7 @@ async def admit_fire(
                 base_dir=base_dir,
                 name=trigger.name,
                 source=source or run_source.fired(trigger),
+                kind=trigger.kind,
             )
         return Admission(decision=decision, row=row)
     # Persist the granted claim so the NEXT decision (and any other process — the MCP tools and the
@@ -1003,10 +1004,21 @@ def _run_store(base_dir: Any) -> Any:
 
 
 async def persist_suppression(
-    row: dict[str, Any], *, now: float, base_dir: Any = None, name: str = "", source: str
+    row: dict[str, Any],
+    *,
+    now: float,
+    base_dir: Any = None,
+    name: str = "",
+    source: str,
+    kind: str = "",
 ) -> None:
     """Write a SUPPRESSED fire's typed row to the run store, saying what started
-    the fire it held (*source*, `triggers.run_source`).
+    the fire it held (*source*, `triggers.run_source`), under a run id of its own
+    (`ids.new_id("run")`).
+
+    A fire the incident switch refused is also counted in the incident, by the trigger's *kind*:
+    a clock's is a run skipped, any other kind's an event dropped (`incident.note_suppressed`),
+    named by its trigger, which is what the owner runs again.
 
     Called by `admit_fire` for every gate refusal, and by the event router for the one refusal it
     makes before admission (the cross-trigger storm guard) — so both rows land in the same ledger in
@@ -1045,16 +1057,18 @@ async def persist_suppression(
     `base_dir` is the tick's, threaded through so the row lands beside the `triggers.json` whose
     fire it describes — see `_run_store` for the leak that closed.
     """
+    from personalclaw.ids import new_id
+
+    outcome = str(row.get("outcome") or "")
+    trigger_id = str(row.get("trigger_id") or "")
+    if not trigger_id or outcome not in RECORDED_SUPPRESSIONS:
+        return
     try:
         from personalclaw.schedule_history import ScheduleRun
 
-        outcome = str(row.get("outcome") or "")
-        trigger_id = str(row.get("trigger_id") or "")
-        if not trigger_id or outcome not in RECORDED_SUPPRESSIONS:
-            return
         await _run_store(base_dir).append(
             ScheduleRun(
-                run_id=f"skip-{int(now * 1000)}",
+                run_id=new_id("run"),
                 job_id=trigger_id,
                 job_name=name,
                 trigger=outcome,
@@ -1067,6 +1081,12 @@ async def persist_suppression(
         )
     except Exception:  # noqa: BLE001 - see the docstring
         logger.debug("could not persist the suppression row for %s", row.get("trigger_id"))
+    if row.get("gate") == "incident":
+        from personalclaw.guardrails.incident import note_suppressed
+        from personalclaw.workref import work_ref
+
+        counter = "runs_skipped" if kind == "clock" else "events_dropped"
+        note_suppressed(counter, work_ref("trigger", trigger_id))
 
 
 async def record_dismissal(

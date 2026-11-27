@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any
 from personalclaw import lasting_work, session_keys
 from personalclaw.security import redact_for_display, redact_for_model
 from personalclaw.sel import sel
-from personalclaw.subagent_admission import admission
+from personalclaw.subagent_admission import admission, note_refused
 from personalclaw.subagent_persistence import (
     ASKING,
     QUEUED,
@@ -303,6 +303,7 @@ def _back_in(
             info.cwd, info.agent = cwd, agent
             manager._enter(info)
             return "", False
+        note_refused(why, info.id)
     info.done = True
     info.error = f"The gateway restarted before it started, and it cannot start now: {why}"
     manager._agents[info.id] = info  # its status reads how it ended, by the id its chat was given

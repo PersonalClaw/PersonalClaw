@@ -290,7 +290,7 @@ async def test_her_yes_in_incident_mode_runs_as_attended_work(home: Any, monkeyp
     from personalclaw.guardrails import incident
 
     await _a_digest(home, monkeypatch)
-    incident.activate("a drill")
+    incident.activate("a drill", by="owner")
 
     body = await _tap("3 yes")
 
@@ -346,7 +346,7 @@ async def test_the_digest_on_its_own_runs_nothing_under_an_ask_ceiling(ceiling: 
 async def test_the_digest_on_its_own_runs_nothing_in_incident_mode() -> None:
     from personalclaw.guardrails import incident
 
-    incident.activate("a drill")
+    incident.activate("a drill", by="owner")
     dispatched, result = await _on_its_own(*_one_trivial_archive())
     assert dispatched == []
     assert [d.reason for d in result.deferred] == ["incident_active"]

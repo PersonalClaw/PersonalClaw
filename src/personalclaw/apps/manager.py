@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import stat
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -22,7 +23,7 @@ from typing import Any
 from personalclaw.apps.manifest import KEBAB_RE, AppManifest
 from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.config import loader as config_loader
-from personalclaw.safety_flags import strict_bool
+from personalclaw.safety_flags import BOOL_FALSE_WORDS, BOOL_TRUE_WORDS, strict_bool
 
 
 def config_dir() -> Path:
@@ -279,6 +280,11 @@ class InstalledApp:
     #: Each capability an update renamed, ``{old: {"to": new, "in": version}}``: moved once. While
     #: a mover has failed it, the move also lists those movers' names under ``pending``.
     capabilityMoves: dict[str, dict[str, Any]] = field(default_factory=dict)  # noqa: N815
+    #: Each capability's own switch, ``{id: {"on": true|false}}`` (#3843): the owner's, written at
+    #: install from each provider's ``startsOn`` and kept by every update
+    #: (``apps.capability_switches``). ``None`` in a record written before the switches, whose app
+    #: runs every capability it declares; once present, a capability it does not switch on is off.
+    capabilities: dict[str, dict[str, bool]] | None = None
     schemaVersion: int = 2  # noqa: N815  — schema version for future migrations
 
     def validate_fields(self) -> list[str]:
@@ -296,7 +302,13 @@ class InstalledApp:
         return errors
 
     def to_dict(self) -> dict[str, Any]:
-        return {k: v for k, v in asdict(self).items() if v or isinstance(v, (bool, int))}
+        # The switches are written whenever the record has them, empty included: dropping an
+        # empty map would make the next read a record from before the switches, which runs all.
+        return {
+            k: v
+            for k, v in asdict(self).items()
+            if v or isinstance(v, (bool, int)) or (k == "capabilities" and v is not None)
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "InstalledApp":
@@ -318,6 +330,9 @@ class InstalledApp:
             tier=str(data.get("tier", "")),
             retiredCapabilities=_capability_marks(data.get("retiredCapabilities")),
             capabilityMoves=_capability_marks(data.get("capabilityMoves")),
+            capabilities=(
+                _capability_switches(data["capabilities"]) if "capabilities" in data else None
+            ),
             schemaVersion=int(data.get("schemaVersion", 1)),
         )
         errors = inst.validate_fields()
@@ -352,6 +367,30 @@ def _capability_marks(raw: Any) -> dict[str, dict[str, Any]]:
     }
 
 
+def _capability_switches(raw: Any) -> dict[str, dict[str, bool]]:
+    """An installed record's capability switches that can be read: each mark a ``{"on": …}``
+    whose value is a yes or a no. A mark that cannot be read is left out, so its capability has
+    no switch and stays off (``capability_switches.is_on``), as does every capability of a map
+    that is no map at all: a capability runs code, as the app's own ``enabled`` is read. Only a
+    record with no switches runs every capability."""
+    if not isinstance(raw, dict):
+        logger.warning(
+            "capability switches: %r is not a map of switches — every one reads off", raw
+        )
+        return {}
+    out: dict[str, dict[str, bool]] = {}
+    for cid, mark in raw.items():
+        value = mark.get("on") if isinstance(mark, dict) else None
+        word = value.strip().lower() if isinstance(value, str) else None
+        if isinstance(value, bool):
+            out[str(cid)] = {"on": value}
+        elif word in BOOL_TRUE_WORDS or word in BOOL_FALSE_WORDS:
+            out[str(cid)] = {"on": word in BOOL_TRUE_WORDS}
+        else:
+            logger.warning("capability %s switch: %r cannot be read — it reads off", cid, mark)
+    return out
+
+
 def _mark_value(value: Any) -> Any:
     if isinstance(value, (bool, str)):
         return value
@@ -362,6 +401,19 @@ def _mark_value(value: Any) -> Any:
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+_record_locks: dict[str, threading.RLock] = {}
+_record_locks_guard = threading.Lock()
+
+
+def record_lock(name: str) -> threading.RLock:
+    """The lock every read-modify-write of *name*'s installed record holds: install, enable,
+    disable, update, a capability's switch, the version sync and the startup repairs. Each
+    reads the record after taking it, so none writes back a field another changed meanwhile.
+    Reentrant, since an enable or an update reads and writes the record more than once."""
+    with _record_locks_guard:
+        return _record_locks.setdefault(name, threading.RLock())
 
 
 def _read_installed(name: str) -> InstalledApp | None:
@@ -415,9 +467,11 @@ def list_apps() -> list[dict[str, Any]]:
                     and manifest.version
                     and manifest.version != meta.version
                 ):
-                    meta.version = manifest.version
-                    meta.updatedAt = _now_iso()
-                    _write_installed(entry.name, meta)
+                    with record_lock(entry.name):
+                        meta = _read_installed(entry.name) or meta
+                        meta.version = manifest.version
+                        meta.updatedAt = _now_iso()
+                        _write_installed(entry.name, meta)
             except Exception:
                 pass
         result.append({**meta.to_dict(), "manifest": manifest_data})

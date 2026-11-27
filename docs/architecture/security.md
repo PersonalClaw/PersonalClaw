@@ -1267,6 +1267,52 @@ the ceiling did not bound.
   `$HOME`, owned by another uid and mode `0444` — which is what
   `PERSONALCLAW_CEILING_FILE` is for.
 
+## Incident mode and its history (`guardrails/incident.py`)
+
+Incident mode stops all unattended work at once, at each execution seam (the module docstring says
+what becomes of the work each seam skips). Interactive chat is untouched.
+
+- **A reason from a person; an app's stop always engages.** The owner's `POST /api/incident
+  {reason}` and `personalclaw incident on --reason` need a reason of 1 to 200 characters. Without
+  one the route answers `400 incident_reason_required` ("Stopping unattended work needs a reason;
+  nothing was changed.") and the command line exits 1. An app's call always stops unattended work,
+  since a safety stop must not fail on a formality: an empty reason is recorded as "(no reason
+  given)", and one over 200 characters is cut to 200 ending in "...". While it is active,
+  `incident.json` records who
+  started it: `owner` (the dashboard), `cli`, or `app` with the app's name, from its token. A start
+  while one is active keeps the first one, and only the security log hears the second reason.
+- **One line per incident.** Resume (`POST /api/incident/resume {confirm: true}`,
+  `personalclaw incident off`) appends the incident to `incidents.jsonl` (durability entry
+  `incident_history`): `{type: "incident", id: "inc_…", started_at, ended_at, reason,
+  activated_by, app, resumed_by, suppressed}`, then switches off. It answers the line and whether
+  it was written (`recorded`). A line that cannot be written never stops Resume: the owner's
+  decision is honoured, the failure is logged, and the Doctor's `incident_history` row fails until a
+  line is written again.
+- **What it held back is counted.** While it is on, each seam that loses work adds to the
+  incident's `suppressed` in `incident.json` (`incident.note_suppressed`, under the file's lock, and
+  only into the incident it saw start): `runs_skipped` (a scheduled automation's fire refused, ref
+  `trigger:<trigger id>`; its refused row in the run history has a `run_…` id of its own),
+  `events_dropped` (any other automation's fire refused, the same ref), `hooks_dropped` (a hook's action skipped, ref `trigger:lifecycle:<hook id>`),
+  `loop_cycles_skipped` (a loop whose next cycle came due, once per incident, ref `loop:<id>`) and
+  `spawns_refused` (a helper's start refused, ref `subagent:<id>`, the id its caller was given).
+  Each is `{count, refs}`: the first 50 references, each named once, while `count` keeps counting.
+  `GET /api/incident` serves it while it is on, and its line keeps it. Work that catches up after
+  Resume is not counted: an idle automation held due, a running loop or workflow run held where it
+  is, file and page watches, Inbox sorting, memory consolidation and background compression. A count
+  never raises and never starts an incident.
+- **In Settings › Guardrails.** Turning the switch on asks "Why are you stopping unattended work?"
+  and starts it only with an answer (the overview card's switch asks the same, through the same
+  writer). Turning it off first shows what was held back and a "What happened?" field, and resumes
+  only on "Resume unattended work"; "Keep it on" leaves it as it was. Once resumed, each dropped hook
+  fire can be run again by its own test run and each dropped event by its automation's own run by
+  hand, neither with the event that was dropped, and a Resume whose line was not written says so.
+  "Past incidents" lists the history with its counts and newest note, and adds a note to any of them.
+- **Notes.** `POST /api/incidents/{id}/note {note}` appends a note line (1 to 4,000 characters,
+  kept as data and never handed to an agent), and `GET /api/incidents` lists the incidents newest
+  first, 20 a page, each with its newest note. Both are the owner's alone (`OWNER_ONLY_API_PATHS`);
+  the stop itself stays one an app may be granted. Only `guardrails/incident.py` reads or writes the
+  history, which is trimmed by time (`bounded_log.trim_jsonl`) at twice 1,000 lines.
+
 ## Which approvals ask twice (`approval_confirms.py`)
 
 Most approvals decide on the first Allow or ⌘Enter. A call asks a second confirmation before it

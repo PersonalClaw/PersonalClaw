@@ -15,6 +15,7 @@ under its own name: the gateway refuses one naming another before these handlers
 (``apps/permissions.ROUTE_AUTHZ``), and the list answers an app with its own providers only.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -341,16 +342,18 @@ async def apply_saved_settings(name: str, capability: str | None = None) -> None
     Each capability whose enable FAILED is retried too: its settings are what failed it (one
     naming a credential another owner holds, or leaving empty an account field the capability
     requires, say), and a fix that waits for a restart reads as a fix that did not work. Nothing
-    else is switched on here. A provider switched off is its app disabled, and a disabled app is
-    not retried: its change is saved, and loads when the app is switched on.
+    else is switched on here: a capability switched off (``capability_switches``) is not
+    retried, and neither is a disabled app: its change is saved, and loads when it is switched
+    on.
     Neither is an app this core cannot host (one that needs a newer core, or, in the desktop app,
     one that runs a Python child the app cannot start), which startup lists off with that reason
     and leaves enabled (``app_runtime._refuse``): the core refused it, not its settings, and
     enabling it is ``app_manager.enable``'s decision, which asks the same questions first.
     """
     from personalclaw import python_children
+    from personalclaw.apps.capability_switches import is_on
+    from personalclaw.apps.manager import _read_installed
     from personalclaw.apps.permissions import app_lifecycle_denial
-    from personalclaw.channel_transports import settled
 
     registry = get_provider_registry()
     one = (capability,) if capability else ()
@@ -363,6 +366,9 @@ async def apply_saved_settings(name: str, capability: str | None = None) -> None
     # Each that failed, a capability whose required account field was empty among them (#3842):
     # this save may be what it waited for.
     failed = [rec for rec in records if not rec.enabled and rec.error]
+    if failed:
+        meta = await asyncio.to_thread(_read_installed, name)
+        failed = [rec for rec in failed if is_on(meta, rec.capability)]
     if (
         failed
         and not app_lifecycle_denial(name)
@@ -371,6 +377,17 @@ async def apply_saved_settings(name: str, capability: str | None = None) -> None
     ):
         for rec in failed:
             registry.enable(name, rec.capability or None)
+    await settle_provider_change()
+
+
+async def settle_provider_change() -> None:
+    """What follows a change to which of an app's providers are built (a save rebuilt them, or a
+    capability was switched on or off), before the route that made it answers: a tool provider's
+    names are read again, a channel's receivers are reconciled to the transport registry, and the
+    typed media registries drop their transient adapters, so the answer the caller renders
+    already reflects the change."""
+    from personalclaw.channel_transports import settled
+
     # A rebuilt tool provider offers what its new settings make it offer (a different endpoint
     # answers a different tool list), so its names are read again before this answers.
     await admit_tool_names()
@@ -382,7 +399,7 @@ async def apply_saved_settings(name: str, capability: str | None = None) -> None
 
         _refresh_media_registries()
     except Exception:  # noqa: BLE001 — refresh is best-effort, never block a save
-        logger.debug("media registry refresh after a settings save failed", exc_info=True)
+        logger.debug("media registry refresh after a provider change failed", exc_info=True)
 
 
 async def apply_changed_credentials() -> None:

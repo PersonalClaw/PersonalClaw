@@ -739,7 +739,11 @@ lifecycle transition (install/enable/disable/uninstall). A job is registered
 only for an app that holds the `cron` permission and an agent tier
 (`app_crons.schedules`, the predicate install consent reads), named by its app
 (`<display name>: <job>`), with delivery `none`: it has no conversation to post
-to, and nothing reads a job's `silent` or `persistent_session` field.
+to, and nothing reads a job's `silent` or `persistent_session` field. A job may name the
+capability it belongs to (`capability`, one of the app's ids, refused at install otherwise):
+it is registered only while that capability is switched on, and a switch reconciles the jobs
+at once. A job that names none is the app's own, registered while the app is on. Install
+consent counts a job of a capability that starts off among those the install does not turn on.
 
 Each fire runs the job's agent at the agent tier the app holds then, as the
 app's work (`app_crons.start_job`): `text` hands its model the job's message
@@ -1000,6 +1004,39 @@ as before; a save that fills it builds it. A secret counts as set when the store
 no value is read to tell. A `multiInstance` capability's list is checked against its instance
 schema but not enforced yet: each instance runs under its own account once each account runs its
 own (#3843), and an app should not count on it before then.
+
+**Each capability has its own switch** (#3843, `apps/capability_switches.py`). The app's
+`enabled` is the master switch: an app that is off runs nothing, and an app that is on runs the
+capabilities switched on in its installed record, `capabilities: {"<id>": {"on": true|false}}`.
+Install switches each one as its provider's `startsOn` says. Until the app panel can switch a
+capability on, one whose manifest says nothing starts on, as every capability did before the
+switches; a capability that listens, polls or acts on its own clock should declare
+`"startsOn": false`. After that the switch is the owner's: an update keeps it, a capability it
+renames keeps the old id's, one it drops leaves the record, and one it adds starts off. A record
+written before the switches has none, and its app runs every capability until the first switch or
+update writes them down. A record whose switches are there but can't be read (not a map, or a mark
+that is no yes or no) runs none of those capabilities, and each says the app's switches couldn't be
+read; switching one writes only that one, so the rest keep saying so. A capability that is off is not built, so it reads no settings and
+starts nothing; `POST /api/apps/{name}/capabilities/{id}/on` and `…/off` (owner only) write the
+switch, build or tear down that capability alone while the app runs, and answer its status.
+Tearing one down takes back what the app's code registered while its factory ran (an agent CLI
+app's `acp:<cli>` runtime, a catalog), so off means deregistered even for a factory that builds
+no instance, and a build that fails part way leaves nothing of its own registered
+(`app_code.building` and `app_code.release_capability`). What the app's modules register as they
+load is the app's, whichever capability's build first imported them: it stays while the app is
+on and leaves with the app. A native app's capabilities are always on. A settings save retries a capability that failed only
+while it is switched on.
+
+What a capability is doing is read in one place, `capability_status`: its switch (`on`) beside
+its effective state, `off` (it or its app is switched off), `needs_setup` (an account field it
+requires is empty), `starting`, `running`, `failed` (with the sentence its build failed with) or
+`unavailable` (the availability check's reason, as last measured: a status read starts no check).
+Each `/api/apps` row's `capabilities` carry `on`, `status` and `reason`, and the row's
+`capabilitySummary` is the app's one line about them ("2 of 3 capabilities running · Mail in your
+Inbox failed: the token was refused"); the switch routes answer with the same reading, and so
+does the Doctor's `apps.capabilities` check (`resilience/app_probes.py`): a line per enabled app,
+failing on a capability whose build failed or that cannot run here, or on switches that couldn't
+be read, while a capability switched off reads as off.
 
 A capability may declare its own check of the settings a form saves for it (`settingsCheck`,
 `module.path:function`, resolved as `implementation` is; core feature `settings-check`). Every

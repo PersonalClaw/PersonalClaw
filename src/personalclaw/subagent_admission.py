@@ -148,6 +148,22 @@ def check_memory_available(min_gb: float = 4.0, path: str = "/proc/meminfo") -> 
     return (True, -1.0)
 
 
+#: Why :func:`admission` refuses a spawn while incident mode is on.
+INCIDENT_REFUSAL = "spawn refused: incident mode active (resume with `personalclaw incident off`)"
+
+
+def note_refused(why: str, agent_id: str) -> None:
+    """Count the spawn *agent_id* in the incident when *why* is the incident's refusal
+    (:data:`INCIDENT_REFUSAL`): a helper start it refused never runs later. The id is the one
+    the work that asked for it was given."""
+    if why != INCIDENT_REFUSAL:
+        return
+    from personalclaw.guardrails.incident import note_suppressed
+    from personalclaw.workref import work_ref
+
+    note_suppressed("spawns_refused", work_ref("subagent", agent_id))
+
+
 def admission(
     task: str,
     parent_session_key: str,
@@ -200,11 +216,7 @@ def admission(
                 outcome="refused_incident",
                 metadata={"task": task[:120]},
             )
-            return (
-                "spawn refused: incident mode active (resume with `personalclaw incident off`)",
-                "",
-                agent,
-            )
+            return (INCIDENT_REFUSAL, "", agent)
     except Exception:
         logger.debug("subagent spawn incident check failed (fail-open)", exc_info=True)
 

@@ -255,7 +255,7 @@ async def test_a_view_does_not_refresh_during_an_incident(tmp_path, monkeypatch,
 
     async with signed_in_gateway(tmp_path, monkeypatch) as gw:
         _view(gw.home)
-        incident.activate("checking a leak")
+        incident.activate("checking a leak", by="owner")
 
         answer = await _render(gw)
 

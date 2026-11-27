@@ -1487,6 +1487,13 @@ async def run_script_hook(
 
     if incident_active():
         _record("skipped_incident")
+        if not test:
+            # Dropped for good, so the incident counts it, by the hook as the Triggers page names
+            # it: a hook keeps no row of each run, only its last.
+            from personalclaw.guardrails.incident import note_suppressed
+            from personalclaw.workref import work_ref
+
+            note_suppressed("hooks_dropped", work_ref("trigger", ctx.trigger_id))
         return ScriptHookResult(
             hook_id=hook.id,
             hook_name=hook.name,

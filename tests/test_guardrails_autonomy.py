@@ -370,11 +370,11 @@ class TestIncidentClamp:
         au.grant_rung(KEY, au.RUNG_AUTONOMOUS)
         assert au.resolve_rung(KEY) == au.RUNG_AUTONOMOUS
 
-        incident.activate("drive test")
+        incident.activate("drive test", by="owner")
         assert au.resolve_rung(KEY) == au.RUNG_ONE_TAP
         # The GRANT is untouched — an incident suspends, it does not demote.
         assert au.granted_rung(KEY) == au.RUNG_AUTONOMOUS
-        incident.resume()
+        incident.resume(by="owner")
         assert au.resolve_rung(KEY) == au.RUNG_AUTONOMOUS
 
     def test_the_clamp_outranks_a_higher_floor(self):
@@ -384,14 +384,14 @@ class TestIncidentClamp:
 
         _register(floor=au.RUNG_AUTO_WITH_UNDO, ceiling=au.RUNG_AUTONOMOUS)
         assert au.resolve_rung(KEY) == au.RUNG_AUTO_WITH_UNDO
-        incident.activate("drive test")
+        incident.activate("drive test", by="owner")
         assert au.resolve_rung(KEY) == au.RUNG_ONE_TAP
 
     def test_one_tap_and_below_are_untouched(self):
         from personalclaw.guardrails import incident
 
         _register(floor=au.RUNG_ONE_TAP, ceiling=au.RUNG_ONE_TAP)
-        incident.activate("drive test")
+        incident.activate("drive test", by="owner")
         assert au.resolve_rung(KEY) == au.RUNG_ONE_TAP
 
     def test_no_promotion_is_proposed_during_an_incident(self):
@@ -399,7 +399,7 @@ class TestIncidentClamp:
 
         _register(ceiling=au.RUNG_AUTO_WITH_UNDO)
         _earn_eligibility()
-        incident.activate("drive test")
+        incident.activate("drive test", by="owner")
         elig = au.promotion_eligibility(KEY)
         assert not elig.eligible
         assert "incident" in elig.reason

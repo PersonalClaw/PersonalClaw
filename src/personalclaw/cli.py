@@ -1530,7 +1530,9 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     )
     incident_sub = incident_parser.add_subparsers(dest="incident_action")
     inc_on = incident_sub.add_parser("on", help="Activate incident mode (suspend automation)")
-    inc_on.add_argument("--reason", default="", help="Why the incident was declared")
+    inc_on.add_argument(
+        "--reason", required=True, help="Why the incident was declared (1 to 200 characters)"
+    )
     incident_sub.add_parser("off", help="Resume — re-enable unattended work")
     inc_status = incident_sub.add_parser("status", help="Show incident state")
     _add_json(inc_status, "whether incident mode is on, since when and why")
@@ -2658,15 +2660,27 @@ def _incident_cmd(args) -> None:  # noqa: ANN001
 
     action = getattr(args, "incident_action", None)
     if action == "on":
-        st = _inc.activate(getattr(args, "reason", "") or "")
+        try:
+            st = _inc.activate(getattr(args, "reason", "") or "", by="cli")
+        except _inc.IncidentReasonRequired as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
         print(
             "⛔ Incident mode ON — unattended work suspended.\n   reason: "
             f"{terminal_text(str(st.reason or '(none)'))}"
         )
         print("   Resume with: personalclaw incident off")
     elif action == "off":
-        _inc.resume()
+        done = _inc.resume(by="cli")
         print("✓ Incident mode OFF — unattended work re-enabled.")
+        if done.incident is not None:
+            line = done.incident
+            print(
+                f"   recorded: {line['id']} · {line['started_at']} to {line['ended_at']}\n"
+                f"   reason: {terminal_text(str(line['reason']))}"
+            )
+        if not done.recorded:
+            print(f"   {terminal_text(done.why)}", file=sys.stderr)
     else:  # status (default)
         st = _inc.get_incident()
         if getattr(args, "as_json", False):

@@ -72,7 +72,7 @@ class _Subagents:
     def spawn(self, **kw: Any) -> _Info:
         if self.switch_on_at_spawn:
             self.switch_on_at_spawn = False
-            incident.activate("rollback in progress")
+            incident.activate("rollback in progress", by="owner")
         if incident.incident_active():
             self.refused += 1
             return _Info(
@@ -165,7 +165,7 @@ def test_a_running_stage_is_stopped_and_the_run_carries_on_once_the_switch_is_of
         await controller.start()
         await _until(lambda: fake.spawned == ["sub1"] and _running_stages(run.id))
 
-        incident.activate("rollback in progress")
+        incident.activate("rollback in progress", by="owner")
         # The stage in flight is STOPPED, not left to work through the incident, and goes back in
         # the queue; the run is held, not failed and not paused.
         await _until(lambda: fake.cancelled == [("sub1", "Stopped: incident mode is on")])
@@ -180,7 +180,7 @@ def test_a_running_stage_is_stopped_and_the_run_carries_on_once_the_switch_is_of
         assert fake.spawned == ["sub1"] and fake.refused == 0, (fake.spawned, fake.refused)
 
         fake.hold = False
-        incident.resume()
+        incident.resume(by="owner")
         # The SAME stage runs again, by itself.
         await _until(lambda: len(fake.spawned) >= 2)
         assert "You are verifying" not in str(fake.infos["sub2"].result)
@@ -196,7 +196,7 @@ def test_a_stage_the_run_reaches_while_the_switch_is_on_waits_for_it_instead_of_
     run, spec = _new_run()
     fake = _Subagents()
     fake.hold = False
-    incident.activate("rollback in progress")
+    incident.activate("rollback in progress", by="owner")
     controller = live_runs.started(
         RunController(run, spec, services=EngineServices(subagents=fake))
     )
@@ -208,7 +208,7 @@ def test_a_stage_the_run_reaches_while_the_switch_is_on_waits_for_it_instead_of_
         assert store.get(run.id).status == RunStatus.RUNNING
         assert _failed(run.id) == []
 
-        incident.resume()
+        incident.resume(by="owner")
         await _until(lambda: len(fake.spawned) >= 1)
         status = await asyncio.wait_for(controller.run_to_completion(), timeout=20.0)
         assert status in (RunStatus.COMPLETE, RunStatus.ESCALATED), status
@@ -237,7 +237,7 @@ def test_a_spawn_the_switch_refuses_as_it_arrives_is_held_and_not_counted_as_an_
             p: i.attempt for p, i in store.read_state(run.id).items()
         }
 
-        incident.resume()
+        incident.resume(by="owner")
         await _until(lambda: len(fake.spawned) >= 1)
         status = await asyncio.wait_for(controller.run_to_completion(), timeout=20.0)
         assert status in (RunStatus.COMPLETE, RunStatus.ESCALATED), status
@@ -266,7 +266,7 @@ def test_the_run_list_says_a_running_run_is_held_while_the_switch_is_on() -> Non
         )
         return {r["id"]: r["held"] for r in json.loads(resp.body.decode())["runs"]}
 
-    incident.activate("rollback in progress")
+    incident.activate("rollback in progress", by="owner")
     assert _listed() == {running.id: INCIDENT_HOLD, done.id: ""}
-    incident.resume()
+    incident.resume(by="owner")
     assert _listed() == {running.id: "", done.id: ""}

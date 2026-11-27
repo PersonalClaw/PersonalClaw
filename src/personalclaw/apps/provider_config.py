@@ -229,6 +229,12 @@ class ProviderConfig:
     #: provider will read, every secret masked, and answers why they cannot be saved, or ``""``
     #: (``apps.settings_check``). Empty for a provider whose settings only its schema checks.
     settingsCheck: str = ""  # noqa: N815
+    #: Whether the capability is on when the app is installed (#3843). After that its switch is
+    #: the owner's: an update never changes it, and a capability an update adds starts off. A
+    #: capability that listens, polls or acts on its own clock should declare ``false``. Until the
+    #: app panel can switch a capability on, one whose manifest says nothing starts on, as every
+    #: capability did before the switches.
+    startsOn: bool = True  # noqa: N815
     not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
     not_lists: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
@@ -282,6 +288,8 @@ class ProviderConfig:
             d["settingsSchema"] = self.settingsSchema
         if self.settingsCheck:
             d["settingsCheck"] = self.settingsCheck
+        if not self.startsOn:
+            d["startsOn"] = False
         if self.capabilities:
             d["capabilities"] = self.capabilities
         if self.entity:
@@ -315,6 +323,7 @@ class ProviderConfig:
             multiInstance=strict_bool(data.get("multiInstance"), field="multiInstance"),
             settingsSchema=dict(data.get("settingsSchema", {})),  # noqa: N815
             settingsCheck=str(data.get("settingsCheck", "") or ""),  # noqa: N815
+            startsOn=strict_bool(data.get("startsOn"), field="startsOn", absent=True),
             capabilities=[str(c) for c in data.get("capabilities", [])],
             entity=str(data.get("entity", "")),
             providerType=str(data.get("providerType", "")),  # noqa: N815
@@ -325,7 +334,7 @@ class ProviderConfig:
             ),
             execution=str(data.get("execution", EXECUTION_IN_PROCESS) or EXECUTION_IN_PROCESS),
         )
-        provider.not_booleans = _not_booleans(data, "multiInstance")
+        provider.not_booleans = _not_booleans(data, "multiInstance", "startsOn")
         provider.not_lists = _not_lists(data, "renamedFrom", "requiresAccountFields")
         return provider
 

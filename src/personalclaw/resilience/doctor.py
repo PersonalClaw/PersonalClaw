@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from personalclaw.config import loader as config_loader
+from personalclaw.resilience.app_probes import app_probes
 from personalclaw.resilience.core_server import probe_core_server
 from personalclaw.resilience.store_files import store_file_probes
 from personalclaw.security import redact_or_withhold
@@ -81,8 +82,8 @@ class ProbeResult:
     (:mod:`personalclaw.resilience.fixes`) when one repairs this failure. ``remedy`` is the
     failure's other half when no fix does: one plain sentence saying there is no automatic fix
     and what to do instead. The Doctor page promises "a failed probe's Fix"; a failure that has
-    none must say so rather than leave the row a dead end. Both ``detail`` and ``remedy`` (and
-    string ``evidence`` values) are redacted before return.
+    none must say so rather than leave the row a dead end. ``detail``, ``remedy`` and every string
+    in ``evidence``, however deep, are redacted before return (``_safe_run``).
     """
 
     ok: bool
@@ -157,6 +158,20 @@ def _mask(text: str) -> str:
     return redact_or_withhold(str(text))
 
 
+def _mask_evidence(value: Any) -> Any:
+    """*value* with every string in it masked (:func:`_mask`), however deep in dicts and lists:
+    evidence carries text an app or a provider wrote (a capability's reason, an error), and the
+    Doctor's result reaches the page, the CLI and ``investigate``. Numbers, flags and ``None``
+    pass as they are."""
+    if isinstance(value, str):
+        return _mask(value)
+    if isinstance(value, dict):
+        return {key: _mask_evidence(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_mask_evidence(item) for item in value]
+    return value
+
+
 #: The remedy for a check that could not run at all: its own exception, not a finding.
 _CHECK_CRASHED_REMEDY = (
     "No automatic fix — the check itself failed to run, which is a defect in PersonalClaw rather "
@@ -188,7 +203,7 @@ async def _safe_run(probe: Probe, ctx: DoctorContext) -> ProbeResult:
     return ProbeResult(
         ok=res.ok,
         detail=_mask(res.detail),
-        evidence=res.evidence,
+        evidence=_mask_evidence(res.evidence),
         fix_id=res.fix_id,
         remedy=_mask(res.remedy) if res.remedy else "",
     )
@@ -754,89 +769,6 @@ async def _probe_local_models(ctx: DoctorContext) -> ProbeResult:
             "on none. Settings → Models & Providers → Providers says why: an instance that is not "
             "answering (start it, or check its address), or a runtime that is not installed."
             if bound_down and not phantom
-            else ""
-        ),
-    )
-
-
-async def _probe_apps(ctx: DoctorContext) -> ProbeResult:
-    """apps — per enabled backend app: subprocess alive (watchdog) + leftover
-    ``.{name}.rollback`` dirs from interrupted updates.
-
-    Read-only: consults the backend supervisor's live table (``get(name)`` returns
-    None for a dead entry) and globs the apps dir for rollback leftovers (does NOT
-    call ``recover_interrupted_updates`` — that mutates).
-
-    Scope note: installed-copy-vs-repo manifest drift has no stored hash to diff
-    — it waits for a manifest checksum; this
-    pack probes liveness + rollback leftovers, the real signals available today.
-    """
-    from personalclaw.apps.backend_runtime import get_backend_supervisor
-    from personalclaw.apps.manager import apps_dir, list_apps
-
-    def _read() -> dict[str, Any]:
-        sup = get_backend_supervisor()
-        backends: dict[str, Any] = {}
-        for app in list_apps():
-            if not app.get("enabled", False):
-                continue
-            manifest = app.get("manifest", {}) or {}
-            if not (manifest.get("backend", {}) or {}).get("entryPoint"):
-                continue
-            name = app.get("name", "")
-            rb = sup.get(name)
-            # How a backend that is down last ended, and the last lines it printed.
-            backends[name] = {
-                "alive": rb is not None,
-                "exit": None if rb is not None else sup.last_exit(name),
-            }
-        rollbacks: list[str] = []
-        ad = apps_dir()
-        if ad.exists():
-            for child in ad.iterdir():
-                if (
-                    child.is_dir()
-                    and child.name.startswith(".")
-                    and child.name.endswith(".rollback")
-                ):
-                    rollbacks.append(child.name)
-        return {"backends": backends, "rollback_leftovers": rollbacks}
-
-    ev = await asyncio.to_thread(_read)
-    dead = [n for n, v in ev["backends"].items() if not v["alive"]]
-    problems = []
-    if dead:
-        ended = [
-            f"{n} {x['ended']}" + (f": {x['cause']}" if x["cause"] else "")
-            for n in dead
-            if (x := ev["backends"][n]["exit"])
-        ]
-        problems.append(
-            f"{len(dead)} backend{'s' if len(dead) != 1 else ''} not running"
-            + (f" ({'; '.join(ended)})" if ended else "")
-        )
-    if ev["rollback_leftovers"]:
-        problems.append(
-            f"{len(ev['rollback_leftovers'])} interrupted "
-            f"update{'s' if len(ev['rollback_leftovers']) != 1 else ''}"
-        )
-    return ProbeResult(
-        ok=not problems,
-        detail=(
-            "; ".join(problems)
-            if problems
-            else f"{len(ev['backends'])} app backend{'s' if len(ev['backends']) != 1 else ''} ok"
-        ),
-        evidence=ev,
-        # An interrupted update's leftover is what the orphan prune reconciles (restore or drop,
-        # decided by the apps reconciler) — a working Fix for that half.
-        fix_id="serving-fs.orphan-prune" if ev["rollback_leftovers"] else None,
-        remedy=(
-            "No automatic fix for a backend that is down: the app watchdog already relaunches one "
-            "every 30 seconds, so a backend that stays down is failing to start — the app's panel "
-            "under Apps shows the last lines it printed, as does Settings → Health → Diagnostics → "
-            "Live logs. Disable the app under Settings → Apps & Packs → Apps to stop the retries."
-            if dead
             else ""
         ),
     )
@@ -2428,6 +2360,25 @@ async def _probe_resource_limits(_ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_incident_history(ctx: DoctorContext) -> ProbeResult:
+    """Whether the last incident's line reached its history (`guardrails/incident.py`). A Resume
+    whose line could not be written still resumed; this says so until a line is written again."""
+    from personalclaw.guardrails import incident
+
+    unwritten = (await asyncio.to_thread(incident.get_incident)).history_unwritten
+    if not unwritten:
+        return ProbeResult(ok=True, detail="Every incident so far is in its history.")
+    return ProbeResult(
+        ok=False,
+        detail=f"{unwritten} The incident was resumed anyway.",
+        evidence={"history_unwritten": unwritten},
+        remedy=(
+            "There is no automatic fix: check that the home folder can be written. The next "
+            "incident line written clears this."
+        ),
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -2511,15 +2462,8 @@ def _register_builtin_probes() -> None:
             "Local model providers + bindings",
         )
     )
-    register_probe(
-        Probe(
-            "apps.backends",
-            "apps",
-            Tier.CAPABILITY,
-            _probe_apps,
-            "App backends + interrupted updates",
-        )
-    )
+    for probe in app_probes():
+        register_probe(probe)
     register_probe(
         Probe(
             "serving-fs.dist",
@@ -2635,6 +2579,17 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_approval_mode,
             "Agents no chat started ask before they act",
+        )
+    )
+    # With the Security card's other checks: a card sits where its first check is registered, and
+    # this one, registered before Durability's, had moved the card from beside Sandbox to second.
+    register_probe(
+        Probe(
+            "incident_history",
+            "security",
+            Tier.CAPABILITY,
+            _probe_incident_history,
+            "Every incident is kept in its history",
         )
     )
     register_probe(

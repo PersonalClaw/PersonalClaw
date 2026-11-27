@@ -635,6 +635,8 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_get("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident", handlers.api_incident)
     app.router.add_post("/api/incident/resume", handlers.api_incident_resume)
+    app.router.add_get("/api/incidents", handlers.api_incidents)
+    app.router.add_post("/api/incidents/{id}/note", handlers.api_incident_note)
     app.router.add_get("/api/guardrails/project-trust", handlers.api_project_trust)
     app.router.add_post("/api/guardrails/project-trust", handlers.api_project_trust)
     # Settings → External Access. Read + client lifecycle only:

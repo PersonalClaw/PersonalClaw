@@ -707,7 +707,7 @@ def test_the_authority_sentence_says_when_an_incident_HOLDS_a_rung(_isolated_hom
     from personalclaw.guardrails.incident import activate, resume
 
     _install_app_action(floor=au.RUNG_AUTONOMOUS, ceiling=au.RUNG_AUTONOMOUS)
-    activate("testing")
+    activate("testing", by="owner")
     try:
         row = _row(_ladder(), APP_KEY)
         assert row["held_by_incident"] is True
@@ -715,7 +715,7 @@ def test_the_authority_sentence_says_when_an_incident_HOLDS_a_rung(_isolated_hom
         assert "incident" in row["authority"]
         assert _ladder()["incident_active"] is True
     finally:
-        resume()
+        resume(by="owner")
 
 
 def test_EVERY_authority_sentence_gives_the_rung_label_a_subject(_isolated_home):
@@ -764,11 +764,11 @@ def test_EVERY_authority_sentence_gives_the_rung_label_a_subject(_isolated_home)
 
     # 3. held by an incident
     _install_app_action(floor=au.RUNG_AUTONOMOUS, ceiling=au.RUNG_AUTONOMOUS)
-    activate("testing")
+    activate("testing", by="owner")
     try:
         seen.append(_row(_ladder(), APP_KEY)["authority"])
     finally:
-        resume()
+        resume(by="owner")
 
     # 4. moved by the posture of a run nobody watches: the action can be undone, so its
     #    unattended run keeps its undo, and the sentence names that rung too.

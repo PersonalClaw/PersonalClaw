@@ -69,6 +69,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/apps/{name}/agent-run/{run_id}` — poll a background agent task.
 - `GET /api/apps/{name}/capabilities/{capability}/config` — One capability's own settings, its credentials masked.
 - `PUT /api/apps/{name}/capabilities/{capability}/config` — Save one capability's own settings, and apply them to that capability alone.
+- `POST /api/apps/{name}/capabilities/{capability}/off` — Switch one capability of an app off: torn down now, the app's others left running.
+- `POST /api/apps/{name}/capabilities/{capability}/on` — Switch one capability of an app on: built now while the app runs.
 - `GET /api/apps/{name}/config` — an app's settings, with its credentials masked.
 - `PUT /api/apps/{name}/config` — save an app's settings, and apply them to its providers.
 - `POST /api/apps/{name}/disable` — _(no summary)_
@@ -380,6 +382,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/incident` — current state.
 - `POST /api/incident` — activate.
 - `POST /api/incident/resume` — turn incident mode OFF.
+- `GET /api/incidents` — every incident in the history, newest first, 20 a page, each with its
+- `POST /api/incidents/{id}/note` — the owner's note on a past incident: ``{note}``, 1 to 4,000
 - `POST /api/investigate` — _(no summary)_
 - `DELETE /api/knowledge/annotations/{id}` — drop one highlight.
 - `POST /api/knowledge/bulk` — apply one curation op to many items.

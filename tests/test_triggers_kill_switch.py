@@ -105,7 +105,7 @@ _NOON = datetime(2026, 1, 14, 12, 0)
 
 
 def test_an_incident_refuses_the_walk():
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON)))
     assert decision.allowed is False
     assert decision.gate == "incident"
@@ -115,14 +115,14 @@ def test_the_refusal_is_typed_REFUSED_not_a_skip():
     """A policy refusal, not a cadence skip. `skipped_gate` would file the kill switch alongside
     quiet hours in the runs inbox — a user filtering for "why did nothing run" needs to tell "the
     operator suspended everything" from "it was 3am"."""
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON)))
     assert decision.outcome == Outcome.REFUSED.value
 
 
 def test_the_reason_says_HOW_TO_RESUME():
     """An operator who finds a refused fire must not have to grep for the command."""
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON)))
     assert "incident mode" in decision.reason
     assert "personalclaw incident off" in decision.reason
@@ -135,9 +135,9 @@ def test_no_incident_passes_the_gate():
 
 def test_resuming_lets_fires_through_again():
     """A kill switch that could not be released would be a self-inflicted outage."""
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     assert asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON))).allowed is False
-    incident.resume()
+    incident.resume(by="owner")
     assert asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON))).allowed is True
 
 
@@ -147,7 +147,7 @@ def test_resuming_lets_fires_through_again():
 def test_a_due_clock_trigger_does_NOT_fire_during_an_incident(store, tmp_path):
     """🔴 THE DEFECT, pinned end to end. This exact assertion failed before the fix."""
     _due(store)
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     result = _tick(store, tmp_path)
     assert result.fires == []
 
@@ -155,9 +155,9 @@ def test_a_due_clock_trigger_does_NOT_fire_during_an_incident(store, tmp_path):
 def test_the_same_trigger_fires_once_the_incident_is_over(store, tmp_path):
     """The other half — proving the refusal is the switch and not a broken fixture."""
     _due(store)
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     assert _tick(store, tmp_path).fires == []
-    incident.resume()
+    incident.resume(by="owner")
     _due(store)
     assert [f.trigger.id for f in _tick(store, tmp_path).fires] == ["clock:nightly"]
 
@@ -166,7 +166,7 @@ def test_a_refused_fire_still_writes_a_LEDGER_ROW(store, tmp_path):
     """Zero silent drops. An operator must be able to see that the switch is what
     stopped the work — a suspended automation with no row is indistinguishable from a broken one."""
     _due(store)
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     result = _tick(store, tmp_path)
     row = next(r for r in result.ledger_rows if r["trigger_id"] == "clock:nightly")
     assert row["outcome"] == Outcome.REFUSED.value
@@ -178,7 +178,7 @@ def test_EVERY_due_trigger_is_refused_not_just_the_first(store, tmp_path):
     an operator would believe automation was suspended when it was not."""
     for i in range(3):
         _due(store, tid=f"clock:t{i}")
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     result = _tick(store, tmp_path)
     assert result.fires == []
     assert len(result.ledger_rows) == 3
@@ -200,7 +200,7 @@ def test_a_MANUAL_run_is_refused_during_an_incident(store, tmp_path):
     """🔴 THE SECOND DEFECT. `manual_gate_plan` listed `incident` under "gates enforced" while
     `run()` enforced nothing — measured: `ok: True` and the runner invoked."""
     _due(store, tid="clock:x")
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     calls = []
     result = T.run(store, trigger_id="clock:x", runner=lambda p: calls.append(p) or "LAUNCHED")
     assert result.ok is False
@@ -225,7 +225,7 @@ def test_a_DRY_RUN_still_reports_during_an_incident(store, tmp_path):
     happen is the opposite of running unattended work, and refusing it would remove the one way to
     inspect an automation while the system is suspended."""
     _due(store, tid="clock:x")
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     result = T.run(store, trigger_id="clock:x", dry_run=True)
     assert result.ok is True
     assert result.data["plan"]["executes"] is False
@@ -237,7 +237,7 @@ def test_the_plan_the_tool_REPORTS_matches_what_it_ENFORCES():
     exist (documented on `manual_refusal`), so this asserts the specific claim that was false."""
     plan = T.manual_gate_plan()
     assert "incident" in plan["enforced"]
-    incident.activate(reason="test")
+    incident.activate(reason="test", by="owner")
     assert T.manual_refusal() != "", "a gate reported as enforced must actually refuse"
 
 

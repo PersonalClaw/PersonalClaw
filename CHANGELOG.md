@@ -13,6 +13,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`personalclaw chat` opens on the folder, agent, project or named chat you give it: `--cwd DIR` (set before your first message; a folder the gateway refuses ends the command with its reason, and nothing is sent), `--agent NAME`, `--project` by its name or id, and `--session NAME` to go on with a chat.**
 - **A message you are typing survives a reload, and one sent while PersonalClaw is away goes once it is back. Each chat keeps its draft in this browser (its text, what you pasted, attached and mentioned) through a reload, a closed tab or a quit desktop app, and its row in the chat list says Draft. A message sent while the connection is down or PersonalClaw restarts waits above the composer as Waiting to send and goes once, as one bubble, when the chat is connected again; after a day it asks Send now or Remove. A Temporary or Incognito chat keeps no draft. Deleting a chat takes its draft and its waiting messages, so nothing is sent into it afterwards, and signing out takes them all.**
 - **A chat reply that says work happened which its own turn did not do now gets a short note after it. A reply saying a helper completed its work, from a turn that ran no helper, or that a file is staged when the repository has not staged it, ends with one line naming what the answer says and what the turn's record or the repository shows; a reply whose claims match gets none. `personalclaw run` also prints the check-work offer for a turn that earns it.**
+- **Each capability of an app has its own switch and its own status. `POST /api/apps/{name}/capabilities/{id}/on` and `…/off` switch one capability without the others, a capability that is off is not built, and one that fails no longer stops the rest: `GET /api/apps` says which run, and why one does not, and the Doctor's `apps.capabilities` check names one that failed.**
+- **For apps, `personalclaw.sdk.manifest.ProviderConfig` has `startsOn` (default `true`): `"startsOn": false` installs that capability switched off. No shipped app needs a change.**
+- **For apps, `personalclaw.sdk.manifest.CronEntry` has `capability`: a scheduled job that names one of the app's capability ids runs only while that capability is switched on, and switching it off takes the job out at once. A job that names none is the app's own, as before. No shipped app needs a change.**
+- **Switching off an agent CLI app's capability withdraws its runtime: what a capability's code registers as it is built (an `acp:<cli>` agent runtime, a catalog) leaves when it is switched off or fails to build, and the app's other capabilities keep theirs. What the app's modules register as they load stays until the app is switched off. No shipped app needs a change.**
+- **Incident mode asks why when it starts and keeps a history of every incident, with your notes.**
+- **Incident mode counts what it skipped, dropped or refused, and Resume says so: scheduled runs skipped, event and hook fires dropped, loop cycles held and helper starts refused, each with the first 50 by name. Work that catches up after Resume is not counted.**
+- **In Settings › Guardrails, turning incident mode on asks why, and turning it off first shows what it held back and takes a note. Once it is off, each dropped hook or event fire can be run again, and Past incidents lists every incident with its reason, who started and ended it, its counts and its notes.**
 
 ### Changed
 
@@ -31,6 +38,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **In the desktop app, Settings › Updates shows the desktop app and its gateway in sections of their own, names the gateway the app uses and says what finishing an update does to it.**
 - **In the desktop app, the System status card's update row reads Update App, and a gateway built into the app no longer offers an Update of its own beside it.**
 - **In the desktop app, rolling the gateway back past the app's own version says the app stays on its version, newer than the gateway, before it rolls back.**
+- **Incident mode: a stop an app or alert sends now always engages; an over-long reason is shortened and a missing one recorded as "(no reason given)". Turning it on yourself still asks for a reason.**
+
+### Removed
+
+- **Removed four unused safety profiles; the interactive and headless profiles are unchanged.**
 
 ### Fixed
 
