@@ -61,7 +61,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from personalclaw import record_files
 from personalclaw.atomic_write import atomic_json_write
@@ -703,6 +703,26 @@ def drop_spec_key(store: TriggerStore, kind: str, key: str) -> list[str]:
         if dropped:
             store._write(rows)
     return dropped
+
+
+def set_spec_key(
+    store: TriggerStore, kind: str, key: str, value: Any, when: Callable[[dict[str, Any]], bool]
+) -> list[str]:
+    """Set *key* to *value* in the spec of every *kind* row in *store* whose spec *when* says so,
+    re-reading under the store's lock: the ids of the rows it set. A boot pass's, as
+    :func:`drop_spec_key` is; *when* must be false for a spec it has set, so a second call finds
+    nothing."""
+    with store._file_lock():
+        rows = store._read_rows()
+        changed: list[str] = []
+        for row in rows:
+            spec = row.get("spec")
+            if row.get("kind") == kind and isinstance(spec, dict) and when(spec):
+                spec[key] = value
+                changed.append(str(row.get("id") or ""))
+        if changed:
+            store._write(rows)
+    return changed
 
 
 def drop_field(store: TriggerStore, name: str) -> list[str]:

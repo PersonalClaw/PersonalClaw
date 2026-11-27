@@ -253,3 +253,83 @@ def clear() -> int:
         if rows:
             _save([])
     return len(rows)
+
+
+# ── a home restored at another path ─────────────────────────────────────────────────────────
+
+
+def take_in_restored(snap: Path) -> int:
+    """Once a restore or an import has put the comments of the unpacked archive *snap* into this
+    home: anchor each comment on a file of the home *snap* came from to the same file in this one.
+    Returns how many it anchored again.
+
+    A file's comment is anchored by the file's absolute path (``doc_id``, ``doc_path``), true only
+    in the home, at the place, that wrote it. In a home restored at another path the same file has
+    another path, and the deck showed its comments as another document's. The archive names its
+    home (``personalclaw_dir``) and that home's workspace (``workspaces``, or a ``workspace_dir``
+    of its own), and a comment on a file under one of them names the same file under this home's
+    (``memory_locality.this_homes_workspaces``), its workspace first. A comment on an artifact (its
+    slug), and one on a file outside that home, are left as they are; so is this home's own."""
+    moves = _homes_moves(snap)
+    if not moves:
+        return 0
+    with record_files.locked(store_path()):
+        try:
+            rows = load(strict=True)
+        except record_files.Unreadable:
+            logger.warning("restore: the comments could not be read, so they keep their paths")
+            return 0
+        moved = 0
+        for row in rows:
+            doc_id, doc_path = _moved(row.doc_id, moves), _moved(row.doc_path, moves)
+            if doc_id is None and doc_path is None:
+                continue
+            row.doc_id = doc_id or row.doc_id
+            row.doc_path = doc_path or row.doc_path
+            moved += 1
+        if moved:
+            _save(rows)
+    if moved:
+        logger.info("restore: %d comments now name this home's files", moved)
+    return moved
+
+
+def _homes_moves(snap: Path) -> list[tuple[str, str]]:
+    """Each folder of the home the unpacked archive *snap* came from that is another folder here,
+    with that folder, the longest first: its workspace, then its home."""
+    from personalclaw.memory_locality import this_homes_workspaces
+
+    try:
+        manifest = json.loads((snap / "MANIFEST.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        manifest = {}
+    if not isinstance(manifest, dict):
+        manifest = {}
+    here = this_homes_workspaces()
+    pairs: list[tuple[object, str]] = []
+    named = manifest.get("workspaces")
+    if isinstance(named, list):
+        pairs.extend(zip(named, here))
+    came_from = manifest.get("personalclaw_dir")
+    if isinstance(came_from, str) and came_from:
+        pairs.append((str(config_loader.memory_root(Path(came_from))), here[1]))
+        pairs.append((came_from, str(config_loader.config_dir())))
+    try:
+        pairs.append(((snap / "workspace_dir").read_text(encoding="utf-8").strip(), here[0]))
+    except OSError:
+        pass
+    moves = {
+        old.rstrip("/"): new.rstrip("/")
+        for old, new in pairs
+        if isinstance(old, str) and old.startswith("/") and old.rstrip("/") != new.rstrip("/")
+    }
+    return sorted(moves.items(), key=lambda move: len(move[0]), reverse=True)
+
+
+def _moved(path: str, moves: list[tuple[str, str]]) -> str | None:
+    """*path* under the folder it is in here, when it is a path under one of *moves*' old
+    folders; ``None`` otherwise."""
+    for old, new in moves:
+        if path == old or path.startswith(old + "/"):
+            return new + path[len(old) :]
+    return None

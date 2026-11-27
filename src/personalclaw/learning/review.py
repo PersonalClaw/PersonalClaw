@@ -90,6 +90,13 @@ def _installs(variant: str, data: dict[str, Any], name: str) -> dict[str, Any]:
     from personalclaw.learning import lesson_conflicts, project_context_review, template_install
 
     if variant in ("template.named", "template.recurring_path", "template.card"):
+        # What the install would refuse, read off the same validator before it is pressed: a step
+        # shaped like a credential offered Save template, and the press was refused.
+        refused = (
+            template_install.wont_save(data) if template_install.is_template_proposal(data) else ""
+        )
+        if refused:
+            return _accept(NONE, "", refused)
         named = name or template_install.template_name(data)
         return _accept(INSTALLS, "Save template", f"Saves the template {named} to Workflows")
     if variant == "prompt.card":

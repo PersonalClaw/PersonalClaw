@@ -667,6 +667,20 @@ class LoopWatchdog:
         loop = store.get(loop_id)
         return redact_for_display(loop.name or loop_id) if loop else loop_id
 
+    async def _held_to_its_word(self, cid: str) -> None:
+        """A kind's cycle hook owns done-ness this cycle and answered that it completed the loop
+        (``kinds.run_cycle_hook``). One that answered so and left it running is completed here, so
+        a hook that forgets cannot keep a loop cycling past every check of the poll until its
+        budget runs out."""
+        now = store.get(cid)
+        if now is not None and now.status == LoopStatus.RUNNING.value:
+            logger.warning(
+                "loop %s: its cycle hook said it completed, and it was still running, so it is "
+                "completed now",
+                cid,
+            )
+            await self._complete(cid, reason="done-ness signal met")
+
     def _cycle_ctx(self):
         """The capabilities handed to a kind's per-cycle orchestration hook so it
         can advance stages, provision/queue tasks, publish, and complete — without
@@ -1477,9 +1491,9 @@ class LoopWatchdog:
                 if strat is not None:
                     hooked = await kinds.run_cycle_hook(strat, loop, findings, self._cycle_ctx())
                 if hooked is not None:
-                    # The kind's orchestration owns done-ness this cycle.
-                    if hooked:
-                        continue  # the hook already completed the loop
+                    if hooked:  # the kind's orchestration owns done-ness, and completed the loop
+                        await self._held_to_its_word(cid)
+                        continue
                 else:
                     try:
                         signal = await supervisor.done_signal(loop, findings, policy)

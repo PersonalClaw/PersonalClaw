@@ -71,6 +71,11 @@ _MAX_CONSECUTIVE_ERRORS = 3
 #: stops by itself. ``0`` is no limit, and only an explicit 0 gives one.
 DEFAULT_MAX_CYCLES = 10
 
+#: The spec key that says a nudge's ``max_cycles`` of 0 is its owner's choice: set when the owner
+#: chooses 0 (:meth:`AutoNudgeService.add`, :meth:`AutoNudgeService.update`). A 0 without it is
+#: the default a release before v0.3.9 wrote, and :func:`cap_the_old_default` gives it this one.
+_NO_LIMIT = "no_limit"
+
 # Sentinel file per loop: creating it halts the loop on next cycle.
 STOP_SENTINEL = "STOP"
 
@@ -181,6 +186,37 @@ def _nudge_row(
         overlap="skip",
         delivery="none",
     )
+
+
+def _with_limit(spec: dict[str, Any], max_cycles: int) -> None:
+    """Write the owner's choice of *max_cycles* into *spec*: 0 is their no limit."""
+    spec["max_cycles"] = max(0, int(max_cycles))
+    if spec["max_cycles"] == 0:
+        spec[_NO_LIMIT] = True
+    else:
+        spec.pop(_NO_LIMIT, None)
+
+
+def _left_at_the_old_default(spec: dict[str, Any]) -> bool:
+    """A nudge (its ``message`` set) at 0 that its owner did not choose."""
+    try:
+        cycles = int(spec.get("max_cycles", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    return bool(spec.get("message")) and cycles == 0 and not spec.get(_NO_LIMIT)
+
+
+def cap_the_old_default(store: TriggerStore) -> list[str]:
+    """Give every nudge left at the old default's 0 the default limit: the ids it set.
+
+    Before v0.3.9 a nudge armed without a number had no limit, and one stored then read the same
+    as an owner's explicit 0 after the upgrade, so it kept running an agent turn each time its
+    chat went idle. The boot pass (``triggers.boot_migrate.migrate_and_arm``) runs this after it
+    imports a legacy ``autonudge.json``; a 0 the owner chooses carries ``no_limit`` and is kept,
+    so a second boot finds nothing."""
+    from personalclaw.triggers.store import set_spec_key
+
+    return set_spec_key(store, "idle", "max_cycles", DEFAULT_MAX_CYCLES, _left_at_the_old_default)
 
 
 def import_legacy(base_dir: Path, *, now: float = 0.0) -> int:
@@ -414,6 +450,7 @@ class AutoNudgeService:
                 stop_sentinel_path=stop_sentinel_path,
                 first_idle_secs=first_idle_secs,
             )
+            _with_limit(trigger.spec, max_cycles)
             self._store.upsert(trigger)
             # Arm from creation (the old engine armed the timer on add) and stamp the birth
             # time — the trigger entity deliberately keeps no birth time (its LEGACY_FIELD_MAP
@@ -428,6 +465,17 @@ class AutoNudgeService:
         )
         return loop
 
+    def _carries_on(self, trigger: Trigger) -> bool:
+        """Whether a nudge that switched itself off at its Max cycles goes on after an update: it
+        has cycles to spare now (a higher limit than it has fired, or none), and it is the owner's,
+        not an imported one still waiting for them to switch it on. Pressing Update after raising
+        the limit then starts it again, from the cycles it has fired."""
+        from personalclaw.triggers.legacy_import import IMPORTED_BY
+
+        if getattr(trigger, "created_by", "") == IMPORTED_BY:
+            return False
+        return why_it_ended(self._to_loop(trigger)) != "budget"
+
     async def update(
         self,
         loop_id: str,
@@ -441,14 +489,17 @@ class AutoNudgeService:
             trigger = self._get_row(loop_id)
             if trigger is None:
                 return None
+            ran_out = not trigger.enabled and why_it_ended(self._to_loop(trigger)) == "budget"
             spec = dict(trigger.spec or {})
             if message is not None:
                 spec["message"] = message
             if idle_secs is not None:
                 spec["idle_secs"] = max(_MIN_IDLE_SECS, min(_MAX_IDLE_SECS, int(idle_secs)))
             if max_cycles is not None:
-                spec["max_cycles"] = max(0, int(max_cycles))
+                _with_limit(spec, max_cycles)
             trigger.spec = spec
+            if active is None and ran_out and self._carries_on(trigger):
+                active = True
             if active is not None:
                 trigger.enabled = bool(active)
                 if trigger.enabled:

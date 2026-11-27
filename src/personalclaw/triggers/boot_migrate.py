@@ -91,6 +91,8 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
     nudges_absorbed = _absorb_nudges(root, now=now)
     _drop_webhook_token_refs(store)
     _drop_retry(store)
+    # After the nudge import: a legacy loop at 0 got it from the old default as well.
+    _cap_old_default_nudges(store)
 
     try:
         report = store.migrate_from_crons(now=now)
@@ -139,6 +141,25 @@ def _drop_webhook_token_refs(store: Any) -> None:
         return
     if dropped:
         logger.info("webhook automations: took the unread token_ref out of %s", ", ".join(dropped))
+
+
+def _cap_old_default_nudges(store: Any) -> None:
+    """Give a nudge left at the old default's no limit the default limit
+    (``triggers.nudge.cap_the_old_default``). Never raises."""
+    try:
+        from personalclaw.triggers.nudge import DEFAULT_MAX_CYCLES, cap_the_old_default
+
+        capped = cap_the_old_default(store)
+    except Exception:  # noqa: BLE001 - a store that cannot be rewritten must not stop the gateway
+        logger.warning("could not give the old auto-nudges their limit", exc_info=True)
+        return
+    if capped:
+        logger.info(
+            "auto-nudge: %s had no limit from the old default and now stop after %d cycles: %s",
+            len(capped),
+            DEFAULT_MAX_CYCLES,
+            ", ".join(capped),
+        )
 
 
 def _drop_retry(store: Any) -> None:

@@ -84,9 +84,12 @@ async def test_a_plain_delete_clears_the_project_from_chats_kept_only_on_disk(tm
     async with _gateway(tmp_path) as (client, log):
         garden = (await (await client.post("/api/projects", json={"name": "Garden"})).json())["id"]
         _chat_on_disk(log, "dashboard_seed-order", garden)
+        # An app's chat, which the guard does not count (an owner's chat kept on disk is counted:
+        # test_a_projects_chats_include_those_kept_on_disk.py).
+        log.update_metadata("dashboard_seed-order", {"app": "notes"})
 
-        # No chat it holds and no loop names Garden, so the dashboard's first, plain delete goes
-        # through: the record kept on disk must not keep naming a project that is gone.
+        # No chat of the owner's and no loop names Garden, so the dashboard's first, plain delete
+        # goes through: the record kept on disk must not keep naming a project that is gone.
         assert (await client.delete(f"/api/projects/{garden}")).status == 200
 
         assert "project_id" not in log.get_metadata("dashboard_seed-order")
