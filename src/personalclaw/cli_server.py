@@ -964,7 +964,7 @@ def _update_desktop() -> None:
     app has no interpreter to upgrade — the backend is a frozen PyInstaller bundle).
 
     The shell updates itself when its owner asks it to (``desktop/appUpdate.js``): Check for
-    Updates… in its menu, or Settings › Updates › This app, and never on its own. A copy it
+    Updates… in its menu, or Settings › Updates › Desktop app, and never on its own. A copy it
     cannot replace (a package, one run from the disk image) is pointed at the releases page,
     so that is named too. Before that updater this named only the re-download (#2673), and
     ``tests/test_desktop_install_kind.py`` holds every desktop surface to the updater as built.
@@ -972,7 +972,7 @@ def _update_desktop() -> None:
     Exit code 0 for the same reason as the container branch.
     """
     print("  🖥  This is a desktop install — the PersonalClaw app updates it when you ask:")
-    print("  choose Check for Updates… in its menu, or Settings › Updates › This app.")
+    print("  choose Check for Updates… in its menu, or Settings › Updates › Desktop app.")
     print("  Or install the new version from the releases page:")
     print("  https://github.com/PersonalClaw/PersonalClaw/releases")
 

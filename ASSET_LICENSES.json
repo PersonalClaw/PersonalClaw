@@ -1139,6 +1139,17 @@
       ]
     },
     {
+      "id": "version-order-table",
+      "source": "Project-authored: the version pairs and the order the gateway, the desktop app and the web each put them in, read by tests/test_version_order_table.py, desktop/test/appUpdate.test.js and web/src/lib/versions.test.ts",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/version_order.json"
+      ]
+    },
+    {
       "id": "chat-transcript-corpus",
       "source": "Project-authored chat transcripts of every row shape a chat keeps, for tests/test_turn_rows.py",
       "version": "repository-revision",

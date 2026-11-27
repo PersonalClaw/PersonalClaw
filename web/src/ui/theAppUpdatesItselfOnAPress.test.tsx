@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import type { AppUpdateStart, AppUpdateState, DesktopBridge } from '../lib/desktopBridge'
 
 // ── The desktop app updates itself, on a press ──────────────────────────────────────────────────
@@ -7,7 +8,7 @@ import type { AppUpdateStart, AppUpdateState, DesktopBridge } from '../lib/deskt
 // A new desktop version came only as a download from the releases page: the System popover and
 // Home said so, and Settings › Updates said "Install the new version from the releases page, then
 // reopen the app". The app now checks on launch and once a day, and offers the update in its own
-// windows: Settings › Updates › This app, and a row in the System popover while a new version is
+// windows: Settings › Updates › Desktop app, and a row in the System popover while a new version is
 // on offer (`desktop/appUpdate.js`). It takes two presses: Update downloads and checks the release
 // in the background and changes nothing beside the app; once it is ready, Restart to Finish the
 // Update, confirmed, installs it, and the confirm names the restart and what it interrupts. A copy
@@ -111,7 +112,7 @@ describe('the System popover: the app row, only while a new version is on offer'
     const card = await openPopover()
 
     expect(await within(card).findByText('PersonalClaw 0.3.8 is available for this app.')).toBeTruthy()
-    fireEvent.click(within(card).getByRole('button', { name: 'Update the app' }))
+    fireEvent.click(within(card).getByRole('button', { name: 'Update App' }))
     await waitFor(() => expect(app.asked).toEqual(['download 0.3.8']))
     expect(within(card).queryByText(/^Restart PersonalClaw/)).toBeNull()
     expect(wire.probes).toBe(0)
@@ -125,7 +126,7 @@ describe('the System popover: the app row, only while a new version is on offer'
     const card = await openPopover()
 
     expect(await within(card).findByText('PersonalClaw 0.3.8 is ready. Restart to finish the update.')).toBeTruthy()
-    expect(within(card).queryByRole('button', { name: 'Update the app' })).toBeNull()
+    expect(within(card).queryByRole('button', { name: 'Update App' })).toBeNull()
     fireEvent.click(within(card).getByRole('button', { name: 'Restart to finish the update of this app' }))
     expect(await within(card).findByText(
       'Restart PersonalClaw to finish updating to 0.3.8? Your gateway restarts with it, which interrupts 2 running agents.',
@@ -166,11 +167,13 @@ describe('the System popover: the app row, only while a new version is on offer'
     await waitFor(() => expect(app.asked).toEqual(['finish 0.3.8']))
   })
 
-  it("leaves the gateway's own Update as it was on the app's own gateway: it is the gateway's, and the row stands beside it", async () => {
+  it("🔴 offers no Update of its own for a gateway built into the app: it updates with the app", async () => {
     installedAs('desktop')
     fakeApp(stands())
     const card = await openPopover()
-    expect(within(card).getByRole('button', { name: 'Update the gateway' })).toBeTruthy()
+    await waitFor(() => expect(within(card).queryByRole('button', { name: 'Update the gateway' })).toBeNull())
+    expect(within(card).queryByRole('button', { name: /^Update/ })).toBeNull()
+    expect(within(card).getByRole('button', { name: 'Restart' })).toBeTruthy()
     expect(within(card).queryByText(/for this app/)).toBeNull()
   })
 
@@ -180,7 +183,7 @@ describe('the System popover: the app row, only while a new version is on offer'
     const card = await openPopover()
     expect(await within(card).findByText('PersonalClaw 0.3.8 is available for this app.')).toBeTruthy()
     expect(within(card).getAllByRole('button', { name: /Update & Restart/ })).toHaveLength(1)
-    fireEvent.click(within(card).getByRole('button', { name: 'Update the app' }))
+    fireEvent.click(within(card).getByRole('button', { name: 'Update App' }))
     await waitFor(() => expect(app.asked).toEqual(['download 0.3.8']))
     app.push(stands({ ...READY, restartsGateway: false }))
     fireEvent.click(await within(card).findByRole('button', { name: 'Restart to finish the update of this app' }))
@@ -188,15 +191,22 @@ describe('the System popover: the app row, only while a new version is on offer'
     expect(wire.probes).toBe(0)
   })
 
-  it("names the popover's two Update presses for whose they are: the app's and the gateway's", async () => {
+  it("🔴 reads Update App on the app's row, with no gateway Update beside it when the gateway is the app's own", async () => {
     installedAs('desktop')
     fakeApp(OFFERED)
     const card = await openPopover()
-    const app = await within(card).findByRole('button', { name: 'Update the app' })
+    const app = await within(card).findByRole('button', { name: 'Update App' })
+    expect(app.textContent?.trim()).toBe('Update App')
+    expect(within(card).getAllByRole('button', { name: /^Update/ })).toEqual([app])
+  })
+
+  it("names the two presses for whose they are beside a gateway the app found running", async () => {
+    installedAs('desktop')
+    fakeApp(stands({ ...OFFERED, restartsGateway: false }))
+    const card = await openPopover()
+    const app = await within(card).findByRole('button', { name: 'Update App' })
     const gateway = within(card).getByRole('button', { name: 'Update the gateway' })
-    expect(app).not.toBe(gateway)
-    // The labels stay as the owner tried them: both read Update.
-    expect([app.textContent?.trim(), gateway.textContent?.trim()]).toEqual(['Update', 'Update'])
+    expect([app.textContent?.trim(), gateway.textContent?.trim()]).toEqual(['Update App', 'Update'])
   })
 
   it('says a Restart to Finish the update settings refused, and keeps saying it after the check that follows', async () => {
@@ -219,7 +229,7 @@ describe('the System popover: the app row, only while a new version is on offer'
     fakeApp(stands({ ...OFFERED, phase: 'failed', sentence: "The new version couldn't be put in place. This copy is unchanged; install it from the releases page." }))
     const card = await openPopover()
     expect(await within(card).findByRole('link', { name: 'Open the releases page' })).toBeTruthy()
-    expect(within(card).getByRole('button', { name: 'Update the app' })).toBeTruthy()
+    expect(within(card).getByRole('button', { name: 'Update App' })).toBeTruthy()
   })
 
   it('offers the releases page, not a press, for a copy the app cannot replace here', async () => {
@@ -231,19 +241,19 @@ describe('the System popover: the app row, only while a new version is on offer'
     const card = await openPopover()
     expect(await within(card).findByText('This copy was installed as a package. Install the new version from the releases page.')).toBeTruthy()
     expect(within(card).getByRole('link', { name: 'Open the releases page' }).getAttribute('href')).toBe(RELEASES_PAGE_URL)
-    expect(within(card).queryByRole('button', { name: 'Update the app' })).toBeNull()
+    expect(within(card).queryByRole('button', { name: 'Update App' })).toBeNull()
   })
 
   it('follows the update as the app pushes it, and says a refused start', async () => {
     installedAs('desktop')
     const app = fakeApp(OFFERED, { ok: false, sentence: 'An update is already under way.' })
     const card = await openPopover()
-    fireEvent.click(await within(card).findByRole('button', { name: 'Update the app' }))
+    fireEvent.click(await within(card).findByRole('button', { name: 'Update App' }))
     expect(await within(card).findByText('An update is already under way.')).toBeTruthy()
 
     app.push(stands({ ...OFFERED, phase: 'downloading', progress: { received: 50, total: 200 } }))
     expect(await within(card).findByText('Downloading PersonalClaw 0.3.8… 25%')).toBeTruthy()
-    expect(within(card).queryByRole('button', { name: 'Update the app' })).toBeNull()
+    expect(within(card).queryByRole('button', { name: 'Update App' })).toBeNull()
     app.push(READY)
     expect(await within(card).findByRole('button', { name: 'Restart to finish the update of this app' })).toBeTruthy()
     app.push(stands({ ...READY, phase: 'placing', sentence: 'Putting PersonalClaw 0.3.8 in place…' }))
@@ -277,7 +287,7 @@ describe("Home's Update available, in the app", () => {
   })
 })
 
-describe("Settings › Updates › This app's controls", () => {
+describe("Settings › Updates › Desktop app's controls", () => {
   function ThisApp() {
     const update = useAppUpdate()
     return update ? <AppUpdateControls update={update} place="settings" /> : <p>no app</p>
@@ -340,29 +350,112 @@ describe("Settings › Updates › This app's controls", () => {
 
 describe('Settings › Updates', () => {
   /** The panel's one snapshot, for the desktop app's own gateway with a new version out. */
-  function primed() {
+  function primed(kind = 'desktop') {
     writeQuery('settings:updates', {
-      info: { available: true, changes: '', checked: true, auto: 'off', kind: 'desktop', current: '0.3.7', latest: '0.3.8', channel: 'stable', pin: '', check_enabled: true },
+      info: { available: true, changes: '', checked: true, auto: 'off', kind, current: '0.3.7', latest: '0.3.8', channel: 'stable', pin: '', check_enabled: true },
       changelog: '',
     }, true)
   }
+  const sections = () => screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
 
-  it('🔴 has This app in the app, and its Version row points there instead of at the releases page', async () => {
+  it('🔴 says a rollback to a release older than the desktop app leaves the app newer than its gateway', async () => {
+    writeQuery('settings:updates', {
+      info: { available: false, changes: '', checked: true, auto: 'off', kind: 'pip', current: '0.3.7', latest: '0.3.7', channel: 'stable', pin: '', check_enabled: true, last_version: '0.3.6' },
+      changelog: '',
+    }, true)
+    fakeApp(stands({ restartsGateway: false }))
+    const { subscribeDialogs, closeDialog } = await import('./dialog/dialogStore')
+    const bodies: ReactNode[] = []
+    const stop = subscribeDialogs((open) => {
+      for (const d of open) {
+        bodies.push(d.body)
+        setTimeout(() => closeDialog(d.id, false), 0)
+      }
+    })
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: /Roll back to v0\.3\.6/ }))
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    stop()
+    const { container: shown } = render(<>{bodies[0]}</>)
+    expect(shown.textContent).toContain('The desktop app stays on v0.3.7: it does not roll back, so it runs newer than this gateway until both are on one release again.')
+  })
+
+  it('🔴 puts the desktop app first and the gateway after it, each with its own version line', async () => {
     primed()
     fakeApp(OFFERED)
     const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
     render(<UpdatesPanel />)
-    expect(await screen.findByRole('heading', { name: 'This app' })).toBeTruthy()
     expect(await screen.findByText('PersonalClaw 0.3.8 is available for this app.')).toBeTruthy()
-    expect(screen.getByText('This app updates itself: see This app, below.')).toBeTruthy()
+    expect(sections()).toEqual(['Desktop app', 'Gateway', 'Release line', 'Automatic updates', 'Release notes', 'Changelog', 'Licences'])
+    const app = screen.getByRole('heading', { name: 'Desktop app' }).closest('section') as HTMLElement
+    expect(within(app).getByText('This app: v0.3.7')).toBeTruthy()
+    const gateway = screen.getByRole('heading', { name: 'Gateway' }).closest('section') as HTMLElement
+    expect(within(gateway).getByText('Built into the desktop app · v0.3.7 · Stable channel')).toBeTruthy()
   })
 
-  it('says the releases page, with no This app, in a browser tab', async () => {
+  it('🔴 names the gateway the app uses, and what Restart to Finish the Update does to it', async () => {
+    primed()
+    fakeApp(OFFERED)
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('Gateway: built into the desktop app. Restart to Finish the Update restarts it with the app.')).toBeTruthy()
+  })
+
+  it('names a gateway the app found running, at its version, and the step that brings it along', async () => {
+    primed('pip')
+    fakeApp(stands({ ...READY, restartsGateway: false, gatewayStep: { port: 10870, from: '0.3.7', to: '0.3.8' } }))
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('Gateway: found running on this computer, v0.3.7. Restart to Finish the Update updates it from 0.3.7 to 0.3.8 first.')).toBeTruthy()
+    const gateway = screen.getByRole('heading', { name: 'Gateway' }).closest('section') as HTMLElement
+    expect(within(gateway).getByText('Install type: pip / uv install · v0.3.7 · Stable channel')).toBeTruthy()
+  })
+
+  it('says a found gateway is brought along when it is older, before a copy is ready', async () => {
+    primed('pip')
+    fakeApp(stands({ ...OFFERED, restartsGateway: false }))
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('Gateway: found running on this computer, v0.3.7. Restart to Finish the Update updates it to the app’s release first when it is older, or says why it can’t.')).toBeTruthy()
+  })
+
+  it('🔴 has the built-in gateway point at the app above instead of at the releases page', async () => {
+    primed()
+    fakeApp(OFFERED)
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('It updates with the desktop app: see Desktop app, above.')).toBeTruthy()
+    expect(screen.queryByText(/releases page/)).toBeNull()
+  })
+
+  it('🔴 points a browser tab at the app’s Check for Updates…, with no Desktop app section', async () => {
     primed()
     const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
     render(<UpdatesPanel />)
-    expect(await screen.findByText(/Install the new version from the/)).toBeTruthy()
-    expect(screen.queryByRole('heading', { name: 'This app' })).toBeNull()
+    expect(await screen.findByText('Update it from the desktop app: choose Check for Updates… in its PersonalClaw menu, or under Help on Windows and Linux.')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Desktop app' })).toBeNull()
+    expect(screen.queryByText(/releases page/)).toBeNull()
+  })
+
+  it('keeps the releases page for a pin back to an older release: the app does not roll back', async () => {
+    writeQuery('settings:updates', {
+      info: { available: false, changes: '', checked: true, auto: 'off', kind: 'desktop', current: '0.3.8', latest: '0.3.7', channel: 'stable', pin: '0.3.7', pin_older: true, check_enabled: true },
+      changelog: '',
+    }, true)
+    fakeApp(stands({ current: '0.3.8' }))
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText(/Install the pinned version from the/)).toBeTruthy()
+  })
+
+  it('says the release line and the automatic checks steer both, and how the app follows them', async () => {
+    primed()
+    fakeApp(OFFERED)
+    const { UpdatesPanel } = await import('../pages/settings/UpdatesPanel')
+    render(<UpdatesPanel />)
+    expect(await screen.findByText('Which releases the gateway and the desktop app follow. A version pin overrides the channel, for both: the app takes its own copy of the release the line or pin names, and has no Developer builds, so on Developer it follows Stable.')).toBeTruthy()
+    expect(screen.getByText('Whether PersonalClaw looks for new releases on its own. Installing one is yours to do on this install. The desktop app follows the same switch: while it is on, the app looks when it starts and once a day, and it downloads nothing until you press Update.')).toBeTruthy()
   })
 })
 

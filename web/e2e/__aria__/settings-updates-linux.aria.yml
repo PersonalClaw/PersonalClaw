@@ -29,20 +29,10 @@
   - text: Updates
   - heading "Updates" [level=#]
   - paragraph: Keep the PersonalClaw core current — choose a release line, pin a version, decide whether updates apply on their own, and read what changed. Apps update individually from the Store.
-  - heading "Version" [level=#]
+  - heading "Gateway" [level=#]
   - status: <update status>
   - text: "Install type: Git checkout · v#.#.# · Stable channel"
   - 'button "Check now: ask GitHub once, now, whether a newer release exists"': Check now
-  - heading "Licences" [level=#]
-  - paragraph: PersonalClaw is MIT-licensed. The dashboard also ships third-party open-source code and fonts, each under its own licence.
-  - text: Open-source packages Every package in the dashboard's code, with its version, its licence and the licence's full text.
-  - link "Open the open-source packages' licence notices":
-    - /url: /THIRD_PARTY_NOTICES_NPM.txt
-    - text: Open
-  - text: Fonts The dashboard's typefaces, its math fonts and the code editor's icon font.
-  - link "Open the fonts' licence notices":
-    - /url: /THIRD_PARTY_NOTICES.txt
-    - text: Open
   - heading "Release line" [level=#]
   - paragraph: Which releases this install follows. A version pin overrides the channel.
   - text: Channel Stable follows the newest normal release. Beta includes release candidates. Developer tracks every commit on your checked-out branch (contributors — needs a clean tree).
@@ -137,5 +127,15 @@
       - listitem: A fix in this release, #.
       - listitem: A fix in this release, #.
       - listitem: A fix in this release, #.
+  - heading "Licences" [level=#]
+  - paragraph: PersonalClaw is MIT-licensed. The dashboard also ships third-party open-source code and fonts, each under its own licence.
+  - text: Open-source packages Every package in the dashboard's code, with its version, its licence and the licence's full text.
+  - link "Open the open-source packages' licence notices":
+    - /url: /THIRD_PARTY_NOTICES_NPM.txt
+    - text: Open
+  - text: Fonts The dashboard's typefaces, its math fonts and the code editor's icon font.
+  - link "Open the fonts' licence notices":
+    - /url: /THIRD_PARTY_NOTICES.txt
+    - text: Open
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

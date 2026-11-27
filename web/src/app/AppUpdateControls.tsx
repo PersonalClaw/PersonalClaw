@@ -67,7 +67,7 @@ function confirmWords(
   return `${ask} ${what}, which interrupts ${agents}${live}.`
 }
 
-/** The app's own update, in Settings › Updates › This app (`place="settings"`, with Check now and
+/** The app's own update, in Settings › Updates › Desktop app (`place="settings"`, with Check now and
  *  how the last update ended) and as the System popover's row (`place="popover"`). Two presses:
  *  Update downloads and checks the release in the background, and nothing beside the app changes;
  *  once it is ready, Restart to Finish the Update, confirmed, puts it in place and restarts. An
@@ -172,10 +172,10 @@ export function AppUpdateControls({ update, place }: { update: AppUpdate; place:
       {popover ? (
         (canUpdate || canFinish) && (
           <Button size="xs" variant="secondary" shape="squircle" onClick={canFinish ? askToFinish : download}
-            ariaLabel={canFinish ? 'Restart to finish the update of this app' : 'Update the app'}>
+            ariaLabel={canFinish ? 'Restart to finish the update of this app' : undefined}>
             {canFinish
               ? <><RotateCw size={12} aria-hidden /> Restart to Finish the Update</>
-              : <><DownloadCloud size={12} aria-hidden /> Update</>}
+              : <><DownloadCloud size={12} aria-hidden /> Update App</>}
           </Button>
         )
       ) : (

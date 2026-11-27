@@ -146,13 +146,13 @@ def test_every_surface_says_the_app_updates_when_asked_and_names_the_releases_pa
     shell never had (#2673): a user told the app self-updated simply never updated. The rail
     then held them to the re-download, until the updater landed. It has: ``desktop/appUpdate.js``
     checks on launch and once a day, and installs only when its owner presses for it, from
-    Check for Updates… in the app's menu or Settings › Updates › This app. So each surface names
+    Check for Updates… in the app's menu or Settings › Updates › Desktop app. So each surface names
     that way, and the releases page beside it, which is where every copy the app cannot replace
     (a package, a copy run from its disk image) and every failure is sent.
 
     The gateway's answer and the CLI's are read where the app is not (a browser tab,
-    ``personalclaw update``), so they name the app's menu; the done screen's sentence and the
-    panel name This app.
+    ``personalclaw update``), so they name the app's menu; the done screen's sentence names
+    Desktop app, and the panel names the app's menu for a browser tab and Desktop app in the app.
     """
     assert _ships_its_own_updater(), (
         "the shell no longer ships its updater (appUpdate.js in build.files, required by "
@@ -169,8 +169,8 @@ def test_every_surface_says_the_app_updates_when_asked_and_names_the_releases_pa
     surfaces = {
         "src/personalclaw/dashboard/handlers/updates.py": ("Check for Updates…", "releases page"),
         "src/personalclaw/cli_server.py": ("Check for Updates…", releases),
-        "web/src/lib/updateRoute.ts": ("Settings › Updates › This app", ""),
-        "web/src/pages/settings/UpdatesPanel.tsx": ("This app updates itself", "RELEASES_PAGE_URL"),
+        "web/src/lib/updateRoute.ts": ("Settings › Updates › Desktop app", ""),
+        "web/src/pages/settings/UpdatesPanel.tsx": ("Check for Updates…", "RELEASES_PAGE_URL"),
     }
     for relative, (asked, page) in surfaces.items():
         text = (REPO_ROOT / relative).read_text(encoding="utf-8")

@@ -49,6 +49,7 @@ import { useNotificationToasts } from '../lib/notificationToasts'
 import { DialogHost } from '../ui/dialog/DialogHost'
 import { PersonalityShellElement } from './personality'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
+import { AppCheckOnGatewayAhead } from './AppCheckOnGatewayAhead'
 import { UpdatedInterfaceNotice } from './UpdatedInterfaceNotice'
 import { runInTerminal, hasActiveTerminal } from '../pages/terminal/terminalBridge'
 import { LoadError, LoadingStatus } from '../ui/ListScaffold'
@@ -1013,6 +1014,7 @@ function AppInner() {
         {/* Self-update step progression (WS `update_progress`) — shell-level so the
             modal appears from ANY page while an update pipeline runs. */}
         <UpdateProgressOverlay />
+        <AppCheckOnGatewayAhead />
         <TerminalDrawer open={termDrawer} onClose={() => setTermDrawer(false)} run={drawerRun} onRunTaken={takeDrawerRun}
           onOpenFull={(session) => { setTermDrawer(false); navigate(fullTerminalRoute(session)) }} />
       </div>

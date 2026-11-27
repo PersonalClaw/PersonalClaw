@@ -28,6 +28,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **On a phone, every switch is a 44 px target: the switch is drawn the same, and the space you can tap around it grows, with its row. Only Settings › Chat's Keep my question in view had it before.**
 - **Settings › Security's and Voice's Add buttons say what they add: Add host (to Allowed or Denied hosts), Add pattern, Add term and Add correction. Each read "Add", so a screen reader heard several alike.**
 - **On a phone, every control in a page's header is a 44 px target, its `…` included: a page's New, Import, filters and menus were 40 px there unless the page asked for more.**
+- **In the desktop app, Settings › Updates shows the desktop app and its gateway in sections of their own, names the gateway the app uses and says what finishing an update does to it.**
+- **In the desktop app, the System status card's update row reads Update App, and a gateway built into the app no longer offers an Update of its own beside it.**
+- **In the desktop app, rolling the gateway back past the app's own version says the app stays on its version, newer than the gateway, before it rolls back.**
 
 ### Fixed
 
@@ -97,6 +100,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workflow's model tiers offer only the use cases its steps run on, and say what a stage runs on.**
 - **A run page's Document panel shows the note a step keeps as soon as the step settles, without a reload, and a run that ended without its document says so instead of "The worker has not written it yet."**
 - **The buddy playground's Running now list wraps each line in its column at 200% text zoom. A line cut short ran into Focused work beside it.**
+- **A desktop app from 0.3.7 on a gateway newer than itself checks for its own update at once, instead of at its next daily check.**
 
 ### Security
 

@@ -287,9 +287,9 @@ function RunningAgents({ open }: { open: boolean }) {
 }
 
 /** The desktop app's own update, as a row of its own: only while a new version is on offer or an
- *  update runs, and only in the app's windows on this computer's gateway (`AppUpdateControls`). The
- *  gateway's Update below stays the gateway's, on the app's own gateway too: it says how that
- *  install is updated, and does not update the app. */
+ *  update runs, and only in the app's windows on this computer's gateway (`AppUpdateControls`). Its
+ *  press reads Update App. A gateway built into the app has no Update of its own below it, since it
+ *  updates with the app; a gateway the app found running keeps its own. */
 function AppUpdateRow() {
   const update = useAppUpdate()
   if (!update || !appUpdateOnOffer(update.state)) return null
@@ -364,9 +364,12 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
     }
     setChecking(false)
   }
-  // In the app, the app's own row has an Update beside this one (`AppUpdateRow`): this one is named
-  // the gateway's, its label staying Update. Read once: the bridge doesn't come or go.
+  // In the app, the app's own row has its Update App beside this one (`AppUpdateRow`): this one is
+  // named the gateway's, its label staying Update. Read once: the bridge doesn't come or go.
   const [inTheApp] = useState(() => Boolean(desktopBridge()?.appUpdate))
+  // A gateway built into the app updates with it (its row above), so it offers no Update of its own:
+  // two Updates side by side read as two things to do when there is one.
+  const builtIn = useAppUpdate()?.state?.restartsGateway === true
 
   const update = async () => {
     setAsking(true)
@@ -433,7 +436,7 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
             style={{ borderRadius: 'var(--radius-md)' }}>
             <RotateCw size={12} /> Restart
           </button>
-          {outside || available ? (
+          {builtIn ? null : outside || available ? (
             <button type="button" onClick={() => ask('update')} data-type="caption"
               aria-label={outside && inTheApp ? 'Update the gateway' : undefined}
               className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
