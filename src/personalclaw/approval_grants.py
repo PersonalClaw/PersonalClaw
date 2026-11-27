@@ -41,6 +41,7 @@ The other way a call is settled, a person's answer, waits one window wherever it
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -354,6 +355,7 @@ def stands_for_call(
     cwd: str,
     level: str = LEVEL_AUTO,
     asked_by: Mapping[str, str] | None = None,
+    watched: bool = False,
 ) -> bool:
     """Whether *grant* may approve one call, the one *event* asks about in the session
     *session_key*, run in the folder *cwd*, without asking anyone: :func:`stands_for_work`, for
@@ -361,21 +363,114 @@ def stands_for_call(
 
     No grant answers a call that reaches a host off the allowed hosts, nor one that deletes the
     owner's home folder, the filesystem root or *cwd* (``run_bounds.put_to_a_person``): that one
-    is put to a person. A refused grant falls through to what comes next: the call asks, or on an
-    unattended turn is declined because nobody can answer it. What a chat's runner asks of an
-    operator's hook pattern and of its Trust, YOLO and Trust reads, and what a channel running a
-    conversation itself asks of the same grants (``chat_trust.chat_grant``).
+    is put to a person. The one exception is YOLO's, in a chat of hers she is watching (*watched*:
+    only the dashboard's chat runner says so): a call whose only reach past the list is a fetch
+    from hosts it names (:func:`yolo_fetch_hosts`), which is then audited with those hosts. A
+    refused grant falls through to what comes next: the call asks, or on an unattended turn is
+    declined because nobody can answer it. What a chat's runner asks of an operator's hook pattern
+    and of its Trust, YOLO and Trust reads, and what a channel running a conversation itself asks
+    of the same grants (``chat_trust.chat_grant``).
     """
     from personalclaw.run_bounds import put_to_a_person
     from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
+    fetched: tuple[str, ...] = ()
     if put_to_a_person(event, session_key=session_key, cwd=cwd):
-        return False
+        fetched = yolo_fetch_hosts(
+            grant, session_key=session_key, event=event, cwd=cwd, watched=watched
+        )
+        if not fetched:
+            return False
     title, _ = redact_exfiltration_urls(str(getattr(event, "title", "") or ""))
     title, _ = redact_credentials(title)
-    return stands_for_work(
-        grant, caller=session_key, subject=f"tool={title[:80]}", level=level, asked_by=asked_by
+    subject = f"tool={title[:80]}"
+    stood = stands_for_work(
+        grant, caller=session_key, subject=subject, level=level, asked_by=asked_by
     )
+    if stood and fetched:
+        answered_a_fetch(fetched, caller=session_key, subject=subject, event=event)
+    return stood
+
+
+def yolo_fetch_hosts(
+    grant: str, *, session_key: str, event: object, cwd: str, watched: bool
+) -> tuple[str, ...]:
+    """The hosts off the allowed hosts YOLO answers *event*'s call for: ``()`` unless *grant* is
+    YOLO, the chat is one of hers on the dashboard she is watching (*watched*, and its key names
+    her own chat: no room, workflow step, scheduled job's chat, loop, helper, trigger, channel or
+    command), no incident is on, and all the call does past the list is fetch from hosts it names,
+    none on Denied (``run_bounds.fetched_from``). Trust, Trust reads and every other grant answer
+    none of them; whose work it is and the operator ceiling are asked after, as of every grant."""
+    if grant != YOLO or not watched or not _her_watched_chat(session_key):
+        return ()
+    from personalclaw.guardrails.incident import incident_active
+    from personalclaw.run_bounds import fetched_from
+
+    try:
+        if incident_active():
+            return ()
+    except Exception:  # noqa: BLE001 - an unreadable incident state answers nothing new
+        logger.warning("could not read incident mode; YOLO answers no fetch", exc_info=True)
+        return ()
+    return fetched_from(event, session_key=session_key, cwd=cwd)
+
+
+def _her_watched_chat(session_key: str) -> bool:
+    """Whether *session_key* is a chat of hers in the dashboard's own form (``dashboard:`` and a
+    chat's name), which someone watches: never another kind's work run as a dashboard chat."""
+    from personalclaw import session_keys as keys
+
+    if keys.judged_kind(session_key) is not keys.DASHBOARD or session_key == keys.DASHBOARD_UI:
+        return False
+    inner = keys.kind_of(session_key[len(keys.DASHBOARD.prefix) :])
+    return inner in (None, keys.CHAT) and not keys.is_unattended(session_key)
+
+
+#: A URL as a command spells it: a scheme, then everything to a blank or a quote.
+_URL_WORD = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"<>]+")
+
+
+def fetched_urls(event: object) -> list[str]:
+    """Each URL the command *event* asks to run names, as its audit row shows it: credentials and
+    data-carrying queries redacted (``security.redact_credentials``,
+    ``security.redact_exfiltration_urls``), at most 8, of 300 characters each."""
+    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+    from personalclaw.task_modes import shell_call_command
+
+    command = shell_call_command(
+        str(getattr(event, "title", "") or ""),
+        str(getattr(event, "tool_kind", "") or ""),
+        getattr(event, "tool_input", ""),
+        getattr(event, "risk_level", "") or "",
+    )
+    found: list[str] = []
+    for url in _URL_WORD.findall(command or ""):
+        clean = redact_credentials(redact_exfiltration_urls(url)[0])[0][:300]
+        if clean not in found:
+            found.append(clean)
+    return found[:8]
+
+
+def answered_a_fetch(
+    hosts: Iterable[str], *, caller: str, subject: str, event: object = None
+) -> None:
+    """Audit a call YOLO answered past the allowed hosts, naming each host it fetches from and
+    each URL its command names (:func:`fetched_urls`), where the owner reads in the morning what
+    ran (best-effort, like every audit write here)."""
+    try:
+        from personalclaw.sel import sel
+
+        named = sorted(set(hosts))
+        sel().log_api_access(
+            caller=caller or "approval",
+            operation="approval.yolo_fetch",
+            outcome="auto_approved",
+            source="guardrails",
+            resources=(f"grant={YOLO},hosts={' '.join(named)},{subject}")[:200],
+            metadata={"hosts": named, "urls": fetched_urls(event)},
+        )
+    except Exception:  # noqa: BLE001 - an audit write never decides an approval
+        logger.warning("SEL audit failed for a fetch YOLO answered", exc_info=True)
 
 
 def held_for_her(grant: str, *, caller: str, subject: str, asked_by: Mapping[str, str]) -> None:

@@ -76,6 +76,9 @@ def unsplit_effects(
             network=effects.network,
             hosts=effects.hosts,
             host_unread=effects.host_unread,
+            # A line it cannot split may hand what one part fetches to another: every part that
+            # reaches the network sends.
+            sends=effects.network,
             writes=written.writes,
             targets=written.targets,
             target_unread=written.target_unread,

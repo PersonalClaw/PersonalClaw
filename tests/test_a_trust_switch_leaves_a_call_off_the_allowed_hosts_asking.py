@@ -3,8 +3,8 @@ protected folder.
 
 Switching a chat to Trust, or YOLO on, answers the pending approvals the switch covers: the chat's
 own, and the ones its agents asked on its behalf. One of them may be asked only because its command
-reaches a host off the allowed hosts. Its card names the host and says such a call "is always asked
-about, whatever this chat or its agent allows", because no grant answers it (``run_bounds``). The
+reaches a host off the allowed hosts. Its card names the host and says such a call "is asked about
+whatever this chat or its agent allows", because no grant answers it (``run_bounds``). The
 switch approved it anyway, as if the grant it turns on answered it.
 
 Now a call asked for that reason keeps asking until the owner answers it, and every other call the
