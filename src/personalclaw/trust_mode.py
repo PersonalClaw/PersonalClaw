@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Default TTLs (seconds) for surface-driven activation.
 YOLO_CHANNEL_TTL_SECS = 1800  # 30 min — channel `!yolo on`
-YOLO_DASHBOARD_TTL_SECS = 6 * 3600  # 6 h — dashboard trust toggle (security ceiling)
+YOLO_DASHBOARD_TTL_SECS = 24 * 3600  # 24 h — dashboard trust toggle (security ceiling)
 
 
 class _TrustMode:

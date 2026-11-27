@@ -82,7 +82,7 @@ def test_apply_startup_yolo_refuses_when_log_api_access_fails() -> None:
 
 
 class TestDashboardYoloFromConfig:
-    """Config-driven YOLO is permanent (no 6h TTL) and cannot be downgraded to a
+    """Config-driven YOLO is permanent (no TTL) and cannot be downgraded to a
     TTL by a subsequent interactive toggle. State delegates to the canonical
     :mod:`personalclaw.trust_mode`; these assert on the observable posture and its
     single source of truth.
@@ -99,7 +99,7 @@ class TestDashboardYoloFromConfig:
         assert state.yolo_remaining_secs() is None  # permanent → no countdown
 
     def test_interactive_enable_cannot_downgrade_config(self) -> None:
-        """Dashboard toggle must not overwrite config-permanent yolo with 6h TTL."""
+        """Dashboard toggle must not overwrite config-permanent yolo with a TTL."""
         state = _make_state()
         state.enable_yolo(from_config=True)
         state.enable_yolo()  # interactive — should be no-op
