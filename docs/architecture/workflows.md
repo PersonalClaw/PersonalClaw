@@ -186,7 +186,11 @@ instance so a resumed run reads it back, and a step after the loop reads it as
 `{{nodes.<loop>.output}}`. A loop handed to a person (its budget spent without its
 exit met, a judge that would not decide, a cycle that failed, an exit condition it
 could not read) records nothing, and a step that reads it is skipped. A `branch`
-records its routing, `{"case": label}`, when it routes, and once the case it took has
+records its routing, `{"case": label}`, when it routes, and the scheduler reads that record
+for the case it took (`tick._recorded_case`), so a branch on a fan-out's `{{item}}` runs its
+item's case. Its stored DONE says it routed, not that its case finished, so the scheduler reads
+a case, a fan-out item and a loop cycle that is itself a branch by its derived state: read
+stored, each looked finished the moment it routed and the run deadlocked. Once the case it took has
 ended in success the same record carries what that case produced, `produced`, read the
 way a loop's cycle is (`node_bindings.record_branch_outputs`): a step after the branch
 reads which case ran as `{{nodes.<branch>.output.case}}` and its result as
@@ -205,8 +209,11 @@ reads it back: a step after it reads `{{nodes.<foreach>.output}}`. An item that 
 or was skipped is left out, and the fan-out's own row says how many and why
 (`degraded_reason`). The list is skipped where a subtree is layered, since each item's
 steps already count there. Validation refuses a field read of it
-(`{{nodes.<foreach>.output.title}}`), which names `| map('title')`. The body's own step
-id still names one item, the last to finish.
+(`{{nodes.<foreach>.output.title}}`), which names `| map('title')`. A body step's id
+read from outside the fan-out names no item, so validation refuses it too
+(`WF_FAN_OUT_STEP_READ_FROM_OUTSIDE`, `validator._validate_reads_from_outside_a_fan_out`),
+naming the fan-out's own read; until it did, that read resolved to whichever item's step
+finished last, and a step combining the fan-out's results worked from one of them.
 A `sequence` or `parallel`
 records nothing of its own, so validation refuses a read of one when the spec is saved
 (`WF_UNSATISFIABLE_OUTPUT_REF`): read the step inside it whose output you need. A loop
@@ -487,6 +494,13 @@ step that binds it starts, and only for such a step, so a file dropped while one
 step runs reaches the next. A step's file tools do not reach the `dropped/` zone,
 so this is the one way in. Its value is already fenced: don't pipe it through
 `fenced`. A workflow that declares no drop has no `run.dropped`.
+
+Who lets a file into the drop (`handlers.api_run_drop`): she does, by confirming it or by
+dropping a type the workflow auto-accepts. An app's file never lands on its word: its `confirm`
+is no approval, and the auto-accept list does not apply to it. An agent's `confirm` is no
+approval either, and its file follows the auto-accept list only in its own chat's run (one whose
+origin, at its tree's root, is that chat or a helper of it); in any other run, or one whose
+origin cannot be read, it waits for her (`handlers._held_for_her`).
 
 A pipe's arguments are **literals** — a quoted string, a number, `true`/`false` or
 `null` — so an argument can never name a variable. That makes `| default([])` not an

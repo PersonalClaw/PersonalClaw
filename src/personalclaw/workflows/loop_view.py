@@ -178,6 +178,8 @@ def _cycles(run_id: str, loop_path: str) -> tuple[int, float | None]:
         if str(r.get("instance_path") or "") == loop_path
         and isinstance(r.get("iteration"), int)
         and r["iteration"] >= 0
+        # Where a rewind sent the loop back to a cycle: no cycle ended there.
+        and r.get("outcome") != "rewound"
     ]
     times = [t for t in (_epoch(r.get("ts")) for r in mine) if t is not None]
     return len({r["iteration"] for r in mine}), max(times, default=None)

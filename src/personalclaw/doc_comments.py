@@ -269,9 +269,15 @@ def take_in_restored(snap: Path) -> int:
     home (``personalclaw_dir``) and that home's workspace (``workspaces``, or a ``workspace_dir``
     of its own), and a comment on a file under one of them names the same file under this home's
     (``memory_locality.this_homes_workspaces``), its workspace first. A comment on an artifact (its
-    slug), and one on a file outside that home, are left as they are; so is this home's own."""
-    moves = _homes_moves(snap)
-    if not moves:
+    slug), and one on a file outside that home, are left as they are; so is this home's own:
+    only the rows the archive brought are read (its own ``doc_comments.json``), and a folder of
+    the archive's that holds one of this home's, or "/", maps nothing
+    (``memory_locality.restored_home_moves``)."""
+    from personalclaw.memory_locality import moved_path, restored_home_moves
+
+    moves = restored_home_moves(snap)
+    brought = _ids_in(snap)
+    if not moves or not brought:
         return 0
     with record_files.locked(store_path()):
         try:
@@ -281,7 +287,10 @@ def take_in_restored(snap: Path) -> int:
             return 0
         moved = 0
         for row in rows:
-            doc_id, doc_path = _moved(row.doc_id, moves), _moved(row.doc_path, moves)
+            # Only the rows the archive brought: this home's own are its own paths already.
+            if row.id not in brought:
+                continue
+            doc_id, doc_path = moved_path(row.doc_id, moves), moved_path(row.doc_path, moves)
             if doc_id is None and doc_path is None:
                 continue
             row.doc_id = doc_id or row.doc_id
@@ -294,42 +303,8 @@ def take_in_restored(snap: Path) -> int:
     return moved
 
 
-def _homes_moves(snap: Path) -> list[tuple[str, str]]:
-    """Each folder of the home the unpacked archive *snap* came from that is another folder here,
-    with that folder, the longest first: its workspace, then its home."""
-    from personalclaw.memory_locality import this_homes_workspaces
-
-    try:
-        manifest = json.loads((snap / "MANIFEST.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        manifest = {}
-    if not isinstance(manifest, dict):
-        manifest = {}
-    here = this_homes_workspaces()
-    pairs: list[tuple[object, str]] = []
-    named = manifest.get("workspaces")
-    if isinstance(named, list):
-        pairs.extend(zip(named, here))
-    came_from = manifest.get("personalclaw_dir")
-    if isinstance(came_from, str) and came_from:
-        pairs.append((str(config_loader.memory_root(Path(came_from))), here[1]))
-        pairs.append((came_from, str(config_loader.config_dir())))
-    try:
-        pairs.append(((snap / "workspace_dir").read_text(encoding="utf-8").strip(), here[0]))
-    except OSError:
-        pass
-    moves = {
-        old.rstrip("/"): new.rstrip("/")
-        for old, new in pairs
-        if isinstance(old, str) and old.startswith("/") and old.rstrip("/") != new.rstrip("/")
-    }
-    return sorted(moves.items(), key=lambda move: len(move[0]), reverse=True)
-
-
-def _moved(path: str, moves: list[tuple[str, str]]) -> str | None:
-    """*path* under the folder it is in here, when it is a path under one of *moves*' old
-    folders; ``None`` otherwise."""
-    for old, new in moves:
-        if path == old or path.startswith(old + "/"):
-            return new + path[len(old) :]
-    return None
+def _ids_in(snap: Path) -> set[str]:
+    """The ids of the comments the unpacked archive *snap* carries, in its own
+    ``doc_comments.json``."""
+    rows = record_files.records_or_empty(snap / _STORE_FILENAME, _COMMENTS)
+    return {c.id for c in (_from_dict(r) for r in rows) if c is not None}

@@ -16,6 +16,7 @@ Attended worker's calls through the same path a chat's go (the card, the bell, t
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -93,7 +94,7 @@ class _Svc:
         self._loops.pop(loop_id, None)
 
 
-def _code_loop(*, attended: bool, provider: str = "") -> Loop:
+def _code_loop(*, attended: bool, provider: str = "", workspace_dir: str = "") -> Loop:
     return store.create(
         Loop(
             id="",
@@ -102,6 +103,7 @@ def _code_loop(*, attended: bool, provider: str = "") -> Loop:
             task="fix the double-escaped digest titles",
             attended=attended,
             provider=provider,
+            workspace_dir=workspace_dir,
             plan=[{"stage": "implementation", "title": "Impl"}],
             kind_config={"entry_stage": "implementation"},
         )
@@ -141,14 +143,29 @@ def test_an_unattended_loops_workers_run_on_their_grant():
         assert worker._unattended is True
 
 
-def test_this_loop_reaches_every_worker_and_ends_with_the_run():
-    loop = _code_loop(attended=True)
+def test_this_loop_reaches_every_worker_and_ends_with_the_run(tmp_path, monkeypatch):
+    from personalclaw.loop import worktree
+
+    # Task worktrees live under the home (`worktree._worktrees_root`): this test's own.
+    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    loop = _code_loop(attended=True, workspace_dir=str(repo))
+
+    async def the_task(task_id, **_kw):
+        return _task() if task_id == _task().id else None
+
+    monkeypatch.setattr("personalclaw.tasks.registry.get_task", the_task)
     state, svc = _State(), _Svc()
     _run(manager.start(state, svc, loop.id))
     main = state._sessions[manager.session_key(loop.id)]
+    # A resume stands a task worker back up only in a worktree this home has, on a task it can
+    # read (`manager._resume_task_worker`): its worktree, where the loop's project keeps them.
+    wt = worktree.worktree_path(str(repo), _task().id, store.get(loop.id).tasks_project_id)
+    os.makedirs(wt)
 
     manager.grant_every_worker(state, loop.id)
-    skey = _run(manager.spawn_task_worker(state, svc, store.get(loop.id), _task(), "/tmp/wt"))
+    skey = _run(manager.spawn_task_worker(state, svc, store.get(loop.id), _task(), wt))
     task_worker = state._sessions[skey]
     assert main._trust is True and task_worker._trust is True
 

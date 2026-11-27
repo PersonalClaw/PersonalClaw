@@ -285,6 +285,11 @@ WF_ERROR_CODES: dict[str, str] = {
         "field beside its `case` and `produced`, or one under `produced` that a case it can take "
         "does not produce, so the read fails whenever that case is taken."
     ),
+    "WF_FAN_OUT_STEP_READ_FROM_OUTSIDE": (
+        "A node outside a foreach reads `{{nodes.<step>...}}` of a step inside it. Every item "
+        "runs that step, so the read names no item; `{{nodes.<foreach>.output}}` is the list of "
+        "what each item produced, in item order."
+    ),
     "WF_UNCONTRACTED_OUTPUT_REF": (
         "A node whose output is read declares no `output_contract`, so nothing checks the "
         "paths read from it."
@@ -506,6 +511,10 @@ WF_ERROR_CODES: dict[str, str] = {
     "WF_MUT_INSERT_NO_NODE": "An `insert` op carries no `node` payload.",
     "WF_MUT_INSERT_BAD_NODE": "An `insert` op's `node` payload is not a valid node spec.",
     "WF_MUT_EMPTY_UPDATE": "An `update_node` op names no fields to change.",
+    "WF_MUT_NOTHING_TO_RERUN": (
+        "A `rewind` or `run_from` would reset nothing: the step, or every step that reads it, "
+        "has not run in this run yet."
+    ),
     "WF_MUT_FROZEN_NODE": (
         "The target node's state does not permit editing; rewind it first to change it."
     ),

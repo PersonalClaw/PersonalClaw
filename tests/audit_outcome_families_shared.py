@@ -61,6 +61,7 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
         "ran",
         "removed",
         "reused",
+        "rewound",
         "scanned",
         "spawned",
         "started",
@@ -77,6 +78,9 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
     # the rows' own grant decisions are audited separately (`trigger.grant`).
     # `complete` is how a chat turn ended (`turns.Outcome`), as an earlier answer Regenerate kept
     # reads (`dashboard.turn_rows`): its turn ran to its end, which says nothing was refused.
+    # `rewound` is a loop's `iteration` row where a rewind sent it back to a cycle
+    # (`iteration_context.REWOUND`, `mid_flight._back_to_cycles`): the cycle it runs again from,
+    # which says nothing was allowed, refused or broke.
     # `absent` is an app setup step deleting a credential that was not stored (`app_cli`'s
     # `removed if removed else absent`): nothing to delete, nothing refused, nothing broke.
     "the work did not need doing, so nothing ran: a no-op is not a success, not a refusal of "

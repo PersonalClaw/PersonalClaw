@@ -92,6 +92,52 @@ class LintResult:
         }
 
 
+#: A `{{nodes.<id>` read, and the id it reads.
+_NODES_READ = re.compile(r"\{\{\s*nodes\.([A-Za-z0-9_\-]+)")
+
+
+def _carries_state(body: dict[str, Any]) -> bool:
+    """Whether a loop's *body* reads what an earlier round produced.
+
+    `{{last.…}}`, `{{iter.…}}` and `{{previous.…}}` always do. A `{{nodes.X}}` read does only
+    when X is outside the body (state the round did not make) or runs after the reader in it
+    (so the read sees the previous round's value). A read of a step earlier in the same round
+    is that round's own work: `audit-sweep` read only those, re-ran the same three finders on
+    the same input each round, and this lint let it through because its body held a
+    `{{nodes.` at all."""
+    text = json.dumps(body)
+    if any(token in text for token in ("{{last.", "{{iter.", "{{previous.")):
+        return True
+    # A macro's steps are read where it expands: `verify_panel` is the steps `verify_confirmed`
+    # names, and unexpanded they would read as steps outside the body.
+    try:
+        from personalclaw.workflows.macros import expand_spec
+
+        body = expand_spec({"root": body}).get("root") or body
+    except Exception:  # noqa: BLE001 - a macro that does not expand is reported elsewhere
+        pass
+    order: list[tuple[str, str]] = []
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        order.append((str(node.get("id") or ""), json.dumps(node.get("config") or {})))
+        for child in node.get("children") or []:
+            visit(child)
+        visit(node.get("body"))
+        for case in (node.get("cases") or {}).values():
+            visit(case)
+        visit(node.get("default"))
+
+    visit(body)
+    at = {node_id: i for i, (node_id, _text) in enumerate(order) if node_id}
+    for i, (_node_id, config) in enumerate(order):
+        for read in _NODES_READ.findall(config):
+            if read not in at or at[read] > i:
+                return True
+    return False
+
+
 def lint_template(spec: dict[str, Any], *, bundled: bool = False) -> LintResult:
     """Lint one template spec. Never raises — a lint that crashed on a malformed spec would
     hide every finding it had already collected.
@@ -378,18 +424,13 @@ def _check_anti_patterns(res: LintResult, spec: dict[str, Any]) -> None:
     # AMNESIAC — a loop whose body never reads what the previous iteration produced. It
     # will redo the same first step forever, and each iteration will look productive.
     for loop in loops:
-        body_text = json.dumps(loop.get("body") or {})
-        # `{{nodes.X}}` inside a loop body is ALSO cross-iteration state: it reads a
-        # sibling's accumulated output. Only accepting `last`/`iter` reported the shipped
-        # `deep-research` and `audit-sweep` sweeps as amnesiac when both do carry state
-        # forward — a false positive on the library is how a rule gets ignored.
-        carries_state = any(token in body_text for token in ("{{last.", "{{iter.", "{{nodes."))
-        if not carries_state:
+        if not _carries_state(loop.get("body") or {}):
             res.findings.append(
                 LintFinding(
                     "WFL_AMNESIAC_LOOP",
-                    f"loop {loop.get('id')!r} never binds `last` or `iter`: each iteration "
-                    "starts blind, so it will repeat its first step indefinitely",
+                    f"loop {loop.get('id')!r} never reads what an earlier iteration produced "
+                    "(`last`, `iter`, or a step outside the loop or after the reader): each "
+                    "iteration starts blind, so it will repeat its first step indefinitely",
                     severity=SEVERITY_WARNING,
                 )
             )

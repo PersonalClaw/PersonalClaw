@@ -2332,6 +2332,42 @@ def outside_fences(text: str) -> str:
     return "".join(kept)
 
 
+def cut_fenced_words(text: str, limit: int) -> str:
+    """*text*, fenced whole, cut to *limit* characters of the words its fences hold.
+
+    The limit counts words, never a marker: an open marker carries its fence's provenance
+    (``source``, ``source_id``, ``transformation_path``), which can be most of a short excerpt, and
+    a cut that counted it sliced the close and left the slice where a person read it. So each span
+    keeps its open marker as it arrived, only the words between are cut, and a span the limit ran
+    out before is left out whole. Every span handed back is closed, since an UNTERMINATED fence is
+    worse than a truncated one: whatever follows it would read as fenced. Text that fits is handed
+    back as it is.
+    """
+    text = text or ""
+    spans: list[tuple[str, str, str, bool]] = []
+    pos = 0
+    while (opened := _OPEN_TAG_RE.search(text, pos)) is not None:
+        closed = _CLOSE_TAG_RE.search(text, opened.end())
+        end = closed.start() if closed is not None else len(text)
+        # The line breaks `fence_untrusted` sets between a marker and the words are not words.
+        words = text[opened.end() : end].removeprefix("\n").removesuffix("\n")
+        spans.append((text[pos : opened.start()], opened.group(0), words, closed is not None))
+        pos = closed.end() if closed is not None else len(text)
+    if not spans:
+        return text[: max(0, limit)]
+    if sum(len(words) for _, _, words, _ in spans) <= limit and all(c for *_, c in spans):
+        return text
+    kept: list[str] = []
+    left = max(0, limit)
+    for before, marker, words, _closed in spans:
+        if left <= 0:
+            break
+        cut = words[:left]
+        left -= len(cut)
+        kept.append(f"{before}{marker}\n{cut}\n{UNTRUSTED_CLOSE}")
+    return "".join(kept)
+
+
 #: Chat-template role/control tokens, neutralised in untrusted text.
 #:
 #: These are not prose — each is a wire-format marker a runtime uses to delimit turns, so untrusted

@@ -674,6 +674,20 @@ def take_in_other_homes_chats(log: "ConversationLog", workspaces: Iterable[str] 
     return changed
 
 
+def take_in_a_restored_home(snap: Path, home: Path) -> None:
+    """What a restore or an import of the unpacked archive *snap* into the home at *home* does
+    last, for a home at another path: the chats that worked in its home's workspace work in this
+    one's (:func:`take_in_restored_chats`), and its comments on a file of that home, and its
+    artifacts linked to one, follow the same file here (``doc_comments.take_in_restored``,
+    ``artifacts.native.take_in_restored``)."""
+    from personalclaw import doc_comments
+    from personalclaw.artifacts import native as artifacts
+
+    take_in_restored_chats(snap, home)
+    doc_comments.take_in_restored(snap)
+    artifacts.take_in_restored(snap)
+
+
 def take_in_restored_chats(snap: Path, home: Path) -> list[str]:
     """Once a restore or an import has put the chats of the unpacked archive *snap* into the home
     at *home*: have each that worked in the workspace of the home *snap* came from record none, so
@@ -693,14 +707,67 @@ def take_in_restored_chats(snap: Path, home: Path) -> list[str]:
     return take_in_other_homes_chats(ConversationLog(base_dir=sessions), _archive_workspaces(snap))
 
 
-def _archive_workspaces(snap: Path) -> list[str]:
-    """The folders the home the unpacked archive *snap* came from worked in as its workspace."""
+def _archive_manifest(snap: Path) -> dict[str, Any]:
+    """The unpacked archive *snap*'s ``MANIFEST.json``; ``{}`` for none that can be read."""
     try:
         manifest = json.loads((snap / "MANIFEST.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        manifest = {}
-    if not isinstance(manifest, dict):
-        manifest = {}
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
+def restored_home_moves(snap: Path) -> list[tuple[str, str]]:
+    """Each folder of the home the unpacked archive *snap* came from that is another folder in
+    this home, with that folder, the longest first: its workspace, then its home.
+
+    A store that keeps a file by its absolute path (a comment's document, a linked artifact's
+    file) kept a path true only in the home, at the place, that wrote it. The archive names its
+    home (``personalclaw_dir``) and that home's workspace (``workspaces``, or a ``workspace_dir``
+    of its own); a path under one of them names the same file under this home's
+    (:func:`this_homes_workspaces`, ``config.loader.config_dir``), as :func:`moved_path` maps it."""
+    from personalclaw.config.loader import config_dir
+
+    manifest = _archive_manifest(snap)
+    here = this_homes_workspaces()
+    pairs: list[tuple[object, str]] = []
+    named = manifest.get("workspaces")
+    if isinstance(named, list):
+        pairs.extend(zip(named, here))
+    came_from = manifest.get("personalclaw_dir")
+    if isinstance(came_from, str) and came_from:
+        pairs.append((str(memory_root(Path(came_from))), here[1]))
+        pairs.append((came_from, str(config_dir())))
+    try:
+        pairs.append(((snap / "workspace_dir").read_text(encoding="utf-8").strip(), here[0]))
+    except OSError:
+        pass
+    # A folder that holds one of this home's is never an old folder: mapped, it would move this
+    # home's own paths too. So is "/" (empty once its "/" is taken), which holds every path.
+    ours = [str(config_dir()).rstrip("/"), *(h.rstrip("/") for h in here)]
+    moves = {
+        old.rstrip("/"): new.rstrip("/")
+        for old, new in pairs
+        if isinstance(old, str)
+        and old.startswith("/")
+        and old.rstrip("/")
+        and old.rstrip("/") != new.rstrip("/")
+        and not any(p == old.rstrip("/") or p.startswith(old.rstrip("/") + "/") for p in ours)
+    }
+    return sorted(moves.items(), key=lambda move: len(move[0]), reverse=True)
+
+
+def moved_path(path: str, moves: Iterable[tuple[str, str]]) -> str | None:
+    """*path* under the folder it is in here, when it is a path under one of *moves*' old folders
+    (:func:`restored_home_moves`); ``None`` otherwise."""
+    for old, new in moves:
+        if path == old or path.startswith(old + "/"):
+            return new + path[len(old) :]
+    return None
+
+
+def _archive_workspaces(snap: Path) -> list[str]:
+    """The folders the home the unpacked archive *snap* came from worked in as its workspace."""
+    manifest = _archive_manifest(snap)
     named = manifest.get("workspaces")
     found = [p for p in named if isinstance(p, str)] if isinstance(named, list) else []
     came_from = manifest.get("personalclaw_dir")

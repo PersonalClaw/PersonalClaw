@@ -324,11 +324,15 @@ def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.Casc
     targets = set(preview.rerun)
     if op.kind == mutations.OpKind.RUN_FROM:
         targets.discard(op.node_id)
-    paths = [path for path, node in walk(ctl.root) if node.id in targets for _ in (0,)]
+    # By the instances each step ran under: a step inside a loop or foreach runs per cycle and
+    # per item, never at its definition path (`mutations.reentry_plan`).
+    plan = mutations.reentry_plan(ctl.root, ctl.instances, targets, seeds={op.node_id})
+    paths = plan.reset
     # A remembered "always allow" must not survive a rewind: it would auto-approve the
     # very step the user rewound in order to reconsider it.
     ctl._allow_memory.clear()
-    epoch = mutations.next_epoch(ctl.instances, paths, force=op.force)
+    epoch = mutations.next_epoch(ctl.instances, [*paths, *plan.dropped], force=op.force)
+    _back_to_cycles(ctl, plan)
     for path in paths:
         inst = ctl._instance(path)
         if inst.output_ref:
@@ -378,6 +382,51 @@ def _apply_reentry(ctl: RunController, op: mutations.Op, preview: mutations.Casc
         withdrawn = withdraw_asks(ctl, reason="the step was rewound", instance_prefix=path)
         if withdrawn and node is not None and node.id:
             attention.resolve_gate_item(ctl.services.attention_state, ctl.run.id, node.id)
+
+
+def _back_to_cycles(ctl: RunController, plan: mutations.ReEntry) -> None:
+    """Send each loop a re-entry reaches back to the cycle it re-runs from, and drop what ran
+    after it: the instances of its later cycles (or, re-run whole, all of them), whose outputs are
+    archived, to run again as the loop reaches them.
+
+    The loop's cycle counter is what the scheduler reads for the cycle it is in
+    (`tick._visit_loop`), and a reset loop kept its own: it found that cycle finished and nothing
+    to run, and the run ended "deadlocked". The counter is journaled where it goes back
+    (`ITERATION` with outcome :data:`iteration_context.REWOUND`), so a restart rebuilds it from
+    there (`iteration_context.rebuild_iterations`), and the evidence the loop gathered over the
+    cycles undone (its dry streak, its breaker) goes with them."""
+    from personalclaw.workflows.iteration_context import REWOUND
+
+    for path in plan.dropped:
+        inst = ctl.instances.get(path)
+        if inst is None:
+            continue
+        if inst.output_ref:
+            store.archive_output(ctl.run.id, path, ctl.run.spec_version)
+        if inst.claim_target and inst.state in TERMINAL_STATES:
+            release_execution_claim(inst.claim_target, inst.claim_holder)
+        node = dict(walk(ctl.root)).get(spec_path(path))
+        ctl.forget_output(path, node.id if node is not None else "")
+        ctl.journal.invalidate_prefix(path)
+        ctl._park_answers.pop(path, None)
+        from personalclaw.workflows.gate_answers import withdraw_asks
+
+        withdraw_asks(ctl, reason="the step was rewound", instance_prefix=path)
+        del ctl.instances[path]
+    nodes = dict(walk(ctl.root))
+    for loop_path, cycle in plan.cycles.items():
+        ctl._iterations[loop_path] = cycle
+        ctl._dry_streaks.pop(loop_path, None)
+        ctl._breakers.pop(loop_path, None)
+        node = nodes.get(spec_path(loop_path))
+        ctl.journal.iteration(
+            loop_path,
+            node.id if node is not None else "",
+            iteration=cycle,
+            outcome=REWOUND,
+            error_signature="",
+            tokens=0,
+        )
 
 
 def _apply_fork(ctl: RunController, op: mutations.Op) -> None:
@@ -758,13 +807,15 @@ def skip_refusal(
 
 
 def _flag_stale(ctl: RunController, preview: mutations.CascadePreview) -> None:
-    """Journal `inputs_stale` for done nodes outside the re-run set."""
+    """Journal `inputs_stale` for done nodes outside the re-run set, at every instance each
+    ran under: a step inside a loop or foreach ran per cycle and per item."""
     rerun = set(preview.rerun)
-    for path, node in walk(ctl.root):
-        if not node.id or node.id in rerun:
+    nodes = dict(walk(ctl.root))
+    for path, inst in list(ctl.instances.items()):
+        node = nodes.get(spec_path(path))
+        if node is None or not node.id or node.id in rerun:
             continue
-        inst = ctl.instances.get(path)
-        if inst is None or inst.state not in SUCCESS_STATES:
+        if inst.state not in SUCCESS_STATES:
             continue
         if not (node_deps(node.config or {}) & rerun):
             continue

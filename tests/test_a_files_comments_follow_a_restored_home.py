@@ -138,3 +138,59 @@ def test_an_export_archive_imported_at_another_path_anchors_the_comments_here(
     assert anchors["Nice chart."] == ("garden-plan", "")
     assert all(not a[0].startswith(old["home"]) for a in anchors.values()), anchors
     assert home.is_dir()
+
+
+# ── only the archive's own rows, and never by a folder that holds this home ──────────────────
+
+
+def _unpacked(tmp_path: Path, came_from: str, brought: list[dict]) -> Path:
+    """An unpacked archive naming its home *came_from*, carrying the comments *brought*."""
+    import json
+
+    snap = tmp_path / "unpacked"
+    snap.mkdir(parents=True, exist_ok=True)
+    (snap / "MANIFEST.json").write_text(json.dumps({"personalclaw_dir": came_from}), "utf-8")
+    (snap / "doc_comments.json").write_text(json.dumps({"comments": brought}), "utf-8")
+    return snap
+
+
+def _row(cid: str, path: str) -> dict:
+    return {"id": cid, "doc_id": path, "doc_path": path, "comment": f"note {cid}", "ts": 1.0}
+
+
+def _seed(rows: list[dict]) -> None:
+    import json
+
+    doc_comments.store_path().write_text(json.dumps({"comments": rows}), "utf-8")
+
+
+def test_an_archive_that_names_the_root_as_its_home_moves_no_comment(tmp_path, monkeypatch) -> None:
+    home = _use_home(monkeypatch, tmp_path / "bob" / "pc")
+    mine = str(Path(config_loader.default_workspace_dir()) / "todo.md")
+    theirs = str(tmp_path / "alice" / "pc-home" / "workspace" / "plan.md")
+    _seed([_row("c-mine", mine), _row("c-theirs", theirs)])
+    snap = _unpacked(tmp_path, "/", [_row("c-theirs", theirs)])
+    assert doc_comments.take_in_restored(snap) == 0
+    assert _anchors() == {"note c-mine": (mine, mine), "note c-theirs": (theirs, theirs)}
+    assert home.is_dir()
+
+
+def test_an_archive_folder_that_holds_this_home_moves_nothing(tmp_path, monkeypatch) -> None:
+    _use_home(monkeypatch, tmp_path / "bob" / "pc")
+    mine = str(Path(config_loader.default_workspace_dir()) / "todo.md")
+    above = str(tmp_path / "bob" / "notes.md")
+    _seed([_row("c-mine", mine), _row("c-above", above)])
+    snap = _unpacked(tmp_path, str(tmp_path / "bob"), [_row("c-above", above)])
+    assert doc_comments.take_in_restored(snap) == 0
+    assert _anchors() == {"note c-mine": (mine, mine), "note c-above": (above, above)}
+
+
+def test_only_the_comments_the_archive_brought_are_moved(tmp_path, monkeypatch) -> None:
+    # Two homes on one machine: this one's own comment on a file of the other home stays as it is.
+    _use_home(monkeypatch, tmp_path / "bob" / "pc")
+    there = str(tmp_path / "alice" / "pc-home" / "workspace" / "plan.md")
+    _seed([_row("c-brought", there), _row("c-mine-on-alices", there)])
+    snap = _unpacked(tmp_path, str(tmp_path / "alice" / "pc-home"), [_row("c-brought", there)])
+    assert doc_comments.take_in_restored(snap) == 1
+    moved = str(Path(config_loader.default_workspace_dir()) / "plan.md")
+    assert _anchors() == {"note c-brought": (moved, moved), "note c-mine-on-alices": (there, there)}

@@ -26,6 +26,7 @@ from personalclaw.workflows import attention, ending_sentence
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import judge_calibration, mid_flight, mutations, revision, store
 from personalclaw.workflows.bindings import node_deps
+from personalclaw.workflows.engine_support import ASKING_GATES
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.models import (
     REFUSED_TO_START,
@@ -83,6 +84,12 @@ def awaits_human(ctl: RunController, path: str) -> bool:
     exactly that ("answer this gate to force a check now"). Splitting them would hide a
     parked monitor from needs_input, leaving no surface for the escape hatch.
 
+    A waiting `judge` gate is one too: it parks only on a person, when its verdict is
+    NEEDS_INPUT or its actor rule sends the verdict to review (`engine.dispatch_gate`), with the
+    same typed ask an approval parks with. Read as a clock it minted no continuation, the run
+    never showed as needing input, and the gate waited out its timeout. The gate kinds are the
+    ones whose park asks (`engine_support.ASKING_GATES`), so the two cannot drift apart again.
+
     A waiting ACTION is the other case, and it used to be missed: an action waits only on a
     person — it parked (`outcome="needs_input"`: browse at a sign-in page, a spent budget), or its
     output asked a question (`gate_policy.clarification_from_output`). Neither has a deadline,
@@ -96,8 +103,7 @@ def awaits_human(ctl: RunController, path: str) -> bool:
         return True
     if node.kind != NodeKind.GATE:
         return False
-    raw = str((node.config or {}).get("kind", "") or "")
-    return raw in ("approval", "event")
+    return str((node.config or {}).get("kind", "") or "") in ASKING_GATES
 
 
 def ensure_continuation(ctl: RunController, path: str) -> None:

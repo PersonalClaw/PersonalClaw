@@ -602,7 +602,7 @@ class TestOutputContractCensus:
             unscoped += len(read_any)
             subpath_scoped += len(read_sub)
         assert 60 <= unscoped <= 110, unscoped
-        assert 35 <= subpath_scoped <= 80, subpath_scoped
+        assert 35 <= subpath_scoped <= 90, subpath_scoped
         assert subpath_scoped < unscoped, "sub-path scoping should reduce the volume"
 
 

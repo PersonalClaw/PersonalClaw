@@ -25,6 +25,7 @@ What is actually load-bearing here, and why each is a test rather than a review 
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -558,18 +559,43 @@ class TestOnARealLongHorizonTemplate:
         return run
 
     #: One answer that carries every key a node of this template declares (the finders'
-    #: `findings`, the refuter's `refuted`/`reason`/`severity`, the critic's `new_findings` and
-    #: `uncovered`), so every step is in its schema: a step whose answer ignores its schema fails.
-    #: The refuter's values are the ones its bindings default to, and an empty findings list is
-    #: what makes the loop go dry.
+    #: `findings`, the refuter's `refuted`/`reason`/`severity`, the critic's `new_this_round`,
+    #: `new_findings` and `uncovered`), so every step is in its schema: a step whose answer ignores
+    #: its schema fails. The refuter's values are the ones its bindings default to, and an empty
+    #: findings list is what makes the loop go dry.
     ANSWER = {
         "findings": [],
+        "new_this_round": [],
         "new_findings": [],
         "uncovered": [],
         "refuted": False,
         "reason": "",
         "severity": "",
     }
+
+    class _Reader:
+        """The subagent manager, for the one stage the sweep spawns with fixing off: its read
+        step, which hands the target on as its text."""
+
+        def __init__(self, target: str) -> None:
+            self.target = target
+            self.infos: dict[str, Any] = {}
+
+        def spawn(self, **_kw: Any) -> Any:
+            from types import SimpleNamespace
+
+            material = json.dumps({"material": self.target, "read": []})
+            info = SimpleNamespace(
+                id=f"r{len(self.infos)}", done=False, error="", reaped=False, result=material
+            )
+            self.infos[info.id] = info
+            return info
+
+        def get(self, agent_id: str) -> Any:
+            info = self.infos.get(agent_id)
+            if info is not None:
+                info.done = True
+            return info
 
     def _fn(self, sent: list[str]):
         async def fn(prompt, *, use_case="background", output_type=None, model=""):
@@ -590,13 +616,18 @@ class TestOnARealLongHorizonTemplate:
 
         sent: list[str] = []
         run = self._run(spec, target)
-        c = RunController(run, spec, services=EngineServices(completion=self._fn(sent)))
+        c = RunController(
+            run,
+            spec,
+            services=EngineServices(completion=self._fn(sent), subagents=self._Reader(target)),
+        )
         status = await c.run_to_completion(timeout=60)
 
         # 1. The engine really compacted, on the real template's real prompts.
         compacted = [p for p in sent if "[CONTEXT COMPACTION — REFERENCE ONLY" in p]
         assert compacted, "no node's prompt went through the ladder"
-        assert len(sent) >= 12, f"the loop did not run its cycles (only {len(sent)} calls)"
+        # Two rounds of three finders and a critic: the two that find nothing new end the sweep.
+        assert len(sent) >= 8, f"the loop did not run its cycles (only {len(sent)} calls)"
 
         # 2. Every prompt that went out respected the budget. This is the assertion that
         #    would have caught a ladder that ran but did not actually shrink anything.
@@ -622,7 +653,11 @@ class TestOnARealLongHorizonTemplate:
         baseline_sent: list[str] = []
         monkeypatch.setattr(C, "prompt_char_budget", lambda *a, **k: 10_000_000)
         baseline = RunController(
-            small_run, spec, services=EngineServices(completion=self._fn(baseline_sent))
+            small_run,
+            spec,
+            services=EngineServices(
+                completion=self._fn(baseline_sent), subagents=self._Reader("small")
+            ),
         )
         baseline_status = await baseline.run_to_completion(timeout=60)
         assert not [p for p in baseline_sent if "CONTEXT COMPACTION" in p], "baseline compacted"
@@ -647,7 +682,9 @@ class TestOnARealLongHorizonTemplate:
 
         target = "\n\n".join(f"module {i}: " + ("y" * 900) for i in range(30))
         run = self._run(spec, target)
-        c = RunController(run, spec, services=EngineServices(completion=fn))
+        c = RunController(
+            run, spec, services=EngineServices(completion=fn, subagents=self._Reader(target))
+        )
         await c.run_to_completion(timeout=60)
 
         assert rejected, "the rejection never fired — the test proved nothing"

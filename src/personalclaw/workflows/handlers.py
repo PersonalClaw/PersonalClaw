@@ -1247,6 +1247,37 @@ async def api_run_drop_status(request: web.Request) -> web.Response:
     return _reply(service.drop_status(request.match_info.get("run_id", "")))
 
 
+def _held_for_her(request: web.Request, by: approval_answer.Principal, run_id: str) -> str:
+    """Why a file *by* hands the run waits for her whatever the workflow auto-accepts, or ""
+    for the one sender but her that may follow that list: an agent, in its own chat's run.
+
+    An app's file waits, as an agent's does in a run another chat started or in yours: only the
+    chat a run was started for drops into it on its own (``_its_own_chats_run``)."""
+    if by.kind == approval_answer.AGENT:
+        if _its_own_chats_run(reader_of(request, request.app.get("state")), run_id):
+            return ""
+        who = "an agent of another chat"
+    else:
+        who = "an app" if by.kind == approval_answer.APP else "anyone but you"
+    return f"a file {who} hands this run waits for you: it lands only when you drop it"
+
+
+def _its_own_chats_run(reader: Any, run_id: str) -> bool:
+    """Whether run *run_id* was started for the work *reader* does: its origin's session, at its
+    tree's root, is that work's chat or a helper of it (``subagent_reach.Reader.reads``). A run
+    whose origin names no session, or that cannot be read, is no chat's own (closed)."""
+    try:
+        run = store.get(run_id)
+        if run is None:
+            return False
+        root = store.get(run.root_run_id) if run.root_run_id not in ("", None, run.id) else run
+        session = str((root or run).origin.session_key or run.origin.session_key or "")
+    except Exception:  # noqa: BLE001 - an unreadable run is no chat's own
+        logger.debug("run %s: origin unreadable for its drop", run_id, exc_info=True)
+        return False
+    return bool(session) and reader.reads(session)
+
+
 @_of_its_chat
 async def api_run_drop(request: web.Request) -> web.Response:
     """POST multipart to the run's approval-gated file drop.
@@ -1293,10 +1324,12 @@ async def api_run_drop(request: web.Request) -> web.Response:
     #
     # 🔴 It approves a file only from her own request. An app's or an agent's `confirm` would be
     # the sender approving what it sends, and a step reads what was dropped (`{{run.dropped}}`).
-    # An app's file waits for her whatever it says (`filedrop.approval_required`).
+    # And a file from anyone but her waits for her whatever the workflow auto-accepts, but an
+    # agent's in its own chat's run (`_held_for_her`).
     by = approval_answer.of_request(request)
     owner = by.kind == approval_answer.OWNER
     confirmed = owner and confirm_granted_query(request.query)
+    held = "" if owner else await asyncio.to_thread(_held_for_her, request, by, run_id)
     accepted: list[dict[str, Any]] = []
     while True:
         try:
@@ -1357,7 +1390,7 @@ async def api_run_drop(request: web.Request) -> web.Response:
             data=dropped,
             mime=mime,
             confirmed=confirmed,
-            by_app=by.kind == approval_answer.APP,
+            held=held,
         )
         if not result.get("ok"):
             _audit(

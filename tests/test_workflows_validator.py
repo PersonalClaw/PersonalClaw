@@ -844,7 +844,10 @@ class TestDependencyOrdering:
                 ],
             }
         )
-        assert validate_spec(spec).ok
+        # Ordered: the fan-out ends before `sum` starts. The read itself names no item, which is
+        # its own refusal (`test_a_fan_out_item_reads_its_own_steps.py`).
+        codes = [i.code for i in validate_spec(spec).issues if i.severity == "error"]
+        assert codes == ["WF_FAN_OUT_STEP_READ_FROM_OUTSIDE"], codes
 
     def test_a_later_sibling_inside_a_loop_body_cannot_be_read(self) -> None:
         """A loop body is a `sequence` like any other: reading a step that runs later in the
