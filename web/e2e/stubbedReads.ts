@@ -43,6 +43,40 @@ export const STORE_CATALOGUE: StubbedRead = {
   why: 'the Store lists the app registry as it stands upstream, which another repository edits',
 }
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** *count* hourly runs after *from* (an instant), as the gateway's preview gives them in UTC: each
+ *  `at` the instant, each `wall` as the calendar tool writes one ("Mon 2 Nov 2026, 10:00"). */
+function hourlyPreview(from: string, count: number) {
+  const start = Date.parse(from)
+  const items = Array.from({ length: count }, (_, i) => {
+    const at = new Date(start + (i + 1) * 3_600_000)
+    const hh = String(at.getUTCHours()).padStart(2, '0')
+    const mm = String(at.getUTCMinutes()).padStart(2, '0')
+    return {
+      at: at.toISOString(),
+      wall: `${WEEKDAYS[at.getUTCDay()]} ${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}, ${hh}:${mm}`,
+      runs: true,
+      note_kind: '',
+      note: '',
+    }
+  })
+  return { outcome: 'ok', problem: '', zone: 'Etc/UTC', cadence: 'every hour', items, next_cursor: null }
+}
+
+/** A schedule's next runs before it is saved (`POST /api/triggers/preview`). The gateway works them
+ *  out from its own clock, so the new-automation form's Next runs list named the run's day and its
+ *  hours, and its tree held only on the day it was made (a Thursday's "Thu …" read Friday as a
+ *  change). Five hourly runs after `FIXED_CLOCK['triggers/new']`, as the form's default schedule
+ *  (every hour) asks. What the list says in each state (a skipped day, a refusal, never, the zone,
+ *  a retry) is held by `src/pages/schedule/theFormShowsTheNextRuns.test.tsx`. */
+export const SCHEDULE_PREVIEW: StubbedRead = {
+  url: /\/api\/triggers\/preview(\?.*)?$/,
+  json: hourlyPreview(FIXED_CLOCK['triggers/new'], 5),
+  why: "the gateway works a schedule's next runs out from its own clock, so the list named the run's day",
+}
+
 // ── What the visual spec's shots answer with fixed values (`VISUAL_STUBS` in `visual.spec.ts`) ──
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/

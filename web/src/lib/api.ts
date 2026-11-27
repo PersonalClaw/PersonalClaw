@@ -3870,6 +3870,34 @@ function _triggerToHook(t: Trigger): HookItem {
 /** One decision a restart or a sleep left on the Triggers page (`GET /api/triggers/review`). `latest` is the slot
  *  a Run now stands in for (the newest missed slot, or when the interrupted run started); `count`
  *  is how many slots the card covers, and `count_is_floor` marks it "at least". */
+/** One run in a schedule's preview (`POST /api/triggers/preview`, `triggers/preview.py`): `at` the
+ *  UTC instant, `wall` the time in the automation's zone as the calendar tool writes one, `runs`
+ *  false for a slot that is skipped, and the note that says why or what about it. */
+export interface PreviewItem {
+  at: string
+  wall: string
+  runs: boolean
+  note_kind: '' | 'clock_forward' | 'clock_back' | 'skip_date' | 'quiet_hours' | 'spread'
+  note: string
+}
+/** A schedule's next runs, from the clock's own steps: `ok`, `never` (it runs no more, `problem`
+ *  says why) or `refused` (the save would refuse it, in its words). `zone` is the zone its times
+ *  are in, and `cadence` the schedule in words. */
+export interface SchedulePreview {
+  outcome: 'ok' | 'never' | 'refused'
+  problem: string
+  zone: string
+  cadence: string
+  items: PreviewItem[]
+  next_cursor: null
+}
+/** The schedule part of a create or edit body, which a preview reads as the save reads it, with
+ *  the automation being edited (`trigger_id`) and how many runs (1 to 10). */
+export interface SchedulePreviewBody {
+  every?: number; cron?: string; at?: number; timezone?: string; skip_dates?: string[]
+  strict_schedule?: boolean; trigger_id?: string; count?: number
+}
+
 export interface TriggerReviewCard {
   trigger_id: string
   kind: 'missed' | 'interrupted'
@@ -10348,6 +10376,14 @@ export const api = {
       `/api/triggers/schedule:${encodeURIComponent(id)}`,
       consented(_scheduleBodyToWire(body), c, shown), basedOn(base))),
   deleteSchedule: (id: string) => del(`/api/triggers/schedule:${encodeURIComponent(id)}`),
+  /** A schedule's next runs before it is saved (`POST /api/triggers/preview`). A read, though a
+   *  POST: it writes nothing, so it asks no consent, and the form aborts the one before it
+   *  (`signal`) as the owner types. */
+  previewSchedule: (body: SchedulePreviewBody, opts: ReadOptions = {}) =>
+    refuseIfSignedOut() ?? pairFetch('/api/triggers/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify(body),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    }).then(j<SchedulePreview>),
   runSchedule: (id: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
   // Switching a trigger ON can grant what its action runs — a trigger brought over from an older

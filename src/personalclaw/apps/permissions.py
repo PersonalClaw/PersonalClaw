@@ -1321,6 +1321,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     # ── triggers ──
     "POST /api/triggers": OwnerOnly(_DEFINES_AUTOMATION),
+    "POST /api/triggers/preview": OwnerOnly("previewing your automations' schedules"),
     "PUT /api/triggers/{id}": OwnerOnly(_DEFINES_AUTOMATION),
     "DELETE /api/triggers/{id}": OwnerOnly("deleting your automations"),
     # Arming is the owner's: a pack stages its automations switched off so that only you arm them.

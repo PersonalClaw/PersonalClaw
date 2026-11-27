@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **983 registrations** over **797 distinct paths** — 976 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **984 registrations** over **798 distinct paths** — 977 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -33,9 +33,9 @@ The 136 families the surface divides into, largest first.
 | `/api/loops` | 30 | 24 |
 | `/api/artifacts` | 26 | 17 |
 | `/api/inbox` | 24 | 23 |
+| `/api/triggers` | 22 | 19 |
 | `/api/mcp` | 21 | 16 |
 | `/api/skills` | 21 | 17 |
-| `/api/triggers` | 21 | 18 |
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
 | `/api/sessions` | 15 | 12 |
@@ -163,7 +163,7 @@ The 136 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 976 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 977 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -1039,6 +1039,7 @@ The 976 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/triggers` | create a schedule, lifecycle or data-event trigger. |
 | `GET` | `/api/triggers/doctor` | structural problems across every trigger. |
 | `GET` | `/api/triggers/history` | the run feed across every kind. |
+| `POST` | `/api/triggers/preview` | a clock automation's next runs, before it is saved. |
 | `POST` | `/api/triggers/restore-hold/resume` | Resume all: every automation a restore holds. |
 | `GET` | `/api/triggers/review` | what a restart left for you to decide. |
 | `POST` | `/api/triggers/review` | decide one of them. |

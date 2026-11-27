@@ -41,6 +41,8 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _HANDLERS = _REPO_ROOT / "src" / "personalclaw" / "dashboard" / "handlers" / "triggers.py"
+#: The one reader of a schedule's cadence part, for the create, the edit and the preview.
+_SCHEDULE_BODY = _REPO_ROOT / "src" / "personalclaw" / "triggers" / "schedule_body.py"
 _SCHEDULE_FORM = _REPO_ROOT / "web" / "src" / "pages" / "schedule" / "ScheduleForm.tsx"
 _CREATE_PAGE = _REPO_ROOT / "web" / "src" / "pages" / "triggers" / "TriggerCreatePage.tsx"
 _API = _REPO_ROOT / "web" / "src" / "lib" / "api.ts"
@@ -165,6 +167,11 @@ def _handler_reads(func: str) -> set[str]:
     as unread, and the census would fail on fields that work fine.
     """
     region = _function_source(_HANDLERS, func)
+    # The cadence part of a body is read by one builder for every door
+    # (`triggers.schedule_body.spec_from_body`): a handler that hands it the body reads what it
+    # reads, found the same way in its own source.
+    if re.search(r"spec_from_body\(\s*body\b", region):
+        region += "\n" + _function_source(_SCHEDULE_BODY, "spec_from_body")
     keys = set(re.findall(r'body\.get\(\s*"([a-z_][a-z_0-9]*)"', region))
     keys |= set(re.findall(r'body\[\s*"([a-z_][a-z_0-9]*)"\s*\]', region))
     keys |= set(re.findall(r'"([a-z_][a-z_0-9]*)"\s+in\s+body', region))

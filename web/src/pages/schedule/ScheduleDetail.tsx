@@ -10,7 +10,8 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ActionProvider, type ScheduleJob, type ScheduleRun, type TriggerRunResult } from '../../lib/api'
-import { kindMeta, modeMeta, deriveKind, deriveMode, scheduleWhenMet, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain, runFlashMeta, runSourceMeta } from './scheduleMeta'
+import { NextRuns } from './NextRuns'
+import { kindMeta, modeMeta, deriveKind, deriveMode, scheduleWhenMet, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relPast, absTime, mdToPlain, runFlashMeta, runSourceMeta } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
@@ -268,7 +269,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       <div className="flex flex-col gap-l">
         {job.report_id && <ReportScheduleNote />}
         <HeldChange guard={guard}>
-          <ScheduleForm draft={draft} onChange={setDraft} compact invokesModel={draftInvokesModel} />
+          <ScheduleForm draft={draft} onChange={setDraft} compact invokesModel={draftInvokesModel} triggerId={`schedule:${job.id}`} />
         </HeldChange>
         <StaleWriteNotice guard={guard} what="This trigger" />
         <FormFooter error={err}>
@@ -372,7 +373,6 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
       <div className="flex flex-wrap items-center gap-s">
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {job.schedule}</span>
         <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(mm.tone, 16)}><ActionIcon size={13} /> {actLabel}</span>
-        {job.enabled && !readOnly && job.next_run_ts && <span className="text-on-surface-low text-[0.8125rem]">next {relFuture(job.next_run_ts)} · {absTime(job.next_run_ts)}</span>}
       </div>
 
       {job.report_id && <ReportScheduleNote />}
@@ -412,6 +412,15 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           whose action needs your yes asks first. */}
       {!job.enabled && !readOnly && job.restore_hold && (
         <RestoreHoldNote hold={job.restore_hold} busy={busy} onResume={allow} />
+      )}
+
+      {/* When it runs: its next three runs as the clock will make them, each skipped day and clock
+          change said (`NextRuns`). It replaces the one next run the header showed. No countdown on
+          a row someone else wrote: it runs on their computer, never on this one. */}
+      {job.enabled && !readOnly && (
+        <Section label="When it runs">
+          <NextRuns body={{ trigger_id: `schedule:${job.id}`, count: 3 }} readOnly />
+        </Section>
       )}
 
       {/* what runs — provider-aware: show the action's defining field(s) */}

@@ -20,6 +20,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Incident mode asks why when it starts and keeps a history of every incident, with your notes.**
 - **Incident mode counts what it skipped, dropped or refused, and Resume says so: scheduled runs skipped, event and hook fires dropped, loop cycles held and helper starts refused, each with the first 50 by name. Work that catches up after Resume is not counted.**
 - **In Settings › Guardrails, turning incident mode on asks why, and turning it off first shows what it held back and takes a note. Once it is off, each dropped hook or event fire can be run again, and Past incidents lists every incident with its reason, who started and ended it, its counts and its notes.**
+- **Before a schedule is saved, its next runs can be read as the clock will make them, with each clock change, skip date, quiet window and spread said in words, and the agent's answer to making or moving one lists its next three runs. A schedule no date can match, such as the 30th of February, is refused when it is saved, with the reason, and one saved before says it never runs.**
 
 ### Changed
 

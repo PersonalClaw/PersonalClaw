@@ -1178,21 +1178,8 @@ def create(
         lines.append(f"  {because}")
     for w in spec_warnings:
         lines.append(f"  Warning ({w.path}): {w.message}")
-    if resolved_spec.get("expr"):
-        lines.append(f"  cron: {resolved_spec['expr']}")
-    if resolved_spec.get("paths"):
-        lines.append(f"  watching: {', '.join(resolved_spec['paths'])}")
-    if saved.kind == "web_watch":
-        lines.extend(f"  {line}" for line in _watch_said(saved, chat_channels=chat_channels))
-    if saved.kind == "manual":
-        lines.append(
-            "  it runs only when you run it: Run now on the Triggers page, or the Run now button "
-            "shown with this reply in the chat"
-        )
-    if saved.kind == "webhook":
-        from personalclaw.inbound import webhook
-
-        lines.append(f"  {webhook.created_line(saved.id)}")
+    runs_said, runs_data = _how_it_runs_said(saved, resolved_spec, chat_channels=chat_channels)
+    lines.extend(runs_said)
     if words:
         where = (
             f"on {shown_via}" + (f" to {chat}" if chat else "") + ", and on no other channel"
@@ -1220,9 +1207,60 @@ def create(
             f"  I created this for you — {_state} "
             f"({_active_agent_count(store)}/{max_agent_triggers()} agent-created)."
         )
-    return AutomationToolResult(
-        True, "\n".join(lines), {"trigger": shown_row(saved.to_dict()), "needs_grant": needs}
-    )
+    data = {"trigger": shown_row(saved.to_dict()), "needs_grant": needs, **runs_data}
+    return AutomationToolResult(True, "\n".join(lines), data)
+
+
+def _how_it_runs_said(
+    saved: Any, resolved_spec: dict[str, Any], *, chat_channels: Any = None
+) -> tuple[list[str], dict[str, Any]]:
+    """What a new automation runs on, as `create`'s answer says it, and the data that goes with it:
+    a clock's expression and its next runs (`data.next_runs`), the paths a file watch watches, what
+    a web watch looks at, how a button runs, and a webhook's address."""
+    lines: list[str] = []
+    if resolved_spec.get("expr"):
+        lines.append(f"  cron: {resolved_spec['expr']}")
+    run_lines, next_runs = _next_runs_said(saved)
+    lines.extend(run_lines)
+    if resolved_spec.get("paths"):
+        lines.append(f"  watching: {', '.join(resolved_spec['paths'])}")
+    if saved.kind == "web_watch":
+        lines.extend(f"  {line}" for line in _watch_said(saved, chat_channels=chat_channels))
+    if saved.kind == "manual":
+        lines.append(
+            "  it runs only when you run it: Run now on the Triggers page, or the Run now button "
+            "shown with this reply in the chat"
+        )
+    if saved.kind == "webhook":
+        from personalclaw.inbound import webhook
+
+        lines.append(f"  {webhook.created_line(saved.id)}")
+    return lines, ({"next_runs": next_runs} if saved.kind == "clock" else {})
+
+
+def _next_runs_said(trigger: Any) -> tuple[list[str], list[dict[str, Any]]]:
+    """A clock automation's next three runs, as the agent's answer says them, and as its data.
+
+    From the preview the form shows (`triggers.preview`), the clock's own steps, so the agent tells
+    the owner when it will run and any day it is skipped, in the words the form uses. One line for
+    the runs, then one per note. Nothing for an automation with no clock.
+    """
+    if trigger.kind != "clock":
+        return [], []
+    import time
+
+    from personalclaw.triggers.preview import next_runs
+
+    preview = next_runs(trigger, now=time.time(), count=3)
+    if preview.outcome == "never":
+        return [f"  next runs: none. {preview.problem}"], []
+    running = [i for i in preview.items if i.runs]
+    if not running:
+        return [], []
+    once = "" if trigger.enabled else " once it is on"
+    lines = [f"  next runs{once}: {'; '.join(i.wall for i in running)} (times in {preview.zone})"]
+    lines.extend(f"  {note}" for note in dict.fromkeys(i.note for i in preview.items if i.note))
+    return lines, [i.to_dict() for i in running]
 
 
 def _default_cadence_to_cron(cadence: str) -> Any:
@@ -1532,10 +1570,8 @@ def update(
         setattr(trigger, key, value)
     # A report's automation mirrors the report's schedule (`knowledge.report_schedules`): an edit
     # the report cannot hold is refused before anything is saved, and the rest is written into the
-    # report once the row is (`adopt`, below), so the two never say different things. So is one
-    # that switches on a one-time automation whose time has passed (`_edit_refusal`).
-    from personalclaw.knowledge import report_schedules
-
+    # report once the row is (`adopt`, in `_updated_answer`), so the two never say different things.
+    # So is one that switches on a one-time automation whose time has passed (`_edit_refusal`).
     refused = _edit_refusal(before, trigger)
     if refused is not None:
         return refused
@@ -1576,11 +1612,45 @@ def update(
     if rearmed is not None:
         trigger.next_fire_at = rearmed
     saved = store.upsert(trigger)
+    return _updated_answer(
+        store,
+        before,
+        saved,
+        applied=applied,
+        note=note,
+        rejected=rejected,
+        granted=granted,
+        chat_channels=chat_channels,
+    )
+
+
+def _updated_answer(
+    store: Any,
+    before: Any,
+    saved: Any,
+    *,
+    applied: Any,
+    note: Any,
+    rejected: Any,
+    granted: Any,
+    chat_channels: Any = None,
+) -> AutomationToolResult:
+    """`update`'s answer, read from the row as stored, after the report it schedules adopts it
+    (`report_schedules.adopt`, in the place it always ran). A cadence the edit moved
+    (`arm.cadence_fingerprint`) is said with the next runs it makes now (`data.next_runs`)."""
+    from personalclaw.knowledge import report_schedules
+    from personalclaw.triggers import grants
+    from personalclaw.triggers.arm import cadence_fingerprint
+
     # What applies now is read from the row as stored, so the agent repeats the store and not an
     # earlier answer: the update said only "Updated …: delivery.", and the chat went on telling the
     # owner a watch still waited for an Allow they had given since it was made.
     current, errors = _as_stored(store, saved)
-    lines = [f"Updated {current.id}: {', '.join(sorted(applied))}."]
+    moved = cadence_fingerprint(dict(before.spec or {})) != cadence_fingerprint(
+        dict(current.spec or {})
+    )
+    run_lines, next_runs = _next_runs_said(current) if moved else ([], [])
+    lines = [f"Updated {current.id}: {', '.join(sorted(applied))}.", *run_lines]
     if ROUTE_FIELDS & set(applied):
         lines.extend(f"  {line}" for line in _routes_said(current, chat_channels=chat_channels))
     if note:
@@ -1601,6 +1671,7 @@ def update(
             "rejected": rejected,
             "granted": granted,
             "needs_grant": grants.labels(current),
+            **({"next_runs": next_runs} if moved and current.kind == "clock" else {}),
         },
     )
 

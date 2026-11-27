@@ -18,7 +18,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock('../../lib/api', async () => {
   const actual = await vi.importActual<typeof import('../../lib/api')>('../../lib/api')
-  return { ...actual, api: { ...actual.api, channels: h.channels, triggerHistory: h.triggerHistory } }
+  // The schedule's next runs (`NextRuns`) are asked of a preview that never answers here.
+  return { ...actual, api: { ...actual.api, channels: h.channels, triggerHistory: h.triggerHistory, previewSchedule: () => new Promise(() => {}) } }
 })
 
 vi.mock('../../lib/agents', () => ({

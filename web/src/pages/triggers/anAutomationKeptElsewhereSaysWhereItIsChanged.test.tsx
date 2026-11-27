@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import type { ScheduleJob, Trigger as WireTrigger, TriggerReviewCard } from '../../lib/api'
+import { api, type ScheduleJob, type Trigger as WireTrigger, type TriggerReviewCard } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { reviewSentence } from './TriggerReview'
@@ -43,11 +43,12 @@ describe('a schedule someone else wrote', () => {
     expect(note?.textContent).toContain('does not run it on this computer')
   })
 
-  it('shows no next run: it runs on its author\'s computer, never on this one', () => {
+  it('shows no next runs: it runs on its author\'s computer, never on this one', () => {
+    vi.spyOn(api, 'previewSchedule').mockReturnValue(new Promise(() => {}))
     panel({ ...theirs, next_run_ts: Date.now() / 1000 + 60 })
-    expect(screen.queryByText(/^next /)).toBeNull()
+    expect(screen.queryByText('When it runs')).toBeNull()
     panel({ ...JOB, next_run_ts: Date.now() / 1000 + 60 })
-    expect(screen.getByText(/^next /)).toBeTruthy()
+    expect(screen.getByText('When it runs')).toBeTruthy()
   })
 
   it('opens the view, not the editor, from a link that asks for the editor', () => {

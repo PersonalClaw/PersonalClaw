@@ -19,6 +19,14 @@ import { MIN_INTERVAL_SECS } from './scheduleMeta'
 // sends the ORIGINAL `every_secs` for an untouched interval — railed next door in
 // `renameKeepsItsCadence.test.ts`, which also asserts that the display pair is lossy on purpose.
 
+// The form's next runs (`NextRuns`) are asked of a preview that never answers here, and they show
+// a status of their own, so the floor's hint is read by its id.
+vi.mock('../../lib/api', async (orig) => {
+  const actual = await orig<typeof import('../../lib/api')>()
+  return { ...actual, api: { ...actual.api, previewSchedule: () => new Promise(() => {}) } }
+})
+const hint = () => document.getElementById('interval-floor-hint')
+
 vi.mock('../../lib/agents', () => ({
   useAgentCatalog: () => ({ options: [] }),
   useModelCatalog: () => ({ options: [] }),
@@ -36,51 +44,51 @@ function mount(over: Partial<ScheduleDraft> = {}, invokesModel?: boolean) {
 describe('the floor speaks only for an action that can call a model', () => {
   it('is silent at 60s for a zero-token action', () => {
     mount({ intervalValue: 1, intervalUnit: 'm' }, false)
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(hint()).toBeNull()
     expect(screen.getByLabelText('Run every — interval count')).not.toHaveAttribute('aria-describedby')
   })
 
   it('still warns at 60s for a model-invoking action', () => {
     mount({ intervalValue: 1, intervalUnit: 'm' }, true)
-    expect(screen.getByRole('status')).toHaveTextContent('Every 60s')
+    expect(hint()).toHaveTextContent('Every 60s')
   })
 
   it('keeps the floor when the caller cannot say (the default)', () => {
     mount({ intervalValue: 1, intervalUnit: 'm' })
-    expect(screen.getByRole('status')).toHaveTextContent('Every 60s')
+    expect(hint()).toHaveTextContent('Every 60s')
   })
 })
 
 describe('the interval control says the cadence floor out loud', () => {
   it('warns when the chosen cadence is below the floor', () => {
     mount({ intervalValue: 5, intervalUnit: 'm' })
-    const hint = screen.getByRole('status')
-    expect(hint).toHaveTextContent(`below the ${MIN_INTERVAL_SECS}s floor`)
-    expect(hint).toHaveTextContent('Every 300s')
+    const floor = hint() as HTMLElement
+    expect(floor).toHaveTextContent(`below the ${MIN_INTERVAL_SECS}s floor`)
+    expect(floor).toHaveTextContent('Every 300s')
   })
 
   it('warns at the smallest cadence the control can express (1 minute)', () => {
     // `intervalToSecs(1, 'm') = 60` is the fastest thing a user can select here, and it is the row
     // the live measurement was taken on: a 60s LLM-invoking trigger the doctor called healthy.
     mount({ intervalValue: 1, intervalUnit: 'm' })
-    expect(screen.getByRole('status')).toHaveTextContent('Every 60s')
+    expect(hint()).toHaveTextContent('Every 60s')
   })
 
   it('warns one step below the floor (14 minutes), so the boundary is not the only case', () => {
     mount({ intervalValue: 14, intervalUnit: 'm' })
-    expect(screen.getByRole('status')).toHaveTextContent('Every 840s')
+    expect(hint()).toHaveTextContent('Every 840s')
   })
 
   it('stays quiet at and above the floor (vacuity leg)', () => {
     // 15 minutes IS the floor, so it must not warn — a hint that fires on the boundary is a hint
     // that fires on the recommended value, which is how a real advisory becomes noise.
     mount({ intervalValue: 15, intervalUnit: 'm' })
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(hint()).toBeNull()
   })
 
   it('stays quiet on the form default (1 hour)', () => {
     mount({ intervalValue: 1, intervalUnit: 'h' })
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(hint()).toBeNull()
   })
 
   it('describes the count input by the hint, so a screen reader reaches the reason', () => {

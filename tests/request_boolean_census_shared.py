@@ -134,6 +134,7 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("dashboard/handlers/triggers.py", "_update_schedule", "failure_dedupe"): "optional",
     ("dashboard/handlers/triggers.py", "_update_schedule", "silent"): "optional",
     ("dashboard/handlers/triggers.py", "_update_schedule", "strict_schedule"): "optional",
+    ("dashboard/handlers/triggers.py", "api_triggers_preview", "strict_schedule"): "optional",
     ("dashboard/handlers/triggers.py", "api_trigger_toggle", "enabled"): None,
     ("dashboard/handlers/updates.py", "api_update_simulate", "reject"): False,
     ("dashboard/handlers/views.py", "api_dashboard_view_tile_refresh", "force"): False,

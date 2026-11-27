@@ -13,6 +13,8 @@ import type { ScheduleJob } from '../../lib/api'
 
 const { API } = vi.hoisted(() => ({
   API: {
+    // The schedule's next runs (`NextRuns`), asked of a preview that never answers here.
+    previewSchedule: vi.fn(() => new Promise(() => {})),
     runSchedule: vi.fn(),
     triggerHistory: vi.fn(() => Promise.resolve({ runs: [], total: 0, supported: true })),
     triggerRunDetail: vi.fn(),
@@ -72,8 +74,9 @@ describe('the schedule panel after Run now', () => {
     await screen.findByText('Running…')
     view.rerender(<ScheduleDetail job={job({ last_run_ts: 1790367812.7 })} {...props} />)
 
-    const status = await screen.findByRole('status')
-    expect(status.textContent).toBe('Waiting for you')
+    // The run's status, beside the next runs' own (`NextRuns`).
+    const status = await screen.findByText('Waiting for you')
+    expect(status.getAttribute('role')).toBe('status')
     expect(status.closest('button')).toBeNull()
     expect(seenOpacity(status)).toBe(1)
     // The button is back to what it does, and can be pressed.

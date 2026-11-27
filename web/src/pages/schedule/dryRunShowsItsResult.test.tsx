@@ -16,6 +16,8 @@ import type { ActionProvider, ScheduleJob, TriggerRunResult } from '../../lib/ap
 
 const { API } = vi.hoisted(() => ({
   API: {
+    // The schedule's next runs (`NextRuns`), asked of a preview that never answers here.
+    previewSchedule: vi.fn(() => new Promise(() => {})),
     runSchedule: vi.fn(),
     triggerHistory: vi.fn(),
     triggerRunDetail: vi.fn(),
@@ -102,7 +104,12 @@ describe('Dry run renders its response and waits for nothing', () => {
     API.runSchedule.mockResolvedValue(dryAnswer(true))
     mount(job())
     fireEvent.click(screen.getByRole('button', { name: /^dry run$/i }))
-    const result = await screen.findByRole('status')
+    // The dry run's result, beside the next runs' own status (`NextRuns`).
+    const result = await waitFor(() => {
+      const found = screen.getAllByRole('status').find((s) => s.textContent?.includes('Dashboard Notification'))
+      if (!found) throw new Error('no dry-run result yet')
+      return found
+    })
 
     expect(result).toHaveTextContent('Dashboard Notification')
     expect(result).toHaveTextContent('Title')

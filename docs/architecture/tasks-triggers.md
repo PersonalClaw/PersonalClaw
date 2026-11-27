@@ -1121,6 +1121,24 @@ run: every route that would run, rehearse, change, switch or delete it answers
 (`routing.SomeoneElsesRow`). A `file` trigger with no path to watch is refused
 where it is made (`models.validate_spec`), and a stored one loads broken.
 
+### A schedule's next runs come from the clock's own steps
+
+`cron_clock.upcoming(expr, now, tz, count)` is the one stepper: each fire is the first after the one
+before it, and `cron_clock.next_fire` is its first fire. Each `Placement` says how the zone shows
+the wall time it fires for: `exact`, `jumped` (the clocks go forward past it, so it fires at the
+jump) or `repeated` (they go back, so it fires at its first instant).
+
+`triggers.preview.next_runs(trigger, now=, count=)` walks the cadence slots with it
+(`arm.cadence_next_fire` for every other clock), and for each slot reads the skip dates on the
+automation's own calendar (`arm._skipped_dates`), the spread (`arm.apply_jitter`) and the quiet
+hours on this machine's clock, as the fire path reads them (`calendar.evaluate_quiet`). A skipped
+slot is an item with `runs: false` and its reason, and at most `count` skipped slots are listed.
+It is pure: no store and no clock read. `POST /api/triggers/preview` (owner only) reads its body
+through `triggers.schedule_body.spec_from_body`, the builder `_create_schedule` and
+`_update_schedule` read theirs with, so a preview and a save are one spec. The agent's
+`automation_create` answer, and `automation_update`'s when the cadence moved
+(`arm.cadence_fingerprint`), list the next three runs from it (`data.next_runs`).
+
 ### A one-shot runs, is recorded, and only then leaves the list
 
 A clock trigger with no next fire — a one-time `at` — has its slot taken by the

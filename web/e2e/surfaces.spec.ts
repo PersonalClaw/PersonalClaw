@@ -6,7 +6,7 @@ import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, SUBSTATE_ROUTES, 
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 import { idleRunState } from '../src/lib/workPhase'
 import { BASELINED_STEPS, runMatrix, settleMotion, stepVerdict, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
-import { FIXED_WAITING, GARDEN_FOLDER_TREE, GARDEN_READS, LEARNING_WEEK, NEEDS_YOU_READS, PROJECT_PAGE, PROJECTS_LIST, STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
+import { FIXED_WAITING, GARDEN_FOLDER_TREE, GARDEN_READS, LEARNING_WEEK, NEEDS_YOU_READS, PROJECT_PAGE, PROJECTS_LIST, SCHEDULE_PREVIEW, STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
 import { FIXED_CLOCK } from './fixedClock'
 import { apiGet } from './pairedApi'
 
@@ -150,6 +150,9 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
   // The Store's catalogue, a snapshot: the live one is the registry's, which another repository
   // edits (`STORE_CATALOGUE`).
   'apps?view=store': [STORE_CATALOGUE],
+  // The new-automation form's next runs, a fixed answer: the gateway counts them from its own clock
+  // (`SCHEDULE_PREVIEW`).
+  'triggers/new': [SCHEDULE_PREVIEW],
   // The capture week, moved to end on the day Learning's clock reads (`FIXED_CLOCK`): the gateway
   // buckets it by its own date, so the page and its clock name the same days in both specs.
   learning: [LEARNING_WEEK],
