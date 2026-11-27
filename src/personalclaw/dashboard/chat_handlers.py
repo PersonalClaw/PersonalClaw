@@ -2153,7 +2153,7 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
             }
         )
     from personalclaw.chat_traces import TEMPORARY
-    from personalclaw.dashboard.chat_forget import forget_temporary_chat
+    from personalclaw.dashboard.chat_forget import end_temporary_chat
 
     archived: list[str] = []
     failed: list[str] = []
@@ -2165,7 +2165,7 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
         if removed.memory_mode == TEMPORARY:
             # Evicting a Temporary chat ends its session, and a Temporary chat is forgotten
             # when its session ends: it has no transcript to be reloaded from.
-            forget_temporary_chat(state, removed, why="it was evicted as inactive")
+            await end_temporary_chat(state, removed, why="it was evicted as inactive")
         else:
             try:
                 save_session_to_history(state, removed, closed=True)

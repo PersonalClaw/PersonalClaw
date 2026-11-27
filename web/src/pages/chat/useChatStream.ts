@@ -24,7 +24,7 @@ import type { RoutingSuggestion } from './RoutingChip'
 import type { TurnPaste } from './PasteChip'
 import type { TurnEnding } from '../../ui/turnEnding'
 import { ShownCards } from './shownCards'
-import { type ChatTurn, type Segment, type ApprovalSegment, type QuestionSegment, appendThinking, type SubagentCard, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, foldStepLine, noteOf, rowText, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, imageDeliveryOf, noticeSegment } from './chatTypes'
+import { type ChatTurn, type Segment, type ApprovalSegment, type QuestionSegment, appendThinking, type SubagentCard, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, foldStepLine, noteOf, rowText, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, imageDeliveryOf, noticeSegment, fileSegmentOf } from './chatTypes'
 
 // ── The chat's stream: the open session as the gateway tells it ───────────────────────────────
 //
@@ -98,7 +98,7 @@ const stampOf = (d: Record<string, unknown>): number | undefined => (typeof d.se
 const TRANSCRIPT_FRAMES = new Set([
   'chat_chunk', 'work_phase', 'chat_thinking', 'chat_message', 'activity_event', 'tool_call',
   'tool_result', 'approval', 'approval_resolved', 'chat_segment', 'chat_variant_switch',
-  'chat_done', 'chat_user_message', 'session_clear',
+  'chat_done', 'chat_user_message', 'session_clear', 'file_ready',
   'queue_push', 'queue_pop', 'queue_cancel', 'queue_promoted', 'session_title', 'sessions',
   'chat.side_result',
 ])
@@ -899,6 +899,15 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
       // The answer's text segment ended. Stamped like a chunk, so one the snapshot this transcript
       // was read from already reflects ends no run.
       case 'chat_segment': if (coalescer.takes(stampOf(d))) endTextRun(); break
+      // A file the agent sent from this chat: its card under the answer, once. The frame is
+      // also applied again over a snapshot that may hold its row already (`TRANSCRIPT_FRAMES`).
+      case 'file_ready': {
+        const sent = fileSegmentOf(d)
+        if (sent) patchLastAssistant((segs) => (
+          segs.some((s) => s.kind === 'file' && s.filename === sent.filename && s.ts === sent.ts) ? segs : [...segs, sent]
+        ))
+        break
+      }
       // What the chat runs on now — changed here, in another tab or by any caller of the API —
       // so the composer never names an agent the next message will not go to.
       case 'session_binding':

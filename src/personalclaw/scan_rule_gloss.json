@@ -42,10 +42,29 @@
   "node_exec": "This code runs an external program on your machine.",
   "crontab_write": "This code edits this machine's scheduled-job table, so it can keep running later.",
   "reads_sensitive_path": "This code reads a file where credentials and keys are kept.",
+  "overlong_line": "A line here is too long to read in one go, so it was read in overlapping parts. That is common in minified code and unusual anywhere else.",
+  "nested_too_deep": "This file nests its code deeper than Python itself can read, so it couldn't be checked safely, and no program needs that.",
   "unscanned_file": "PersonalClaw could not read this file, so nothing in it was checked and it could hold anything.",
   "zero_width_chars": "Invisible characters are present, which can hide text from a reviewer.",
+  "quarantine_strip": "This tells you to switch off the check macOS makes before a downloaded program first runs.",
+  "password_archive": "This unpacks a download locked with a password, so nothing inside it was checked before it runs.",
+  "paste_site_link": "This points to text on a paste service, which can change after you approve the install.",
+  "fetch_and_follow": "This tells the reader to download text and carry out what it says, which whoever controls that text decides.",
+  "credential_in_notes": "This asks for a password or key to be kept as plain text in memory or notes, where other work can read it back.",
   "injection_ignore": "Text here addresses your assistant and tells it to ignore its own instructions.",
   "injection_disregard": "Text here addresses your assistant and tells it to disregard what it was told.",
   "injection_coerce": "Text here addresses your assistant and orders it to run or call something.",
-  "injection_override": "Text here poses as a replacement for your assistant's instructions."
+  "injection_override": "Text here poses as a replacement for your assistant's instructions.",
+  "_in_prose": {
+    "_comment": [
+      "The sentence for an execution rule found in instructions a PERSON reads and runs (a",
+      "README, a prerequisite's how; install_instructions.PROSE), in place of the rule's own,",
+      "which speaks of code. Many official installers are a download piped into a shell, so",
+      "the sentence says when that is still a reasonable choice (#3852, settled 2026-10-26);",
+      "a decoded payload never is. Every key is one of install_instructions.EXECUTION_RULES."
+    ],
+    "remote_exec_pipe": "These steps download a program and run it at once, unread. Many official installers work this way, and that is reasonable when the address is the project's own site.",
+    "pipe_to_shell": "These steps feed text straight into a shell to be run as commands. An official installer run this way is reasonable when the address is the project's own site.",
+    "obfuscated_exec": "These steps decode hidden text and run it, so what runs cannot be read here."
+  }
 }

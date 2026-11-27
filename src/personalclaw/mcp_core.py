@@ -1458,6 +1458,16 @@ def _message_refusal(args: dict[str, Any]) -> ToolFailure | None:
     return tool_failure(str(resp.get("error") or resp))
 
 
+def _where_it_shows(answer: dict[str, Any]) -> str:
+    """Where the file ``notify_attachment`` sent shows, said after its name: in the chat whose turn
+    sent it, or, when the gateway named no chat for it, nowhere but the outbox. Nothing when the
+    gateway's answer does not say."""
+    shown = answer.get("shown")
+    if shown is None:
+        return ""
+    return "; it shows in this chat" if shown else "; no chat here shows it, so it is in the outbox"
+
+
 def _read_attachment(args: dict[str, Any]) -> bytes | tuple[str, ToolFailure]:
     """The bytes ``notify_attachment`` sends, read once and checked; or why it refuses the file, as
     the audit's code and the tool's answer: a control character in its path, a file the file tools
@@ -1928,7 +1938,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if channel_resp.get("error"):
             channel_warning = f" (channel upload failed: {channel_resp['error']})"
         msg = f"File sent: {dest.name} ({desc})" if desc else f"File sent: {dest.name}"
-        return msg + channel_warning
+        return msg + _where_it_shows(d) + channel_warning
 
     if name == "loop_nudge_stop":
         from personalclaw.sel import sel

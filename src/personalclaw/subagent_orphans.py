@@ -7,7 +7,10 @@ process that is still the one the agent started is killed, and every orphan is t
 can be recovered (its result, or nothing). The folders of the spawns it left waiting to start are
 not orphans: ``subagent_waiting.take_back`` takes each back, or ends it. :func:`announce_orphans`
 then tells the owner, in one notice, which agents the restart stopped and where any result was
-saved, and what became of each one that had not started.
+saved, and what became of each one that had not started. One whose work was a chat's that has
+ended (:func:`of_ended_chats`: deleted, or a Temporary chat, which ended with the gateway that ran
+it) is named by that alone, with none of its task, and its folder goes once it is settled
+(``subagent_persistence.forget_settled``), as it would have gone with the chat.
 
 Split out of ``subagent.py`` along the seam it always had: this is a pass over what ANOTHER process
 left, and its one input from the running manager is which agents are its own (``tracked``). The
@@ -20,7 +23,7 @@ import asyncio
 import logging
 import os
 import signal
-from collections.abc import Container, Sequence
+from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,7 +33,9 @@ from personalclaw.subagent import _redact
 from personalclaw.subagent_persistence import (
     _agent_dir,
     _cleanup_session_files_sync,
+    chat_of,
     list_orphans,
+    started_by,
     write_tombstone,
 )
 from personalclaw.subagent_waiting import ENDED, TakenBack, said
@@ -198,6 +203,25 @@ async def reconcile_orphans(tracked: Container[str]) -> list[Orphan]:
     return settled
 
 
+def of_ended_chats(gone: Callable[[str], bool]) -> frozenset[str]:
+    """The agent folders whose work was a chat's that has ended, by id: the chat at the top of each
+    one's chain of helpers (``subagent_persistence.chat_of``) is one *gone* says has ended. Read
+    before the start settles them, while each folder still says whose it is. A chain whose top no
+    folder can say is not one."""
+    parents = started_by()
+    said: dict[str, bool] = {}
+    ended = set()
+    for agent_id in parents:
+        top = chat_of(agent_id, parents)
+        if top and said.setdefault(top, gone(top)):
+            ended.add(agent_id)
+    return frozenset(ended)
+
+
+#: How the notice names an agent whose chat has ended (:func:`of_ended_chats`).
+_OF_AN_ENDED_CHAT = "A helper of a chat that has ended"
+
+
 def _title(orphans: Sequence[Orphan], kept: int, ended: int) -> str:
     """What the restart did, in the notice's title: "A restart stopped 2 background agents, found
     one that had already ended, kept 3 that had not started and ended one that could not start"."""
@@ -223,11 +247,17 @@ def _title(orphans: Sequence[Orphan], kept: int, ended: int) -> str:
 
 
 def announce_orphans(
-    state: Any, orphans: Sequence[Orphan], taken_back: Sequence[TakenBack] = ()
+    state: Any,
+    orphans: Sequence[Orphan],
+    taken_back: Sequence[TakenBack] = (),
+    *,
+    ended_chats: Container[str] = frozenset(),
 ) -> None:
     """Tell the owner, once, what a restart did to her background agents: which it stopped, and
     what became of each one that had not started (``subagent_waiting``): kept waiting for a slot,
-    asking her again, started, or ended and why. Nothing when it did none of these.
+    asking her again, started, or ended and why. Nothing when it did none of these. One of
+    *ended_chats*, whose chat has ended (:func:`of_ended_chats`), is named by that alone: its task
+    and its result went with the chat.
 
     ONE notice for the whole pass, not one per agent: a restart during a wide fan-out would
     otherwise deliver a notification per child. Through the dashboard's one delivery choke point
@@ -244,6 +274,11 @@ def announce_orphans(
     # plain text, and the detail renders the rest as markdown, so plain paragraphs read in both.
     lines = []
     for orphan in orphans:
+        if orphan.agent_id in ended_chats:
+            lines.append(
+                f"{_OF_AN_ENDED_CHAT}: {_what_became(orphan)}; what it saved went with it."
+            )
+            continue
         outcome = (
             f"its result so far is saved at {orphan.result_path}."
             if orphan.result_path
@@ -253,7 +288,14 @@ def announce_orphans(
             f"{orphan.agent_id} — {orphan.name or 'no task recorded'}: "
             f"{_what_became(orphan)}; {outcome}"
         )
-    lines += [f"{t.agent_id} — {t.name or 'no task recorded'}: {said(t)}" for t in taken_back]
+    lines += [
+        (
+            f"{_OF_AN_ENDED_CHAT}: {said(t)}"
+            if t.agent_id in ended_chats
+            else f"{t.agent_id} — {t.name or 'no task recorded'}: {said(t)}"
+        )
+        for t in taken_back
+    ]
     count = len(lines)
     lines = lines[:_NAMED_IN_NOTICE]
     if count > _NAMED_IN_NOTICE:

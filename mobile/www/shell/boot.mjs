@@ -10,13 +10,38 @@
  * `registry.mjs` for why this is a parity rail rather than an import.
  */
 
-import { companionUrl, GatewayUrlError, normalizeGatewayUrl, pairingTargetFromScan } from './network.mjs'
+import {
+  companionUrl,
+  GatewayUrlError,
+  normalizeGatewayUrl,
+  opensOutsideTheApp,
+  outsideTheAppNotice,
+  pairingTargetFromScan,
+} from './network.mjs'
 import { activeBaseUrl, forgetActiveGateway, readRegistry, rememberGateway } from './registry.mjs'
 import { watchSafeAreaInsets } from './safeArea.mjs'
 
 /** The remembered active gateway origin, or `''`. */
 export function readStoredGateway(storage) {
   return activeBaseUrl(readRegistry(storage))
+}
+
+/** The platform the shell runs on, as Capacitor names it: `android`, `ios`, or `web` in a browser. */
+export function platformOf(view) {
+  try {
+    return view?.Capacitor?.getPlatform?.() || 'web'
+  } catch {
+    return 'web'
+  }
+}
+
+/**
+ * What a connect answers when the app on this platform would open the gateway outside itself
+ * (`network.mjs`, `opensOutsideTheApp`): the gateway is remembered, but the WebView is not
+ * handed off. The shell says why first, and goes only when the owner chooses to.
+ */
+function outside(gatewayUrl, target) {
+  return { ok: false, code: 'OPENS_OUTSIDE', message: outsideTheAppNotice(gatewayUrl), gatewayUrl, target }
 }
 
 /**
@@ -31,13 +56,14 @@ export function handOff(location, url) {
  * Connect to `raw`, recording it as the active endpoint on success. Returns the error message on
  * failure so the caller can render it; throws nothing a UI has to unwrap.
  */
-export function connect({ raw, storage, location }) {
+export function connect({ raw, storage, location, platform = 'web' }) {
   try {
     const origin = normalizeGatewayUrl(raw)
     // The URL is computed before anything is persisted: an address that cannot produce a
     // companion URL must not leave a row behind.
     const target = companionUrl(origin)
     rememberGateway(storage, { baseUrl: origin })
+    if (opensOutsideTheApp(origin, platform)) return outside(origin, target)
     handOff(location, target)
     return { ok: true, gatewayUrl: origin }
   } catch (err) {
@@ -55,10 +81,11 @@ export function connect({ raw, storage, location }) {
  * answers with an httponly cookie, so a native redemption would hold a session the WebView could
  * not use, and would be a second device-session contract beside the one on `main`.
  */
-export function connectFromScan({ scanned, storage, location }) {
+export function connectFromScan({ scanned, storage, location, platform = 'web' }) {
   try {
     const { gatewayUrl, target } = pairingTargetFromScan(scanned)
     rememberGateway(storage, { baseUrl: gatewayUrl })
+    if (opensOutsideTheApp(gatewayUrl, platform)) return outside(gatewayUrl, target)
     handOff(location, target)
     return { ok: true, gatewayUrl }
   } catch (err) {
@@ -77,6 +104,8 @@ export function start({ doc, view, storage, location }) {
   const form = doc.getElementById('connect')
   const field = doc.getElementById('gateway')
   const status = doc.getElementById('status')
+  const away = doc.getElementById('open-outside')
+  const platform = platformOf(view)
 
   const fail = (message) => {
     if (status) {
@@ -85,24 +114,44 @@ export function start({ doc, view, storage, location }) {
     }
   }
 
+  // A gateway this platform opens outside the app is never handed off unasked: the shell says
+  // why, and the WebView goes only on the owner's Open in browser.
+  let pending = ''
+  const offer = (result) => {
+    fail(result.message)
+    pending = result.target
+    if (away) away.hidden = false
+  }
+  away?.addEventListener?.('click', () => {
+    if (pending) handOff(location, pending)
+  })
+  const answer = (result) => {
+    if (result.code === 'OPENS_OUTSIDE') offer(result)
+    else fail(result.message)
+  }
+
   const remembered = readStoredGateway(storage)
   if (remembered) {
     if (field) field.value = remembered
-    const result = connect({ raw: remembered, storage, location })
-    // A remembered address that no longer validates (the shell's allowed hosts changed under it,
-    // say) must not wedge the app on a blank screen — drop the row and ask again.
-    if (!result.ok) {
+    const result = connect({ raw: remembered, storage, location, platform })
+    if (result.ok) return
+    if (result.code === 'OPENS_OUTSIDE') {
+      offer(result)
+    } else {
+      // A remembered address that no longer validates (the shell's allowed hosts changed under
+      // it, say) must not wedge the app on a blank screen — drop the row and ask again.
       forgetActiveGateway(storage)
       fail(result.message)
     }
-    return
   }
 
   form?.addEventListener?.('submit', (event) => {
     event.preventDefault?.()
     if (status) status.hidden = true
-    const result = connect({ raw: field?.value, storage, location })
-    if (!result.ok) fail(result.message)
+    if (away) away.hidden = true
+    pending = ''
+    const result = connect({ raw: field?.value, storage, location, platform })
+    if (!result.ok) answer(result)
   })
 }
 

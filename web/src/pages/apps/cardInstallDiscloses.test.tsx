@@ -94,7 +94,7 @@ describe('a card-grid install discloses the grants at consent', () => {
     expect(previewApp).toHaveBeenCalledWith(SOURCE, undefined, undefined)
     // The scan report is there…
     expect(text).toMatch(/Security scan: warning/)
-    expect(text).toMatch(/python_exec/)
+    expect(text).toMatch(/server\/provider\.py · Warning/)
     // …and so are the grants the card used to skip.
     expect(text).toMatch(/Permissions the gateway enforces/)
     expect(text).toMatch(/API: \/api\/knowledge/)
@@ -125,8 +125,12 @@ describe('a card-grid install discloses the grants at consent', () => {
     // skills marketplace in), so the sentence cannot name one of them. See scanFindings.ts.
     expect(text).toMatch(/This code runs an external program on your machine\./)
     expect(text, 'the map must not name one of its two surfaces').not.toMatch(/The app runs an external/)
-    // The gloss complements the evidence; it does not replace the real argv.
-    expect(text).toMatch(/subprocess\.run/)
+    // The gloss complements the evidence; it does not replace the real argv, which is one click
+    // away behind the finding's disclosure (#3852: why it matters first, the evidence on request).
+    expect(text, 'the argv starts collapsed').not.toMatch(/subprocess\.run/)
+    fireEvent.click(screen.getByRole('button', { name: 'Show evidence' }))
+    const opened = (screen.getByRole('dialog').textContent ?? '').replace(/\s+/g, ' ')
+    expect(opened).toMatch(/python_exec \(warning\): subprocess\.run/)
   })
 })
 

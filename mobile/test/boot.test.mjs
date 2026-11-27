@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { connect, connectFromScan, readStoredGateway, start } from '../www/shell/boot.mjs'
+import { connect, connectFromScan, platformOf, readStoredGateway, start } from '../www/shell/boot.mjs'
 import { ENDPOINT_FIELDS, REGISTRY_STORAGE_KEY } from '../www/shell/registry.mjs'
 
 function fakeStorage(initial = {}) {
@@ -203,4 +203,64 @@ test('safe areas are applied to the shell element during start', () => {
   }
   start({ doc, view: insetView, storage: fakeStorage(), location: fakeLocation() })
   assert.equal(nodes.shell.style.paddingTop, '47px')
+})
+
+// ── Android: a gateway the app opens outside itself ────────────────────────
+
+const android = { ...view, Capacitor: { getPlatform: () => 'android' } }
+
+test('on Android, a gateway at an IP address is remembered but not handed off unasked', () => {
+  const storage = fakeStorage()
+  const location = fakeLocation()
+  const result = connect({ raw: '192.168.1.10:10000', storage, location, platform: 'android' })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.code, 'OPENS_OUTSIDE')
+  assert.match(result.message, /192\.168\.1\.10 is an IP address.*outside the app.*\.local or Tailscale name/)
+  assert.equal(result.target, 'http://192.168.1.10:10000/#/companion')
+  assert.deepEqual(location.replaced, [], 'no silent hand-off')
+  assert.equal(stored(storage).endpoints[0].base_url, 'http://192.168.1.10:10000')
+})
+
+test('on Android, a .local or Tailscale name goes straight through, and on iOS an IP does', () => {
+  for (const [raw, platform] of [['my-box.local:10000', 'android'], ['box.tail1.ts.net', 'android'],
+    ['192.168.1.10:10000', 'ios']]) {
+    const location = fakeLocation()
+    assert.equal(connect({ raw, storage: fakeStorage(), location, platform }).ok, true, `${raw} on ${platform}`)
+    assert.equal(location.replaced.length, 1)
+  }
+})
+
+test('on Android, a scanned pairing link at an IP address asks first too', () => {
+  const location = fakeLocation()
+  const result = connectFromScan({
+    scanned: 'http://10.0.0.4:10000/pair?code=ABCD-EFGH', storage: fakeStorage(), location, platform: 'android',
+  })
+  assert.equal(result.code, 'OPENS_OUTSIDE')
+  assert.equal(result.target, 'http://10.0.0.4:10000/pair?code=ABCD-EFGH')
+  assert.deepEqual(location.replaced, [])
+})
+
+test('on Android, a remembered IP gateway says why and opens only on Open in browser', () => {
+  const clicks = new Map()
+  const away = { hidden: true, addEventListener: (event, handler) => clicks.set(event, handler) }
+  const { doc, nodes } = fakeDoc({ 'open-outside': away })
+  const storage = fakeStorage(registryFor('http://192.168.1.10:10000'))
+  const location = fakeLocation()
+
+  start({ doc, view: android, storage, location })
+
+  assert.deepEqual(location.replaced, [], 'a relaunch never opens it outside unasked')
+  assert.equal(nodes.status.hidden, false)
+  assert.match(nodes.status.textContent, /outside the app/)
+  assert.equal(away.hidden, false)
+  assert.equal(stored(storage).endpoints.length, 1, 'the gateway stays remembered')
+  clicks.get('click')()
+  assert.deepEqual(location.replaced, ['http://192.168.1.10:10000/#/companion'])
+})
+
+test('the platform is what Capacitor says, and web in a plain browser', () => {
+  assert.equal(platformOf(android), 'android')
+  assert.equal(platformOf(view), 'web')
+  assert.equal(platformOf({ Capacitor: { getPlatform: () => { throw new Error('x') } } }), 'web')
 })

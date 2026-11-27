@@ -2215,16 +2215,28 @@ class GatewayOrchestrator:
 
     async def _settle_left_behind_agents(self) -> None:
         """Stop and tombstone the background agents a previous run left, take back the ones it left
-        waiting to start (`subagent_waiting.take_back`), then tell the owner what became of each."""
-        from personalclaw.subagent_orphans import announce_orphans, reconcile_orphans, tracked_by
+        waiting to start (`subagent_waiting.take_back`), then tell the owner what became of each.
+        One whose chat has ended (deleted, or a Temporary chat, which ended with the gateway that
+        ran it) is named by that alone, and its folder goes once settled
+        (`subagent_orphans.of_ended_chats`)."""
+        from personalclaw.subagent_orphans import (
+            announce_orphans,
+            of_ended_chats,
+            reconcile_orphans,
+            tracked_by,
+        )
+        from personalclaw.subagent_persistence import forget_settled
         from personalclaw.subagent_waiting import take_back
 
         manager, state = self.subagent_mgr, self.dashboard_state
         if manager is None:
             return
+        gone = functools.partial(chat_persistence.chat_has_ended, state) if state else None
+        ended = of_ended_chats(gone) if gone is not None else frozenset()
         settled = await reconcile_orphans(tracked_by(manager))
         chats = functools.partial(chat_persistence.why_no_report_reaches, state) if state else None
-        announce_orphans(state, settled, take_back(manager, chats))
+        announce_orphans(state, settled, take_back(manager, chats), ended_chats=ended)
+        forget_settled(ended, tracked=tracked_by(manager))
 
     def _surface_missed_review(self, report: dict[str, Any], cards: list[Any]) -> None:
         """Put the boot's review in front of the owner: ONE notice (`review.boot_notice`), read off
@@ -5174,10 +5186,17 @@ class GatewayOrchestrator:
         # it in the transcript the next start reads.
         if self.dashboard_state:
             from personalclaw.dashboard.chat import save_all_sessions_to_history
+            from personalclaw.dashboard.chat_forget import end_temporary_chats
 
             await self._stopping_step(
                 "the running chat turns",
                 self.dashboard_state.end_running_turns(timeout=_END_TURNS_SECS),
+            )
+            # A Temporary chat's session ends with the gateway: its helpers end with it, and their
+            # folders go with what it kept, before the last save, which forgets any left.
+            await self._stopping_step(
+                "the Temporary chats",
+                end_temporary_chats(self.dashboard_state, why="its gateway stopped"),
             )
             save_all_sessions_to_history(self.dashboard_state)
             # Off the loop: it reads every chat's record, and writes each line that changed.

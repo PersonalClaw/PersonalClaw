@@ -81,12 +81,15 @@ class _Hangs(ToolProvider):
                     raise
 
 
-def _fetch(call_id: str, url: str = "https://example.org/a") -> AgentEvent:
+def _fetch(call_id: str, page: str = "a") -> AgentEvent:
+    """A call of the hanging tool that names no host: one that named a host off the operator's
+    Allowed hosts would be asked about past every grant (``run_bounds.put_to_a_person``), so it
+    would wait on an answer this turn never gets rather than run and hang."""
     return AgentEvent(
         kind=EVENT_TOOL_CALL,
         tool_call_id=call_id,
         title="fetch_page",
-        tool_input=f'{{"url": "{url}"}}',
+        tool_input=f'{{"page": "{page}"}}',
     )
 
 
@@ -268,3 +271,19 @@ async def test_a_call_that_returned_before_the_stop_keeps_its_result():
     (result,) = _results(events)
     assert result.tool_output == "the page"
     assert tool.cancelled == 0
+
+
+async def test_the_hanging_call_runs_rather_than_waits_on_an_answer():
+    """Why the hanging call above names no host: one naming a host off the operator's Allowed
+    hosts is put to a person past every grant, the turn's auto policy included, so it would wait
+    on an answer and never run, and every row above would wait for a call that never started."""
+    from personalclaw import run_bounds
+
+    named = AgentEvent(
+        kind=EVENT_TOOL_CALL,
+        tool_call_id="c1",
+        title="fetch_page",
+        tool_input='{"url": "https://example.org/a"}',
+    )
+    assert run_bounds.put_to_a_person(named, session_key="", cwd=".")
+    assert not run_bounds.put_to_a_person(_fetch("c1"), session_key="", cwd=".")

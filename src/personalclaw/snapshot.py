@@ -529,6 +529,16 @@ def _list_snapshots(out: Path, *, as_json: bool) -> int:
     return 0
 
 
+def _kept_out(home: Path, stage: Path) -> frozenset[Path]:
+    """What the Temporary chats in *home* keep (``chat_traces.kept_by_temporary_chats``), which the
+    tree copy of a snapshot staged at *stage* leaves out. Their runs leave the staged copy of the
+    run ledger too (``chat_traces.leave_out_temporary_runs``), copied before this is asked."""
+    from personalclaw.chat_traces import kept_by_temporary_chats, leave_out_temporary_runs
+
+    leave_out_temporary_runs(stage / "workflows" / "runs.db")
+    return kept_by_temporary_chats(home)
+
+
 def snapshot_main(
     argv: list[str] | None = None, *, parsed: argparse.Namespace | None = None
 ) -> int:
@@ -648,11 +658,10 @@ def snapshot_main(
         # agents/, apps/ and entity_settings/ were in NEITHER the snapshot nor the
         # export — a "full backup" that silently dropped a user's whole task board.
         # Driven off the inventory so a store added later is captured by default.
-        # What a running Temporary chat keeps (its transcript, working folder and attached files)
-        # stays out: the chat is forgotten when its session ends, and a snapshot would outlive it.
-        from personalclaw.chat_traces import kept_by_temporary_chats
-
-        _temporary = kept_by_temporary_chats(pc)
+        # What a running Temporary chat keeps (its transcript, working folder, attached files,
+        # helpers and runs) stays out: it is forgotten when its session ends, and a snapshot would
+        # outlive it (`_kept_out`).
+        _temporary = _kept_out(pc, stage)
         for rel in _everything_paths(pc):
             src = pc / rel
             if rel in captured:

@@ -578,6 +578,7 @@ def approval_channel(
     approver: "RoomApprover | None",
     *,
     record: Callable[[ToolRefusal], None],
+    session: str,
 ) -> tuple[ToolApprovalPolicy, Callable[[LLMEvent], Awaitable[bool | ToolDecision]]]:
     """The tool-approval policy and the gate for one member's turn, as ONE value.
 
@@ -630,7 +631,11 @@ def approval_channel(
         # A call whose tool declares it only reads, or that its work asks for itself, asks nobody,
         # as a native member's never does: an ACP member's CLI asks about every call, so this one
         # is answered here, past the tier.
-        if unasked := approval_grants.declared_answer(event):
+        from personalclaw.run_bounds import session_folder
+
+        if unasked := approval_grants.declared_answer(
+            event, session_key=session, cwd=session_folder(session)
+        ):
             return ToolDecision(True, "auto_approved", unasked)
         if approver is None:
             record(ToolRefusal(member.name, title, NO_APPROVER_REASON))

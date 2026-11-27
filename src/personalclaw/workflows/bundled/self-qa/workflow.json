@@ -71,6 +71,9 @@
       "a ledger verdict per commit, and for each user-impacting one a proof bundle plus an Inbox item and Task when the scenario failed"
     ]
   },
+  "workspace": {
+    "mode": "scratch"
+  },
   "root": {
     "kind": "sequence",
     "id": "root",
@@ -137,7 +140,7 @@
                   "id": "execute",
                   "label": "Drive it against the live UI",
                   "config": {
-                    "prompt": "Run this scenario against the running instance at {{inputs.base_url}} and report what happened.\n\nScenario: {{nodes.scenario-gen.output.title}}\nEntry surface: {{nodes.scenario-gen.output.entry_surface}}\nSteps:\n{{nodes.scenario-gen.output.steps}}\nThe mutation that must happen: {{nodes.scenario-gen.output.mutation}}\nBackend check: {{nodes.scenario-gen.output.backend_check}}\n\nDrive the browser through the Chrome DevTools MCP server. Open a NEW page rather than taking over one the user may be looking at. Use the terminal for the backend check.\n\nThings about this repo that will otherwise cost you the run:\n- A backend .py change does NOT hot-reload. If the commit touched Python and you did not restart the gateway, you are testing the old code and your PASS means nothing.\n- The frontend is served live through a `static/dist` SYMLINK. After a rebuild, hard-reload the page — a cached bundle looks exactly like a change that did not land.\n- React inputs do not see a raw value assignment. Type, do not set.\n\nCapture as you go, under the run workspace: `screenshots/*.png` at every state change, and a screen recording at `recording.mp4`.\n\nA scenario FAILS when the mutation did not land, when the backend disagrees with the UI, or when anything you did not expect appeared in the console or the logs. \"It looked right\" is not a pass.\n\nReturn JSON: {\"passed\": boolean, \"observed\": string, \"failure_detail\": string, \"repro_steps\": [string]}",
+                    "prompt": "Run this scenario against the running instance at {{inputs.base_url}} and report what happened.\n\nScenario: {{nodes.scenario-gen.output.title}}\nEntry surface: {{nodes.scenario-gen.output.entry_surface}}\nSteps:\n{{nodes.scenario-gen.output.steps}}\nThe mutation that must happen: {{nodes.scenario-gen.output.mutation}}\nBackend check: {{nodes.scenario-gen.output.backend_check}}\n\nDrive the browser through the Chrome DevTools MCP server. Open a NEW page rather than taking over one the user may be looking at. Use the terminal for the backend check.\n\nThings about this repo that will otherwise cost you the run:\n- A backend .py change does NOT hot-reload. If the commit touched Python and you did not restart the gateway, you are testing the old code and your PASS means nothing.\n- The frontend is served live through a `static/dist` SYMLINK. After a rebuild, hard-reload the page — a cached bundle looks exactly like a change that did not land.\n- React inputs do not see a raw value assignment. Type, do not set.\n\nCapture as you go into this scenario's own folder, `scenarios/{{item.sha}}/` in the run workspace (make it): `screenshots/*.png` at every state change, and a screen recording at `recording.mp4`. Write nothing of this scenario's anywhere else: each scenario's proof is sealed from its own folder, and a capture outside it is no scenario's.\n\nA scenario FAILS when the mutation did not land, when the backend disagrees with the UI, or when anything you did not expect appeared in the console or the logs. \"It looked right\" is not a pass.\n\nReturn JSON: {\"passed\": boolean, \"observed\": string, \"failure_detail\": string, \"repro_steps\": [string]}",
                     "schema": {
                       "passed": "boolean",
                       "observed": "string",
@@ -160,7 +163,8 @@
                       "sha": "{{item.sha}}",
                       "passed": "{{nodes.execute.output.passed}}",
                       "repo": "{{inputs.repo}}",
-                      "fix_branch_enabled": "{{inputs.fix_branch_enabled}}"
+                      "fix_branch_enabled": "{{inputs.fix_branch_enabled}}",
+                      "bundle_subdir": "scenarios/{{item.sha}}"
                     }
                   }
                 },

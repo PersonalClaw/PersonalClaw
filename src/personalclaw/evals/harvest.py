@@ -66,6 +66,7 @@ from personalclaw.ledger.kinds import (
     STEP_COMPLETED,
     STEP_FAILED,
 )
+from personalclaw.sqlite_compat import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +103,13 @@ EVENT_KINDS: frozenset[str] = frozenset({STEP_COMPLETED, STEP_FAILED, CONSULTED}
 SKIP_NOT_TERMINAL = "not_terminal"
 SKIP_NO_RUN_STARTED = "no_run_started"
 SKIP_NO_WORKFLOW_NAME = "no_workflow_name"
+#: The run is a Temporary or Incognito chat's, or its chat's mode cannot be read
+#: (:func:`keeps_nothing`): what it holds is that chat's, and a case would outlive the chat and
+#: reach models it never chose.
+SKIP_PRIVATE_RUN = "private_run"
 
 SKIP_REASONS: frozenset[str] = frozenset(
-    {SKIP_NOT_TERMINAL, SKIP_NO_RUN_STARTED, SKIP_NO_WORKFLOW_NAME}
+    {SKIP_NOT_TERMINAL, SKIP_NO_RUN_STARTED, SKIP_NO_WORKFLOW_NAME, SKIP_PRIVATE_RUN}
 )
 
 #: The refusal sentence. A population of zero is a statement about the LEDGER, and saying it in
@@ -165,6 +170,8 @@ class HarvestReport:
     cases: list[HarvestedCase] = field(default_factory=list)
     considered: int = 0
     skipped: list[dict[str, str]] = field(default_factory=list)
+    #: The names of the cases written before that this harvest removed (`drop_private_cases`).
+    dropped: list[str] = field(default_factory=list)
 
     @property
     def population(self) -> int:
@@ -218,6 +225,113 @@ def _run_store() -> Any:
     from personalclaw.workflows import store as run_store  # noqa: PLC0415 - cycle-free
 
     return run_store
+
+
+#: Why a case already written is left out of every eval while its run is kept. A PRIVATE case is
+#: removed (:func:`drop_private_cases`); an UNREADABLE one stays where it is, since a damaged run
+#: record must not quietly remove a case the owner may have kept on purpose.
+WITHHELD_PRIVATE = "its run is a Temporary or Incognito chat's"
+WITHHELD_UNREADABLE = "whose chat its run is could not be read"
+
+
+def _chat_mode(run: Any) -> Any:
+    """The mode of the chat *run* is, judged at its tree's root (``workflows.chat_runs.whose``):
+    ``MemoryMode.NORMAL`` for a run of yours."""
+    from personalclaw.workflows import chat_runs, ownership  # noqa: PLC0415 - load-deferred
+
+    chat = chat_runs.whose(run)
+    return ownership.parse_mode(chat["mode"]) if chat else ownership.MemoryMode.NORMAL
+
+
+def keeps_nothing(run: Any) -> bool:
+    """Whether *run* is a Temporary or Incognito chat's, or one whose chat's mode cannot be read:
+    its inputs and what it produced are that chat's, so no case is built from it."""
+    from personalclaw.workflows import ownership  # noqa: PLC0415 - load-deferred
+
+    return _chat_mode(run) in ownership.WRITE_SUPPRESSED
+
+
+def _case_withheld(run_id: str) -> str:
+    """Why the case naming the run *run_id* is left out of every eval (:data:`WITHHELD_PRIVATE`,
+    :data:`WITHHELD_UNREADABLE`), ``""`` for a run that is gone or ordinary."""
+    from personalclaw.workflows import ownership  # noqa: PLC0415 - load-deferred
+
+    run_store = _run_store()
+    try:
+        run = run_store.get(run_id)
+        mode = _chat_mode(run) if run is not None else ownership.MemoryMode.NORMAL
+    except (sqlite3.Error, OSError, ValueError, KeyError, TypeError):
+        logger.warning(
+            "harvest: could not read run %s to tell whose chat's it is", run_id, exc_info=True
+        )
+        mode = ownership.MemoryMode.UNREADABLE
+    if mode in (ownership.MemoryMode.TEMPORARY, ownership.MemoryMode.INCOGNITO):
+        return WITHHELD_PRIVATE
+    if mode in ownership.WRITE_SUPPRESSED:
+        logger.warning(
+            "harvest: the case of run %s is left out of every eval: %s", run_id, WITHHELD_UNREADABLE
+        )
+        return WITHHELD_UNREADABLE
+    return ""
+
+
+def _case_run_id(path: Path) -> str:
+    """The run id a harvested case file names, ``""`` for one that names none or is unreadable."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    block = data.get("harvest") if isinstance(data, dict) else None
+    return str(block.get("run_id") or "") if isinstance(block, dict) else ""
+
+
+def withheld_case(path: Path) -> str:
+    """Why the scenario file *path* is left out of every eval, ``""`` for one that is not: only a
+    harvested case naming a run that is still kept can be."""
+    run_id = _case_run_id(path)
+    return _case_withheld(run_id) if run_id else ""
+
+
+def _withheld_files() -> list[tuple[Path, str]]:
+    directory = scenarios.installed_dir()
+    if not directory.is_dir():
+        return []
+    found = (
+        (path, withheld_case(path))
+        for path in sorted(directory.iterdir())
+        if path.suffix in scenarios.SCENARIO_SUFFIXES and path.stem.startswith(HARVEST_PREFIX)
+    )
+    return [(path, reason) for path, reason in found if reason]
+
+
+def withheld_cases() -> dict[str, str]:
+    """Each harvested case in the installed library that is left out of every eval, by name, with
+    why (:func:`withheld_case`)."""
+    return {path.stem: reason for path, reason in _withheld_files()}
+
+
+def drop_private_cases() -> list[str]:
+    """Remove each harvested case whose run is still kept and is a Temporary or Incognito chat's;
+    return their names.
+
+    Cases written before a private chat's runs were skipped hold that chat's inputs. Only a run that
+    says it is such a chat's removes its case: one whose chat cannot be read is left where it is,
+    and out of every eval (:func:`withheld_cases`), and a case whose run is gone cannot be told
+    apart, and stays. Idempotent: a second call finds nothing.
+    """
+    dropped: list[str] = []
+    for path, reason in _withheld_files():
+        if reason != WITHHELD_PRIVATE:
+            continue
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            logger.warning("harvest: could not remove case %s", path, exc_info=True)
+            continue
+        dropped.append(path.stem)
+    return dropped
 
 
 def harvestable_runs(*, workflow_name: str = "", limit: int = DEFAULT_LIMIT) -> list[Any]:
@@ -288,6 +402,14 @@ def case_from_run(run: Any, *, journal: Any = None) -> tuple[dict[str, Any] | No
     """
     journal = journal or _journal_mod()
     run_id = str(getattr(run, "id", "") or "")
+    try:
+        private = keeps_nothing(run)
+    except (sqlite3.Error, OSError):
+        # Whose chat's run it is could not be told, so it is read as one that keeps nothing.
+        logger.warning("harvest: could not tell whose run %s is", run_id, exc_info=True)
+        private = True
+    if private:
+        return None, SKIP_PRIVATE_RUN
     if not getattr(run, "is_terminal", False):
         return None, SKIP_NOT_TERMINAL
 
@@ -500,6 +622,7 @@ def harvest(
     journal = journal or _journal_mod()
     cases: list[HarvestedCase] = []
     skipped: list[dict[str, str]] = []
+    dropped = drop_private_cases() if write else []
     candidates = harvestable_runs(workflow_name=workflow_name, limit=limit)
 
     for run in candidates:
@@ -529,11 +652,11 @@ def harvest(
             )
         )
 
-    if write and cases:
+    if write and (cases or dropped):
         # Refresh the ONE manifest so the harvested cases are inventoried beside the shipped ones.
         scenarios.install_library()
 
-    return HarvestReport(cases=cases, considered=len(candidates), skipped=skipped)
+    return HarvestReport(cases=cases, considered=len(candidates), skipped=skipped, dropped=dropped)
 
 
 # ── the consulted-ref match — ONE matcher, two readers ───────────────────────
@@ -612,6 +735,8 @@ def installed_harvested_cases(
         block = data.get("harvest") if isinstance(data, dict) else None
         if not isinstance(block, dict) or not block.get("run_id"):
             continue
+        if _case_withheld(str(block["run_id"])):
+            continue  # a private chat's run, or one whose chat could not be read: never scored
         if workflow_name and str(block.get("workflow_name") or "") != workflow_name:
             continue
         if consulted_ref and not case_consulted(data, consulted_ref):

@@ -6,6 +6,7 @@
   "description": "Capacitor shell that wraps the gateway's served companion route. Contains no copy of the companion UI.",
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "capacitor:copy:after": "node scripts/androidOriginRules.mjs",
     "cap": "cap",
     "add:ios": "cap add ios",
     "add:android": "cap add android",

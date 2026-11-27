@@ -26,14 +26,18 @@ they are shipped.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 
+import pytest
 from mobile_shell_shared import MOBILE, REPO_ROOT
 
 SHELL = MOBILE / "www" / "shell"
 CAP_CONFIG = MOBILE / "capacitor.config.json"
 NETWORK_MJS = SHELL / "network.mjs"
+ORIGIN_RULES_MJS = MOBILE / "scripts" / "androidOriginRules.mjs"
 REGISTRY_MJS = SHELL / "registry.mjs"
 ENDPOINTS_TS = REPO_ROOT / "web" / "src" / "lib" / "endpoints.ts"
 APP_TSX = REPO_ROOT / "web" / "src" / "app" / "App.tsx"
@@ -152,6 +156,109 @@ def test_the_gateway_url_is_not_baked_into_the_build():
     assert "hostname" not in server, "a baked server.hostname has the same effect as server.url"
     assert _config()["webDir"] == "www"
     assert (MOBILE / "www" / "index.html").is_file()
+
+
+# ── Android's origin rules ──────────────────────────────────────────────────
+#
+# On Android, Capacitor hands each navigation entry to the WebView as an origin rule too
+# (``https://`` + an entry with no scheme), and Android's copy of the list holds only entries the
+# WebView accepts (``mobile/scripts/androidOriginRules.mjs``, the ``capacitor:copy:after`` hook).
+# The shell asks before it opens anything else outside the app (``boot.mjs``).
+
+ANDROID_IN_APP = ["localhost", "127.0.0.1", "*.local", "*.ts.net"]
+
+
+def _android_accepts(rule: str) -> bool:
+    """Whether Android's WebView accepts *rule*, as Chromium's ``OriginMatcher`` parses one
+    (``components/origin_matcher``): ``*``, or a scheme with no wildcard, ``://`` and, for http
+    and https, a host (an optional port after it) with no ``/`` and at most one wildcard, as its
+    leading ``*.``."""
+    raw = rule.strip()
+    if raw == "*":
+        return True
+    scheme, sep, host_and_port = raw.partition("://")
+    if not sep or not scheme or "*" in scheme:
+        return False
+    takes_host = scheme in ("http", "https")
+    if not host_and_port:
+        return not takes_host
+    if not takes_host:
+        return False
+    host = re.sub(r":\d{1,5}$", "", host_and_port)
+    if not host or "/" in host or ":" in host.strip("[]"):
+        return host.startswith("[") and host.endswith("]")
+    return host.count("*") == 0 or (host.count("*") == 1 and host.startswith("*."))
+
+
+def _origin_rule(entry: str) -> str:
+    """The origin rule Capacitor makes of a navigation entry (``Bridge.setAllowedOriginRules``)."""
+    return entry if entry.startswith("http") else f"https://{entry}"
+
+
+def test_android_refuses_a_wildcard_anywhere_but_a_leading_label():
+    # The grammar the rail below holds the list to, on the rules this list makes and its near
+    # misses: it would pass every list if it accepted everything.
+    for rule in ("https://localhost", "https://127.0.0.1", "https://*.local", "https://*.ts.net"):
+        assert _android_accepts(rule), rule
+    for rule in ("https://10.*", "https://192.168.*", "https://172.16.*", "https://*", "localhost"):
+        assert not _android_accepts(rule), rule
+
+
+def test_the_android_list_holds_exactly_the_hosts_android_accepts():
+    """Any entry of Android's list outside the accepted ones fails here by name: the shell's
+    in-app list, the config's entries the hook keeps, and the accepted list are one list."""
+    patterns = _quoted_list(NETWORK_MJS.read_text(encoding="utf-8"), "ANDROID_IN_APP_PATTERNS")
+    assert patterns == ANDROID_IN_APP, f"network.mjs's Android list is {patterns}"
+    allowed = _config()["server"]["allowNavigation"]
+    kept = [e for e in allowed if _android_accepts(_origin_rule(e))]
+    assert (
+        kept == ANDROID_IN_APP
+    ), f"Android would keep {kept}: every Android rule must be one of {ANDROID_IN_APP}"
+    refused = [e for e in allowed if e not in kept]
+    assert "10.*" in refused and "192.168.*" in refused, "the IP ranges are what Android refuses"
+    private = set(_quoted_list(NETWORK_MJS.read_text(encoding="utf-8"), "PRIVATE_HOST_PATTERNS"))
+    assert set(patterns) <= private, "Android keeps in the app only hosts the shell accepts"
+
+
+def test_every_copy_runs_the_hook_that_holds_android_to_its_list():
+    scripts = json.loads((MOBILE / "package.json").read_text(encoding="utf-8"))["scripts"]
+    assert scripts.get("capacitor:copy:after") == "node scripts/androidOriginRules.mjs", scripts
+    assert ORIGIN_RULES_MJS.is_file()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_after_a_copy_the_android_config_holds_exactly_the_accepted_list(tmp_path):
+    """The hook run as ``cap copy`` runs it (``capacitor:copy:after``, from ``mobile/``, with the
+    platform, the project's folder and its config in the environment), over the Android config
+    a copy wrote."""
+    config = _config()
+    assets = tmp_path / "android" / "app" / "src" / "main" / "assets"
+    assets.mkdir(parents=True)
+    copied = assets / "capacitor.config.json"
+    copied.write_text(json.dumps(config, indent="\t"), encoding="utf-8")
+    env = {
+        **{k: v for k, v in os.environ.items() if not k.startswith("CAPACITOR_")},
+        "CAPACITOR_PLATFORM_NAME": "android",
+        "CAPACITOR_ROOT_DIR": str(tmp_path),
+        "CAPACITOR_CONFIG": json.dumps(config),
+    }
+    done = subprocess.run(
+        ["node", str(ORIGIN_RULES_MJS)], cwd=MOBILE, env=env, capture_output=True, text=True
+    )
+    assert done.returncode == 0, done.stderr
+    written = json.loads(copied.read_text(encoding="utf-8"))
+    assert written["server"]["allowNavigation"] == ANDROID_IN_APP
+    assert all(_android_accepts(_origin_rule(e)) for e in written["server"]["allowNavigation"])
+    assert {k: v for k, v in written.items() if k != "server"} == {
+        k: v for k, v in config.items() if k != "server"
+    }
+    assert "opens outside the app" in done.stdout
+
+    (assets / "capacitor.config.json").unlink()
+    gone = subprocess.run(
+        ["node", str(ORIGIN_RULES_MJS)], cwd=MOBILE, env=env, capture_output=True, text=True
+    )
+    assert gone.returncode == 1, "a copy that wrote no Android config fails loudly"
 
 
 # ── native safe areas ───────────────────────────────────────────────────────

@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "The hosts a link to counts as a link to a paste site, for the install scanner's",
+    "paste_site_link rule (install_instructions.py). Text pasted there can change after the",
+    "review, and installers that hide behind one are a known trick, so a skill, README or",
+    "prerequisite linking to one is told to the owner. Data, not code: add or drop a host",
+    "here. A subdomain of a host counts as the host."
+  ],
+  "hosts": [
+    "0x0.st",
+    "controlc.com",
+    "dpaste.com",
+    "dpaste.org",
+    "ghostbin.co",
+    "hastebin.com",
+    "ix.io",
+    "justpaste.it",
+    "paste.ee",
+    "paste.rs",
+    "pastebin.com",
+    "pastebin.pl",
+    "pastes.io",
+    "privatebin.net",
+    "rentry.co",
+    "rentry.org",
+    "sprunge.us",
+    "termbin.com"
+  ]
+}

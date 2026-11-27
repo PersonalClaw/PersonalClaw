@@ -854,6 +854,17 @@ def session_key_exists(state: DashboardState, name: str) -> bool:
         return True
 
 
+def chat_has_ended(state: DashboardState, key: str) -> bool:
+    """Whether *key* names a dashboard chat that is gone: deleted, or a Temporary chat, which ended
+    with the gateway that ran it (:func:`session_key_exists`). The owner's own key, and any other
+    (a channel's conversation), names none."""
+    from personalclaw.session_keys import DASHBOARD_UI
+
+    if not key.startswith(DASHBOARD_SESSION_PREFIX) or key == DASHBOARD_UI:
+        return False
+    return not session_key_exists(state, key.removeprefix(DASHBOARD_SESSION_PREFIX))
+
+
 def why_no_report_reaches(state: DashboardState, key: str) -> str:
     """Why the dashboard chat *key* names cannot be handed the report of a helper a restart took
     back, or ``""`` when it can (``subagent_waiting.take_back``): no chat is kept under it any more

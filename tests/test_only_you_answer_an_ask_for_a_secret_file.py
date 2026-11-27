@@ -84,7 +84,10 @@ def _no_grant_outlives_its_test():
 def test_no_grant_and_no_declaration_answers_it(grant, tmp_path):
     """🔴 A declared read was answered without asking, and a grant stood for it."""
     asked = _ask(secret_file="read")
-    assert approval_grants.declared_answer(asked) == ""
+    assert (
+        approval_grants.declared_answer(asked, session_key="dashboard:shop", cwd=str(tmp_path))
+        == ""
+    )
     assert run_bounds.put_to_a_person(asked, session_key="dashboard:shop", cwd=str(tmp_path))
     assert not approval_grants.stands_for_call(
         grant, session_key="dashboard:shop", event=asked, cwd=str(tmp_path)
@@ -100,7 +103,10 @@ def test_a_read_that_asks_for_no_secret_file_is_answered_as_before(tmp_path, hel
     whose every attribute answers, is the read it always was."""
     asked = _ask()
     asked.secret_file = held
-    assert approval_grants.declared_answer(asked) == approval_grants.DECLARED_READ
+    assert (
+        approval_grants.declared_answer(asked, session_key="dashboard:shop", cwd=str(tmp_path))
+        == approval_grants.DECLARED_READ
+    )
     assert not run_bounds.put_to_a_person(asked, session_key="dashboard:shop", cwd=str(tmp_path))
     assert run_bounds.event_note(asked, "dashboard:shop", cwd=str(tmp_path)) == ""
 

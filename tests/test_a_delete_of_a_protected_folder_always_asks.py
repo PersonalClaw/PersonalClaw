@@ -277,6 +277,48 @@ async def test_trust_does_not_answer_a_delete_of_the_working_folder(tmp_path, fo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("by_path", [False, True], ids=["as .", "by its full path"])
+@pytest.mark.parametrize("posture", [{}, {"_trust": True}], ids=["no grant", "Trust"])
+async def test_what_a_call_declares_does_not_answer_a_delete_of_the_working_folder(
+    tmp_path, folders, posture, by_path
+):
+    """A call its tool declares a read is answered by that, past every grant, unless it is put
+    to a person: a shell call declared a read whose command deletes the working folder is asked.
+    (Only the platform's shell is a shell when a call carries a declaration, ``#443``.)"""
+    from personalclaw.dashboard.chat import run_chat
+    from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, LLMEvent
+
+    state, client = _state(tmp_path)
+    session = _chat(folders, **posture)
+    command = _deleting(str(folders.work) if by_path else ".")
+    declared = LLMEvent(
+        kind=EVENT_PERMISSION_REQUEST,
+        title="bash",
+        tool_input={"command": command},
+        risk_level="safe",
+        request_id="req-1",
+    )
+    client.stream = MagicMock(
+        side_effect=lambda *a, **k: _events(
+            [declared, LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")]
+        )
+    )
+    answering = _answer(session, "rejected")
+
+    with _quiet_sel():
+        await run_chat(state, session, "tidy up")
+    await answering
+
+    asked = _asked(session)
+    assert len(asked) == 1, "what the call declares answered a delete of the working folder"
+    assert (
+        f"This would delete the working folder ({folders.work})."
+        in json.loads(asked[0]["cls"])["reach"]
+    )
+    client.approve_tool.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_yolo_does_not_answer_a_delete_of_the_home_folder(tmp_path, folders):
     from personalclaw.dashboard.chat import run_chat
 

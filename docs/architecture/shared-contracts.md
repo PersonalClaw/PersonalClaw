@@ -961,7 +961,7 @@ Status: planned
 | `model_substitution` | assistant | str: the substitution's sentence | `chat_session_map.MODEL_SUBSTITUTION_KEY` (`:109`) |
 | `file_changes` | assistant | `[{path, before, after}]` | the files the turn's completed calls changed, for the change chip: `meta.file_changes` |
 | `step_models` | assistant | `[{from_step, model_ref}]` | each step's model when it changed mid-turn; `model_ref` is the last step's |
-| `read_untrusted`, `read_private` | assistant | [str] | the sources of outside text and private data the turn's results read, cleared at the owner's next message |
+| `read_untrusted`, `read_private` | assistant | [str] | the sources of outside text and private data the turn's results read, cleared at the owner's next message. Planned: `turns.MessageFacts` declares both, and nothing writes them yet. Outside text is fenced and marked as data where it enters (landed: `security.fence_untrusted`) |
 | `handed_off` | assistant | `{agent, work}` | the reply is a handed-off helper's answer (§3.12) |
 | `checkpoint_turn` | assistant | int | the turn's rewind checkpoint |
 | `checks` | assistant | `{changed, ran_after: [{command, kind, outcome}]}` | the files it changed and the checks that ran after its last change (§3.5's `code_checks`), absent on a turn that changed nothing |
@@ -2708,7 +2708,7 @@ def audit_fields(decision: Decision) -> dict[str, str]: ...   # the audit row's 
   | 8 | the run's bounds (`run_bounds`) | unattended: refuse `run_bounds` (a delete of a protected folder included, naming the folder), but for a host an automation run's own one-run allowance admits; attended and off the allowed hosts: noted for step 11 |
   | 9 | the operator's blocking hooks | `pending` with a matching hook: `awaits: "hooks"`; `blocked`: refuse `hook`; `asked`: ask alone, `hook_ask`; `dry`: go on, `hooked` |
   | 10 | asks every time | an `ask` rule in scope, or `asks_person`: ask alone (`owner_rule`, `asks_person`). For a call that does not declare it only reads: a persistence path (§17.8), a call request (a turn whose root message has `input_origin: call`, a helper it started and a continuation of it, voice), a flagged input, and a delete of the owner's home folder, the filesystem root or the folder the call runs in, or of a path the command reader cannot name (landed: `run_bounds.put_to_a_person`, read on the command through `protected_folders`): ask alone, by its word |
-  | 11 | a reach only a host answer may clear | an off-list host (step 8), or a tainted egress: a `host` chat grant covering every such host clears the reach (`reach_cleared_by`) and the order goes on; otherwise ask with `off_list_host` or `tainted_egress`, alone unless a host answer may be offered (§9.11) |
+  | 11 | a reach only a host answer may clear | an off-list host (step 8; landed: a host off the allowed hosts that a call's command or arguments name, `run_bounds.call_reach`, is asked about past every grant, and an unattended run refuses it), or a tainted egress (planned: the turn's `read_untrusted` and `read_private` are not written yet): a `host` chat grant covering every such host clears the reach (`reach_cleared_by`) and the order goes on; otherwise ask with `off_list_host` or `tainted_egress`, alone unless a host answer may be offered (§9.11) |
   | 12 | a standing allow rule (§9.10) | run `standing_rule`, or `allowed_for_run` for an automation run's one-run allowance, at `LEVEL_HOOK` |
   | 13 | what the call declares | run `declared_read`, `work_asks` or `no_approval_needed` |
   | 14 | Trust reads, effective risk `safe` | run `trust_reads` |
@@ -2761,7 +2761,7 @@ def audit_fields(decision: Decision) -> dict[str, str]: ...   # the audit row's 
 `approval_decision.ask_sentence`: `no_grant` (nothing set answers this call), `may_destroy` (only Trust
 or YOLO answer a call that may delete something or could not be checked), `off_list_host` (it reaches a
 host off the allowed hosts), `tainted_egress` (the turn read private data and outside text, and this call
-sends data to a host), `ceiling` (the operator ceiling says every call that needs approval asks a person),
+sends data to a host; planned, with step 11's tainted egress), `ceiling` (the operator ceiling says every call that needs approval asks a person),
 `someone_else` (the asker rule's line), `owner_rule` (the owner's rule asks every time), `hook_ask` (a hook the owner
 set asks), `persistence_path` (it writes a place the owner's tools run later), `asks_person` (the server says only a
 person may answer this tool), `flagged_input` (the turn started from words the screen flagged),
@@ -3180,7 +3180,7 @@ Status: planned
   - `host_once`, "Allow once": this command's run only (the ask at the connection).
   - `host_chat`, "Allow <host> in this chat": a `host` chat grant, `lasts: chat` (§9.3), which treats the
     host as allowed for this chat's later calls (it clears the reach at step 11, and the call is then
-    decided as one to a listed host) and clears a tainted egress to it; this call is approved.
+    decided as one to a listed host) and clears a tainted egress to it (planned, step 11); this call is approved.
   - `host_always`, "Allow <host> from now on": approves this call and adds the host to the allowed hosts
     through the one writer. Its promise: "Every chat's commands and the programs apps start reach {host}
     without asking from now on, and fetches reach it even on a private address. Remove it in Settings ›

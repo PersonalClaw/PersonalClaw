@@ -140,7 +140,7 @@ def chat_grant(session_key: str, event: Any) -> str:
         level=approval_grants.LEVEL_HOOK,
     ):
         return approval_grants.HOOK_PATTERN
-    declared = approval_grants.declared_answer(event)
+    declared = approval_grants.declared_answer(event, session_key=session_key, cwd=folder)
     if declared:
         return declared
     state = _state()

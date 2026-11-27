@@ -240,6 +240,7 @@ def _capability(type_: str, **declared: Any) -> ProviderCapability:
 def models(monkeypatch, bindings) -> list[str]:
     """The model entries Settings → Providers holds: the chat's own model on this machine, and a
     cloud one bound for Reasoning and Orchestration. Returns the entries asked, in order."""
+    monkeypatch.setattr("personalclaw.web.fetch._seen_by_session", {})  # no link leaks out
     from personalclaw.guardrails.breaker import reset_breakers
 
     asked: list[str] = []
@@ -295,6 +296,10 @@ class _WebTools(ToolProvider):
         return result
 
 
+#: The owner's question, with the link the chat's model then reads.
+KETTLE_ASK = "What does the kettle at https://shop.example.com/kettle cost?"
+
+
 class _ChatModel:
     """The chat's own model as its turn calls it: it asks for the page's price, then answers."""
 
@@ -345,7 +350,12 @@ async def _turn_state(tmp_path: Path, runtime):
     sessions._sessions = {}
     sessions.get_pid = MagicMock(return_value=None)
     sessions.get_channel_link = MagicMock(return_value=(None, None))
-    sessions.get_or_create = AsyncMock(return_value=(runtime, True, False))
+
+    async def _get_or_create(key: str, **_kw: Any):
+        runtime.set_session_key(key)  # as the session manager keys the chat's runtime
+        return runtime, True, False
+
+    sessions.get_or_create = AsyncMock(side_effect=_get_or_create)
     sessions.record_failure = AsyncMock()
     log = ConversationLog(base_dir=tmp_path / "sessions")
     state = DashboardState(sessions=sessions, start_time=0.0, conversation_log=log)
@@ -361,9 +371,12 @@ async def _turn_state(tmp_path: Path, runtime):
 
 
 async def _send(state, name: str, mode: str, text: str):
+    """*text* sent into chat *name* as the dashboard sends it: its links become the user's."""
     from personalclaw.dashboard.chat_runner import run_chat
+    from personalclaw.dashboard.chat_utils import take_in_the_users_links
 
     session = state.get_or_create_session(name, memory_mode=mode)
+    take_in_the_users_links("", session.key, text)
     session.append("user", text, "msg msg-u")
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
         await run_chat(state, session, text)
@@ -394,7 +407,7 @@ async def test_a_tool_that_needs_a_model_answers_on_the_incognito_chats_own(
     runtime, chat_model = _chat_runtime([tools])
     state = await _turn_state(tmp_path, runtime)
 
-    await _send(state, "chat-7-1700000000", "incognito", "What does the kettle cost?")
+    await _send(state, "chat-7-1700000000", "incognito", KETTLE_ASK)
 
     assert chat_model.calls == 2, "the turn asked for the tool and then answered"
     assert models == [HERE], "the tool's model call left the chat's own model"
@@ -409,7 +422,7 @@ async def test_a_normal_chats_tool_still_runs_on_its_bound_model(tmp_path, model
     runtime, _chat = _chat_runtime([tools])
     state = await _turn_state(tmp_path, runtime)
 
-    await _send(state, "chat-8-1700000100", "persistent", "What does the kettle cost?")
+    await _send(state, "chat-8-1700000100", "persistent", KETTLE_ASK)
 
     assert models == [RELAY], "a normal chat's tool no longer runs on the bound Reasoning model"
 

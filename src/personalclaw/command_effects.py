@@ -467,6 +467,14 @@ def _simple_effects(one: Simple, depth: int = 0, *, relayed: bool = False) -> Co
     )
 
 
+def _sending(base: str) -> _Read | None:
+    """The reader :mod:`personalclaw.command_senders` has for program *base*, one that sends what
+    it is given to a host; it answers before this module's tables."""
+    from personalclaw.command_senders import SENDERS
+
+    return SENDERS.get(base)
+
+
 def _program_effects(words: list[Word], depth: int) -> CommandEffects:
     """What the program *words* name does with the rest of them as its arguments."""
     name = words[0]
@@ -481,7 +489,7 @@ def _program_effects(words: list[Word], depth: int) -> CommandEffects:
     if starts is not None:
         found = _UNREAD | starts(args, depth) if depth < _MAX_DEPTH else _UNREAD
     else:
-        read = _PROGRAMS.get(base) or _DESCRIBED.get(base)
+        read = _sending(base) or _PROGRAMS.get(base) or _DESCRIBED.get(base)
         if read is None:
             return _UNREAD
         found = read(args)
@@ -1665,9 +1673,10 @@ def _clean_host(host: str) -> str | None:
     return None
 
 
-def _url_host(text: str) -> str | None:
+def url_host(text: str) -> str | None:
     """The host the URL in *text* names, ``""`` for a ``file:`` URL (it reaches no host), and
-    ``None`` when *text* holds no URL whose host this reading can read."""
+    ``None`` when *text* holds no URL whose host this reading can read, or one whose authority URL
+    readers could take to different hosts (a backslash, whitespace or a control character)."""
     match = _SCHEME.search(text)
     if match is None:
         return None
@@ -1677,6 +1686,8 @@ def _url_host(text: str) -> str | None:
         return ""
     if "+" in scheme:  # `git+https://…`: the transport after the `+` is what connects
         url = url.split("+", 1)[1]
+    if re.search(r"[\\\s\x00-\x1f\x7f]", re.split(r"[/?#]", url.split("://", 1)[1], maxsplit=1)[0]):
+        return None
     try:
         host = urlsplit(url).hostname
     except ValueError:
@@ -1698,9 +1709,9 @@ def _url_reach(word: Word, *, bare: bool = False) -> CommandEffects:
     if word.opaque:
         return _NETWORK
     text = word.text
-    host = _url_host(text)
+    host = url_host(text)
     if host is None and bare and not _SCHEME.search(text):
-        host = _url_host("http://" + text)
+        host = url_host("http://" + text)
     if host is None:
         return _NETWORK
     if host == "":

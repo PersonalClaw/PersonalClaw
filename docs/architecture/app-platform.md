@@ -64,6 +64,11 @@ backend**.
   string in a file the app loads is refused; the same string in a test file nothing
   the app runs loads, which cannot run a string itself, is a warning to consent to
   (see [scanner-testing](../security/scanner-testing.md)).
+  The review leads each finding with what it means in plain words, where in the app it
+  was found (a prerequisite by its name) and what it does to the install, and says when
+  what it found can still be a reasonable choice; the scanner's rule and the matched line
+  open on "Show evidence" (`installConsent.tsx` `FindingRow`). It also lists what the scan
+  read, with how many findings each part gave (`ScannedList`).
 - **A registry listing names a remote repository** — a `repo` in a source's
   `app-registry.json` must be a plain `https://` URL (no credentials, no port), the
   form the published registry requires. A listing naming a local path, `file://`,
@@ -195,7 +200,10 @@ backend**.
   with them (*What it needs that PersonalClaw doesn't install*), the Store card says
   "Needs ComfyUI", and an update that adds one asks again. Once the app is installed,
   `GET /api/apps` carries them on its row (`requires`) and the app's panel in the Library
-  shows the same row consent did.
+  shows the same row consent did. A `how` is text the owner carries out, so the install scanner
+  reads it as it reads a README: a `how` that pipes a download into a shell is a warning on the
+  review with the sentence beside it (`install_instructions.py`). Prefer naming the maker's
+  install page to a one-line installer.
 - **An engine** — a provider with `execution: "sidecar"` runs in a child process with a Python
   environment of its own, `apps/<app>/venv` (`local_models/sidecar.py`). Its engine is
   `dependencies.sidecarDependencies`: PEP 508 requirements (an option is an install error, and

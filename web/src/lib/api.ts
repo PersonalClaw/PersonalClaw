@@ -1487,9 +1487,15 @@ export interface AppScanFinding {
  *  `invalid` state must show. An `invalid` state means the install was REFUSED — it is
  *  never consentable, unlike a warning verdict. `unsigned` is normal for community apps. */
 export interface AppSignature { state: string; signer: string; reason: string }
+/** One set of install instructions the scanner read as the code they stand for (#3852): a
+ *  skill's instructions (`instructions`, which the assistant carries out), its other docs
+ *  (`skill_docs`), or prose a person follows (`prose`: a README, or a prerequisite's `how`, whose
+ *  path reads `app.json requires <name>: how`), and how many findings it gave. */
+export interface AppScannedInstruction { surface: string; path: string; findings: number }
 export interface AppScanReport {
   verdict: string; findings: AppScanFinding[]; tier?: string
   signature?: AppSignature | null
+  scanned?: AppScannedInstruction[]
 }
 export interface AppInstallResult {
   ok: boolean; name: string; error: string

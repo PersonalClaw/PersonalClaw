@@ -45,6 +45,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -334,7 +335,7 @@ def derive_contact_sheet(
     """
     root = Path(bundle_dir)
     recording = root / recording_name
-    if not recording.is_file():
+    if not sealable(recording, root):
         return Derivation(kind=KIND_CONTACT_SHEET, degraded_reason=_REASON_NO_RECORDING)
     if not ffmpeg_available():
         return Derivation(kind=KIND_CONTACT_SHEET, degraded_reason=_REASON_NO_FFMPEG)
@@ -386,7 +387,7 @@ def derive_gif(
     """
     root = Path(bundle_dir)
     recording = root / recording_name
-    if not recording.is_file():
+    if not sealable(recording, root):
         return Derivation(kind=KIND_GIF, degraded_reason=_REASON_NO_RECORDING)
     if not ffmpeg_available():
         return Derivation(kind=KIND_GIF, degraded_reason=_REASON_NO_FFMPEG)
@@ -502,10 +503,61 @@ class Manifest:
         )
 
 
-def sha256_file(path: Path | str) -> str:
-    """The hex SHA256 of a file's bytes, read in bounded chunks so a large MP4 is not slurped."""
+def sealable(path: Path | str, root: Path | str) -> bool:
+    """Whether *path* is a file of the bundle *root* the seal may read: a file itself, never a
+    link, whose real path sits under the root's. The drive step writes the bundle, and the seal
+    reads it unsandboxed in the gateway: a link it left there (to a file its own sandbox cannot
+    read) would otherwise be read into an evidence artifact it can read back."""
+    p = Path(path)
+    if p.is_symlink() or not p.is_file() or p.stat().st_nlink > 1:
+        # A hard link is no symlink, and its real path is its own: a file of the bundle has one
+        # name, as a capture freshly written there does.
+        return False
+    real, top = os.path.realpath(p), os.path.realpath(root)
+    return real.startswith(top + os.sep)
+
+
+def _opened(path: Path | str, root: Path | str | None = None) -> Any:
+    """*path* opened to read, never through a link (`O_NOFOLLOW`), and never a file with another
+    name (`st_nlink`, read on what was opened): the check that kept it to the bundle cannot be
+    raced by a link put in its place. With *root*, the bundle *path* is in, every folder from the
+    root's real path down to it is opened through no link as well (`dir_fd`), so neither can a
+    folder swapped for a link after the check."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if root is None or os.open not in os.supports_dir_fd:
+        fd = os.open(path, os.O_RDONLY | nofollow)
+    else:
+        fd = _opened_below(Path(path), Path(root), nofollow)
+    if os.fstat(fd).st_nlink > 1:
+        os.close(fd)
+        raise OSError(f"{path} has another name, so it is no file of the bundle")
+    return os.fdopen(fd, "rb")
+
+
+def _opened_below(path: Path, root: Path, nofollow: int) -> int:
+    """The descriptor of *path*, opened one name at a time from *root*'s real path, each through
+    no link; OSError when *path* is not below *root* as written."""
+    parts = path.relative_to(root).parts
+    if not parts or any(part in (".", "..") for part in parts):
+        raise OSError(f"{path} is no file of the bundle {root}")
+    folder = os.open(os.path.realpath(root), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        for part in parts[:-1]:
+            inner = os.open(
+                part, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow, dir_fd=folder
+            )
+            os.close(folder)
+            folder = inner
+        return os.open(parts[-1], os.O_RDONLY | nofollow, dir_fd=folder)
+    finally:
+        os.close(folder)
+
+
+def sha256_file(path: Path | str, root: Path | str | None = None) -> str:
+    """The hex SHA256 of a file's bytes, read in bounded chunks so a large MP4 is not slurped;
+    with *root*, opened through no link from the bundle *root* down (:func:`_opened`)."""
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with _opened(path, root) as f:
         while True:
             chunk = f.read(_SHA256_CHUNK)
             if not chunk:
@@ -532,13 +584,13 @@ def build_manifest(
     root = Path(bundle_dir)
     manifest = Manifest(scenario_id=scenario_id, sha=sha, passed=passed)
 
-    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+    for path in sorted(p for p in root.rglob("*") if sealable(p, root)):
         rel = path.relative_to(root).as_posix()
         if path.name in exclude:
             continue
         try:
             size = path.stat().st_size
-            digest = sha256_file(path)
+            digest = sha256_file(path, root)
         except OSError:
             logger.warning("selfqa evidence: could not hash %s", rel, exc_info=True)
             continue
@@ -692,8 +744,14 @@ def register_bundle(
     stored = 0
     for entry in manifest.files:
         src = root / entry.name
+        if not sealable(src, root):
+            logger.warning(
+                "selfqa evidence: %s is no file of the bundle; not registered", entry.name
+            )
+            continue
         try:
-            data = src.read_bytes()
+            with _opened(src, root) as handle:
+                data = handle.read()
         except OSError:
             logger.warning("selfqa evidence: could not read %s for registration", entry.name)
             continue

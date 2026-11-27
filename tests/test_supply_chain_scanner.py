@@ -231,9 +231,11 @@ class TestReportShape:
         assert rep.is_dangerous is True
 
     def test_oversize_file_skipped(self, tmp_path: Path) -> None:
-        # A huge file is skipped (not read into the scanner), so no crash/finding.
+        # A big one-line file is read without a crash; its one finding is the over-long line.
         d = _mk(tmp_path, {"big.md": "x" * (600 * 1024)})
-        assert scan_dir(d).verdict is Verdict.CLEAN
+        report = scan_dir(d)
+        assert report.verdict is Verdict.LOW
+        assert [f.rule for f in report.findings] == ["overlong_line"]
 
 
 class TestEvidenceWindow:
@@ -306,11 +308,13 @@ _SUPPLY_CHAIN_PY = Path(personalclaw.supply_chain.__file__)
 
 def _emittable_rules() -> set[str]:
     """Every ``rule`` name a ``Finding`` can carry. THREE sources, because the scanner has
-    three idioms: the pattern catalogs (a rule per ``(name, regex)`` pair), the AST-decided
+    three idioms: the pattern catalogs (a rule per ``(name, regex)`` pair, the install-instruction
+    rules among them), the AST-decided
     native-destruction family (a NAME LIST, because a call-site rule has no regex to key on —
     #2607), and the hand-built findings for the co-occurrence/Unicode heuristics, whose rule is
     a literal at the ``Finding(...)`` call. Derived rather than listed so a rule added by any of
     the three is caught here instead of shipping unexplained."""
+    from personalclaw.install_instructions import RULES as INSTRUCTION_RULES
     from personalclaw.supply_chain import (
         _DANGEROUS_SCRIPT,
         _INJECTION_PROSE,
@@ -319,6 +323,7 @@ def _emittable_rules() -> set[str]:
     )
 
     catalogued = {name for name, _ in (*_DANGEROUS_SCRIPT, *_WARNING_SCRIPT, *_INJECTION_PROSE)}
+    catalogued |= {name for name, _, _ in INSTRUCTION_RULES}
     src = _SUPPLY_CHAIN_PY.read_text(encoding="utf-8")
     literal = set(re.findall(r'Verdict\.\w+,\s*"([a-z_]+)"', src, re.S))
     return catalogued | set(_NATIVE_DESTRUCTION_RULES) | literal

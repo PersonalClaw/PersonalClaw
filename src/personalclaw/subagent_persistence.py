@@ -13,7 +13,7 @@ import logging
 import shutil
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Container, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -309,6 +309,133 @@ def delete_agent_folder(agent_id: str) -> None:
     shutil.rmtree(d, ignore_errors=True)
 
 
+# ── a chat's helpers ─────────────────────────────────────────────────
+
+
+def _recorded(folder: Path, key: str) -> str:
+    """What agent *folder* recorded under *key*: in its state, else in its tombstone."""
+    for name in ("state.json", "tombstone.json"):
+        try:
+            data = json.loads((folder / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get(key):
+            return str(data[key])
+    return ""
+
+
+def started_by(home: Path | None = None) -> dict[str, str]:
+    """The session each agent folder in *home*'s ``subagents/`` (the active home's when None) was
+    started from, by agent id (its ``parent_session``): a helper's helper names its helper's
+    session, ``subagent:<id>``."""
+    root = (Path(home) if home is not None else config_dir()) / "subagents"
+    try:
+        folders = sorted(p for p in root.iterdir() if p.is_dir() and not p.is_symlink())
+    except OSError:
+        return {}
+    return {folder.name: _recorded(folder, "parent_session") for folder in folders}
+
+
+def helpers_of(owns: Callable[[str], bool], parents: Mapping[str, str]) -> set[str]:
+    """The agents among *parents* (:func:`started_by`) a session *owns* claims started, and every
+    one those started in turn, by id."""
+    found: set[str] = set()
+    while more := {
+        agent_id
+        for agent_id, parent in parents.items()
+        if agent_id not in found and (owns(parent) or parent in {SUBAGENT.key(f) for f in found})
+    }:
+        found |= more
+    return found
+
+
+def chat_of(agent_id: str, parents: Mapping[str, str]) -> str:
+    """The session at the top of agent *agent_id*'s chain of helpers (:func:`started_by`): the
+    first in it that is no helper's. ``""`` when a helper in the chain has no folder left to say
+    whose work it was."""
+    seen: set[str] = set()
+    key = parents.get(agent_id, "")
+    while SUBAGENT.names(key):
+        above = key.removeprefix(SUBAGENT.prefix)
+        if above in seen or above not in parents:
+            return ""
+        seen.add(above)
+        key = parents[above]
+    return key
+
+
+def kept_by_helpers_of(owns: Callable[[str], bool], home: Path) -> set[Path]:
+    """The folders in *home* of the helpers a session *owns* claims started (:func:`helpers_of`),
+    and the agent session files each kept (``sessions/<session_id>``), resolved. A session id that
+    names a path outside ``sessions/`` names none, as when the files are deleted
+    (:func:`_cleanup_session_files_sync`): the id is the agent client's own."""
+    root, sessions = Path(home) / "subagents", Path(home) / "sessions"
+    kept: set[Path] = set()
+    for agent_id in helpers_of(owns, started_by(home)):
+        kept.add((root / agent_id).resolve())
+        session_id = _recorded(root / agent_id, "session_id")
+        if session_id in ("", ".", ".."):
+            continue
+        files = [sessions / f"{session_id}{suffix}" for suffix in _SESSION]
+        kept |= {f.resolve() for f in files if _is_safe_path(f, sessions)}
+    return kept
+
+
+def forget_helpers(
+    owns: Callable[[str], bool], *, ended: Callable[[str], bool | None]
+) -> list[str]:
+    """Remove the folder of every helper a session *owns* claims started, and of every one those
+    started in turn (:func:`helpers_of`), tombstoned or not, with the agent session files each
+    kept, as the prune does. Returns the ids it removed.
+
+    *ended* says whether this gateway's helper by an id has ended, or ``None`` when it runs none by
+    it. A folder stays while its helper may still run: one still going here, and one with no
+    tombstone this gateway does not run, which a previous one left, its process maybe still alive,
+    and which the start settles first (``subagent_orphans``). So does each folder above one that
+    stays in its chain, which says whose work it is (:func:`chat_of`)."""
+    parents = started_by()
+    found = helpers_of(owns, parents)
+    root = _subagents_dir()
+    going = {
+        agent_id
+        for agent_id in found
+        if (done := ended(agent_id)) is False
+        or (done is None and not (root / agent_id / "tombstone.json").exists())
+    }
+    for agent_id in list(going):
+        key = parents.get(agent_id, "")
+        while SUBAGENT.names(key) and (above := key.removeprefix(SUBAGENT.prefix)) in found:
+            if above in going:
+                break  # walked already, from its own folder or from another below it
+            going.add(above)
+            key = parents.get(above, "")
+    for agent_id in sorted(found - going):
+        _remove(root / agent_id)
+    return sorted(found - going)
+
+
+def forget_settled(agent_ids: Iterable[str], *, tracked: Container[str]) -> list[str]:
+    """Remove the folder of each of *agent_ids* that has a tombstone and is not one of *tracked*
+    (the agents this gateway runs), with the agent session files it kept: the start's, once it has
+    settled what a previous gateway left (``subagent_orphans``). Returns the ids it removed."""
+    root = _subagents_dir()
+    removed = [
+        agent_id
+        for agent_id in sorted(agent_ids)
+        if agent_id not in tracked and (root / agent_id / "tombstone.json").is_file()
+    ]
+    for agent_id in removed:
+        _remove(root / agent_id)
+    return removed
+
+
+def _remove(folder: Path) -> None:
+    """Remove agent *folder*, and the agent session files it kept (its ``session_id``)."""
+    if session_id := _recorded(folder, "session_id"):
+        _cleanup_session_files_sync(session_id)
+    shutil.rmtree(folder, ignore_errors=True)
+
+
 # ── list orphans ─────────────────────────────────────────────────────
 
 
@@ -439,6 +566,10 @@ def prune_stale_tombstones(max_age_days: int = 7) -> int:
 # ── session file cleanup ──────────────────────────────────────────────
 
 
+#: The suffixes of the files an agent session keeps under ``sessions/<session_id>``.
+_SESSION = (".json", ".jsonl")
+
+
 def _cleanup_session_files_sync(session_id: str) -> None:
     """Delete ACP agent session files for a completed subagent.
 
@@ -449,7 +580,7 @@ def _cleanup_session_files_sync(session_id: str) -> None:
         return
     try:
         sessions_dir = config_loader.config_dir() / "sessions"
-        for suffix in (".json", ".jsonl"):
+        for suffix in _SESSION:
             target = sessions_dir / f"{session_id}{suffix}"
             if not _is_safe_path(target, sessions_dir):
                 logger.error(

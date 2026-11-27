@@ -487,6 +487,19 @@ Installable content (apps, skills) from arbitrary sources:
 - **Scanner verdicts** (`supply_chain.py`: `SkillScanner`, `Verdict`): `clean` /
   `warning` (consent required) / **`dangerous` (terminal, non-overridable)**;
   `TrustTier` modulates strictness.
+- **Install instructions in prose are read as code** (`install_instructions.py`): a skill's
+  `SKILL.md` and the Markdown it links are carried out by the agent, so the rules that catch a
+  download or a decoded payload handed to a shell keep their script severity there, and a
+  skill that pipes a download into a shell is refused at install or update, from a bundle, a
+  marketplace or a pack. A skill's other Markdown is read a band lower. A README and each
+  prerequisite's `how` are carried out by a person who sees the review first, so the same
+  rules there are a warning at most, with the sentence as evidence. Rules for tricks that
+  live mostly in prose read all three: stripping the macOS quarantine mark, opening an archive
+  with a password given beside it, a link to a paste site (the hosts are data,
+  `scan_paste_hosts.json`), and the two phrase rules, an order to fetch text and follow it and
+  one to keep a credential in memory or notes, which sit in the lowest band so they never
+  block an install. The report lists each instruction it read with its finding count
+  (`scanned`). Prose has no call graph, so no finding on it is re-scored by reachability.
 - **Where the bytes come from**: a registry index is untrusted, so a listing's `repo`
   must be an `https://` URL (`apps/catalog.py::listing_repo_refusal`), so an index cannot
   point a Store card at a folder on this machine. Nor at this computer, a private network
@@ -845,7 +858,10 @@ Data leaving the running system:
   project made or changed on the Tasks page, no Inbox item posted, no loop's spec
   or plan changed; and a Temporary chat's workflow runs are stopped and deleted
   once it has ended, an Incognito chat's once it is deleted
-  (`workflows/private_runs.py`). Whether
+  (`workflows/private_runs.py`), and its subagents are stopped and their folders
+  removed when it ends, any deleted chat's too, while no snapshot or export taken
+  as it runs copies them or its runs (`dashboard/chat_forget.py`,
+  `chat_traces.kept_by_temporary_chats`). Whether
   work may read memory at all is one answer, `memory_reads.reach_of`: a
   Temporary chat's work reads none (its subagents, theirs, and the steps of a run
   it started included), and neither does an app's (a conversation it started, an

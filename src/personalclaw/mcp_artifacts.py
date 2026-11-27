@@ -705,6 +705,15 @@ def _fetch_generated(url: str, *, what: str, smaller: str) -> tuple[bytes, str]:
     return resp.body, resp.headers.get("Content-Type", "").split(";")[0].strip()
 
 
+def _stored_type(data: bytes, said: str) -> str:
+    """The MIME a generated file is stored as: its bytes' type when they are one the store keeps
+    (``artifacts.models.binary_type_of``), else what its source said, which the binary write then
+    refuses unless it names a kind."""
+    from personalclaw.artifacts.models import binary_type_of
+
+    return binary_type_of(data) or said
+
+
 def _materialize_image(result: Any) -> tuple[bytes, str] | None:
     """Turn an ImageResult into ``(bytes, mime)``, fetching/decoding as needed.
 
@@ -720,17 +729,19 @@ def _materialize_image(result: Any) -> tuple[bytes, str] | None:
     b64 = getattr(result, "b64", "") or ""
     if b64:
         try:
-            return base64.b64decode(b64), mime
+            data = base64.b64decode(b64)
+            return data, _stored_type(data, mime)
         except (ValueError, TypeError):
             return None
     url = getattr(result, "url", "") or ""
     if url:
         data, ct = _fetch_generated(url, what="image", smaller="Generate a smaller image.")
-        return data, (ct or mime)
+        return data, _stored_type(data, ct or mime)
     local = getattr(result, "local_path", "") or ""
     if local:
         try:
-            return Path(local).read_bytes(), mime
+            data = Path(local).read_bytes()
+            return data, _stored_type(data, mime)
         except OSError:
             return None
     return None
@@ -1948,11 +1959,12 @@ def _materialize_video(result: Any) -> tuple[bytes, str] | None:
         data, ct = _fetch_generated(
             url, what="video", smaller="Generate a shorter or lower-resolution video."
         )
-        return data, (ct or mime)
+        return data, _stored_type(data, ct or mime)
     local = getattr(result, "local_path", "") or ""
     if local:
         try:
-            return Path(local).read_bytes(), mime
+            data = Path(local).read_bytes()
+            return data, _stored_type(data, mime)
         except OSError:
             return None
     return None

@@ -27,8 +27,10 @@ chosen, and it is a privacy promise, so it holds however the session ends. The s
 the gateway that is running it, so it ends when that gateway stops or restarts, when the chat is
 deleted, and when cleanup evicts it as inactive:
 
-* the last save before the gateway stops (``chat_persistence.save_all_sessions_to_history``)
-  forgets each resident Temporary chat instead of saving it (:func:`forget_temporary_chat`);
+* a gateway that stops ends each resident Temporary chat before its last save
+  (:func:`end_temporary_chats`), and so does a cleanup that evicts one as inactive
+  (:func:`end_temporary_chat`); the last save (``chat_persistence.save_all_sessions_to_history``)
+  forgets any left instead of saving it (:func:`forget_temporary_chat`);
 * a gateway that ended without that save — a crash, a kill, a power cut — or a backup restored
   over the home leaves transcripts behind, and the next start forgets every Temporary transcript
   it finds before it restores anything (:func:`forget_ended_temporary_chats`);
@@ -41,10 +43,16 @@ supervisor stops each once the chat has ended and then deletes it with what it p
 (``workflows.private_runs``), however the session ended. So do an Incognito chat's once it is
 deleted.
 
+So do the helpers (subagents) any chat started, whenever it started them, and what each started in
+turn: a Temporary chat's end and a Delete stop each one still going (``started_work.end_chat``),
+and each one's folder (its task, its state, what it wrote) goes with what the chat kept, once it
+has ended (:func:`purge_chat`). One a crash left is settled by the next start, which names it by
+its chat's end alone and then removes its folder (``subagent_orphans``).
+
 What the owner kept elsewhere is hers and stays: a download, a file saved to Knowledge, an
 artifact. While the session runs, the transcript is written as any chat's is, so a reload keeps
 it; it stays out of the chat list and search, nothing learns from it, and no snapshot or shard
-export copies it (``chat_traces.kept_by_temporary_chats``).
+export copies it, nor its helpers' folders or its runs (``chat_traces.kept_by_temporary_chats``).
 """
 
 from __future__ import annotations
@@ -115,9 +123,11 @@ def purge_chat(
     kept of its turns and the lessons it captured from them (a lesson batch compiled from one is
     withdrawn), the learning and skill proposals learned from it that still wait on your answer,
     the skills it was taught and not yet kept, and the links it was given (held in memory for
-    web_fetch); and of what it raised in your Inbox and the bell, all but each decision it asked
-    for, which stays as a short record (``chat_forget_inbox``). Says how many attached files were
-    deleted, and whether the transcript stayed.
+    web_fetch); of what it raised in your Inbox and the bell, all but each decision it asked for,
+    which stays as a short record (``chat_forget_inbox``); and the folder of each helper it started
+    that has ended, and of each one those started in turn, with what it wrote
+    (:func:`_forget_its_helpers`). Says how many attached files were deleted, and whether the
+    transcript stayed.
 
     ``keys`` are every form of the chat's key the per-session stores may have been written under
     (a turn's tool results are keyed by the canonical ``dashboard:`` key, some paths by the bare
@@ -186,6 +196,7 @@ def purge_chat(
     except Exception:
         logger.warning("forget: learning capture purge failed for %s", history_key, exc_info=True)
     _forget_its_plan(names | {history_key})
+    _forget_its_helpers(state, names | {history_key})
     # What was learned from it and still waits on your answer: its learning and skill proposals,
     # which quote it, with their Inbox rows and the words their notifications copied.
     spelled = _spellings(names | {history_key}).__contains__
@@ -249,6 +260,48 @@ def _forget_its_plan(keys: set[str]) -> None:
             chat_plan.clear(key)
     except Exception:
         logger.warning("forget: plan removal failed for %s", sorted(keys), exc_info=True)
+
+
+def _forget_its_helpers(state: DashboardState, keys: set[str]) -> None:
+    """The folders of the helpers the chat *keys* spell started, and of those they started in
+    turn: each one's task, its state and what it wrote, and its agent session's files. Each goes
+    once its helper has ended; one still running here, or left by a previous gateway for the
+    start to settle, stays (``subagent_persistence.forget_helpers``)."""
+    ended = started_work.ended_by(getattr(state, "subagents", None))
+    try:
+        from personalclaw import subagent_persistence
+
+        subagent_persistence.forget_helpers(_spellings(keys).__contains__, ended=ended)
+    except Exception:  # noqa: BLE001 - one store's failure never keeps the others' traces
+        logger.warning("forget: its helpers' folders could not be removed", exc_info=True)
+
+
+#: The endings a forget that cannot wait handed the loop (:func:`_end_its_helpers_soon`), held
+#: until each is done.
+_ENDING: set[asyncio.Task[None]] = set()
+
+
+def _end_its_helpers_soon(state: DashboardState, name: str, keys: set[str]) -> None:
+    """End, on the running loop, each helper of Temporary chat *name* still going here, and what
+    each started (``started_work.end_chat``), then remove their folders
+    (:func:`_forget_its_helpers`): for a forget that cannot wait for them. Nothing when none is
+    going, or with no loop running."""
+    agents = list(getattr(getattr(state, "subagents", None), "all_agents", None) or [])
+    reached = started_work.reached(agents, _spellings(keys).__contains__).values()
+    if all(info.done for info in reached):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    async def _end() -> None:
+        await started_work.end_chat(state, name, clause=started_work.TEMPORARY_ENDED)
+        _forget_its_helpers(state, keys)
+
+    task = loop.create_task(_end(), name=f"end-temporary-helpers:{name}")
+    _ENDING.add(task)
+    task.add_done_callback(_ENDING.discard)
 
 
 def _transcript_left(log: ConversationLog, key: str) -> bool:
@@ -536,8 +589,46 @@ def _said(name: str, attachments: int, why: str) -> None:
         logger.debug("forget: audit row failed for %s", name, exc_info=True)
 
 
+async def end_temporary_chat(state: DashboardState, session: _ChatSession, *, why: str) -> None:
+    """End a resident Temporary chat's session (an inactive chat's eviction, the gateway's stop),
+    as a Delete ends a chat (:func:`delete_chats`): it leaves the gateway's chats and its turn is
+    stopped; every helper it started ends, whenever it started them, and what each started in
+    turn (``started_work.end_chat``, saying ``started_work.TEMPORARY_ENDED``); then what it kept
+    is forgotten, its helpers' folders with it (:func:`forget_temporary_chat`). A step that fails
+    before the forget is logged and passed: the chat is forgotten all the same, and a helper still
+    going is ended on the loop (:func:`_end_its_helpers_soon`)."""
+    from personalclaw.cancellation import cancel_and_wait
+
+    name = session.key
+    state._sessions.pop(name, None)
+    # Before its turn is stopped: that turn's end starts nothing for it (`_ChatSession._deleted`).
+    session._deleted = True
+    session._queue.clear()
+    try:
+        if session.running and session.task is not None:
+            await cancel_and_wait([session.task], what=f"chat {name}", grace=2.0)
+        await started_work.end_chat(state, name, clause=started_work.TEMPORARY_ENDED)
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.warning("could not end what Temporary chat %s started", name, exc_info=True)
+    forget_temporary_chat(state, session, why=why)
+
+
+async def end_temporary_chats(state: DashboardState, *, why: str) -> int:
+    """End every Temporary chat running here (:func:`end_temporary_chat`): the gateway's stop,
+    before its last save. Returns how many."""
+    temporary = [s for s in list(state._sessions.values()) if s.memory_mode == TEMPORARY]
+    for session in temporary:
+        try:
+            await end_temporary_chat(state, session, why=why)
+        except Exception:  # noqa: BLE001 - the last save forgets what is left
+            logger.warning("could not end Temporary chat %s", session.key, exc_info=True)
+    return len(temporary)
+
+
 def forget_temporary_chat(state: DashboardState, session: _ChatSession, *, why: str) -> None:
-    """End a resident Temporary chat's session: drop it from memory, then delete what it kept.
+    """Delete what a resident Temporary chat kept, its session ending: drop it from memory, then
+    delete what it kept. A helper of it still going here is ended on the loop, and its folder goes
+    once it has (:func:`_end_its_helpers_soon`); :func:`end_temporary_chat` ends them first.
 
     Taken out of the gateway's sessions first, so nothing that walks them later (the flush loop,
     a shutdown save) writes it back.
@@ -550,6 +641,7 @@ def forget_temporary_chat(state: DashboardState, session: _ChatSession, *, why: 
     history_key = persisted_history_key(state.conversation_log, name)
     files = temporary_attachments(state, history_key, session)
     purged = purge_chat(state, history_key, keys={history_key, name}, attachments=files)
+    _end_its_helpers_soon(state, name, {history_key, name})
     _said(name, purged.attachments, why)
 
 
@@ -562,12 +654,9 @@ def _forget_transcript(state: DashboardState, key: str, *, why: str) -> None:
         messages = state.conversation_log.read_messages(key) if state.conversation_log else []
     except Exception:
         messages = []
-    purged = purge_chat(
-        state,
-        key,
-        keys={key, _history_key_for(name), name},
-        attachments=attached_files(messages),
-    )
+    keys = {key, _history_key_for(name), name}
+    purged = purge_chat(state, key, keys=keys, attachments=attached_files(messages))
+    _end_its_helpers_soon(state, name, keys)
     _said(name, purged.attachments, why)
 
 

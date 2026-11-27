@@ -11,6 +11,7 @@
 {"site": "src/personalclaw/dashboard/handlers/trigger_runs.py::_run_asked", "reason": "another store's runs: an automation's own fire record, not a workflow run", "added": "2026-11-01"}
 {"site": "src/personalclaw/dashboard/handlers/triggers.py::api_trigger_history_detail", "reason": "another store's runs: an automation's run history (`ScheduleRunStore`)", "added": "2026-11-01"}
 {"site": "src/personalclaw/evals/field_metrics.py::_template_run_signals", "reason": "counts only: per template, whether a person approved its gates without editing", "added": "2026-11-01"}
+{"site": "src/personalclaw/evals/harvest.py::_case_withheld", "reason": "evaluation: the run a written case names, by its id, read only to tell whose chat it is (`chat_runs.whose`): a Temporary or Incognito chat's removes the case, one that cannot be read keeps it out of every eval", "added": "2026-11-22"}
 {"site": "src/personalclaw/evals/harvest.py::harvestable_runs", "reason": "evaluation: a template's terminal runs, as candidate eval cases (`case_from_run` screens their inputs)", "added": "2026-11-01"}
 {"site": "src/personalclaw/evals/learning_bench.py::latest_report", "reason": "another store's: the learning benchmark's own report folders", "added": "2026-11-01"}
 {"site": "src/personalclaw/evals/model_watchdog.py::top_templates", "reason": "counts only: the most-run template names", "added": "2026-11-01"}

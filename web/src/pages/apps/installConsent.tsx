@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useId, useRef, useState, type ReactNode } from 'react'
 import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
 import { trustTierLabel } from '../../lib/trustTier'
 import {
@@ -13,7 +13,7 @@ import { FieldError } from '../../ui/forms'
 import {
   api, type AppSummary, type AppInstallResult, type AppCronSummary, type AppScanReport, type AppCatalogEntry,
   type AppPythonDependency, type AppDisclosure, type AppScanFinding, type AppPrerequisite,
-  type AppLaunchedProgram, type AppExternalWrite, type AgentTier,
+  type AppLaunchedProgram, type AppExternalWrite, type AgentTier, type AppScannedInstruction,
 } from '../../lib/api'
 import { terminalRefusalReason } from '../../lib/useGuardedInstall'
 import { readableErrText } from '../../lib/errText'
@@ -125,29 +125,68 @@ function findingStatus(f: AppScanFinding): string {
   return ''
 }
 
+/** A prerequisite's `how`, as the scanner names it: `app.json requires <name>: how`. */
+const PREREQUISITE_HOW = /^app\.json requires (.+): how$/
+
+/** Where a finding or a scanned set of instructions came from, in words: a prerequisite by its
+ *  name, anything else by its path in the app. */
+export function instructionSource(path: string): string {
+  const prerequisite = PREREQUISITE_HOW.exec(path)
+  return prerequisite ? `the steps to install ${prerequisite[1]}, a prerequisite` : path
+}
+
+/** What a scanned set of instructions is, by who carries it out (#3852). */
+const INSTRUCTION_KIND: Record<string, string> = {
+  instructions: "a skill's instructions, which your assistant carries out",
+  skill_docs: "a skill's other docs, read by your assistant when its instructions link them",
+  prose: 'instructions a person follows',
+}
+
+/** A finding's band, in words: what it does to the install. */
+function findingBand(severity: string): string {
+  if (severity === 'dangerous') return 'Dangerous: the install is refused'
+  if (severity === 'warning') return 'Warning: install only if you trust its source'
+  if (severity === 'low') return 'Low: noted, nothing to decide'
+  return severity
+}
+
+/** One finding: why it matters first (its gloss, or the rule's name when this build has none),
+ *  then where it came from and its band, then whether the app can run it. The scanner's own
+ *  row (rule, severity, the matched line) sits behind a disclosure, collapsed until opened: it
+ *  is the evidence, and the decision does not start from it (#3852, approved update). */
+function FindingRow({ f }: { f: AppScanFinding }) {
+  const [open, setOpen] = useState(false)
+  const panel = useId()
+  const gloss = ruleGloss(f.rule, f.surface)
+  const status = findingStatus(f)
+  const source = f.path ? instructionSource(f.path) : ''
+  return (
+    <li data-type="body-s" className="text-on-surface-low" data-finding={f.rule}>
+      <span className="text-on-surface">{gloss || f.rule}</span>
+      <span className="block" data-testid="finding-source">
+        {source ? `${source} · ` : ''}{findingBand(f.severity)}
+      </span>
+      {status && (
+        <span className="block text-on-surface-low italic" data-testid="finding-status"
+          title={f.reachability_reason || f.runtime_reason || undefined}>{status}</span>
+      )}
+      <Button variant="ghost" size="xs" className="mt-xs" ariaExpanded={open}
+        ariaControls={panel} onClick={() => setOpen((o) => !o)}>
+        {open ? 'Hide evidence' : 'Show evidence'}
+      </Button>
+      {open && (
+        <span id={panel} className="block font-mono text-on-surface-var" data-testid="finding-evidence">
+          {f.rule} ({f.severity}){f.evidence ? `: ${f.evidence}` : ''}
+        </span>
+      )}
+    </li>
+  )
+}
+
 function FindingList({ findings }: { findings: AppScanFinding[] }) {
   return (
     <ul className="mt-xs flex flex-col gap-xs">
-      {/* rule (severity) — path: evidence, then what the rule MEANS, then whether the app can
-          even run it. The first line is the scanner's own vocabulary and the evidence is the
-          real argv; neither tells a non-expert what the app can do to their machine, which is
-          the only question they can actually answer. */}
-      {findings.slice(0, SCAN_FINDINGS_SHOWN).map((f, i) => {
-        const status = findingStatus(f)
-        return (
-          <li key={i} data-type="body-s" className="text-on-surface-low" data-finding={f.rule}>
-            <span className="text-on-surface">{f.rule}</span> ({f.severity})
-            {f.path ? ` — ${f.path}` : ''}{f.evidence ? `: ${f.evidence}` : ''}
-            {ruleGloss(f.rule) && (
-              <span className="block text-on-surface-var">{ruleGloss(f.rule)}</span>
-            )}
-            {status && (
-              <span className="block text-on-surface-low italic" data-testid="finding-status"
-                title={f.reachability_reason || f.runtime_reason || undefined}>{status}</span>
-            )}
-          </li>
-        )
-      })}
+      {findings.slice(0, SCAN_FINDINGS_SHOWN).map((f, i) => <FindingRow key={i} f={f} />)}
       {/* The list stops at the cap; without this the eight shown read as all of them, on the
           one screen whose entire job is an informed yes/no. */}
       {hiddenFindingsNote(findings.length) && (
@@ -156,6 +195,26 @@ function FindingList({ findings }: { findings: AppScanFinding[] }) {
         </li>
       )}
     </ul>
+  )
+}
+
+/** The install instructions the scanner read as code (#3852, approved update): each skill's
+ *  instructions, the README and each prerequisite's steps, with how many findings each gave,
+ *  none left out, so the owner sees what was checked as well as what was found. */
+function ScannedList({ scanned }: { scanned: AppScannedInstruction[] }) {
+  return (
+    <div className="mt-s" data-testid="scan-scanned">
+      <div data-type="label-m" className="text-on-surface">Scanned</div>
+      <ul className="mt-xs flex flex-col gap-xs">
+        {scanned.map((s) => (
+          <li key={`${s.surface}:${s.path}`} data-type="body-s" className="text-on-surface-low">
+            <span className="text-on-surface">{instructionSource(s.path)}</span>
+            {INSTRUCTION_KIND[s.surface] ? `: ${INSTRUCTION_KIND[s.surface]}` : ''}
+            {` · ${s.findings === 0 ? 'no findings' : `${s.findings} finding${s.findings === 1 ? '' : 's'}`}`}
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 
@@ -177,6 +236,7 @@ export function ScanReport({ scan }: { scan: AppScanReport }) {
         {scan.findings.length > 0 && ` · ${scan.findings.length} finding${scan.findings.length === 1 ? '' : 's'}`}
       </div>
       {scan.signature && <SignatureRow signature={scan.signature} verdict={v} tier={scan.tier} />}
+      {scan.scanned && scan.scanned.length > 0 && <ScannedList scanned={scan.scanned} />}
       {runs.length > 0 && (
         <div className="mt-s" data-testid="scan-runs">
           <FindingList findings={runs} />

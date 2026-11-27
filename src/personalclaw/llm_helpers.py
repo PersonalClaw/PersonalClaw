@@ -469,7 +469,9 @@ async def _resolve_permission(
     # chat refuses what nothing approves, unless its tool declares that it asks nobody anywhere
     # (it only reads, or what it starts asks the owner itself). Not a grant either way.
     if policy == ToolApprovalPolicy.HOOK_BASED:
-        unasked = approval_grants.declared_answer(event)
+        unasked = approval_grants.declared_answer(
+            event, session_key=session_key, cwd=runtime_folder(provider)
+        )
         if unasked:
             await provider.approve_tool(event.request_id)
             _log("auto_approved", metadata={"reason": unasked, "decided_by": unasked})

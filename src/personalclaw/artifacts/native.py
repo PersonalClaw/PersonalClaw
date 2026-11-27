@@ -903,9 +903,11 @@ class NativeArtifactProvider(ArtifactProvider):
                 f"expected one of {sorted(BINARY_KINDS)} — register the kind in both "
                 "ALLOWED_KINDS and BINARY_KINDS first"
             )
+        # A type the store can't name a binary kind for (a page, an SVG, no type at all) is
+        # refused, never filed as the kind asked for: the raw route would serve it as itself.
         offered = kind_for_mime(mime)
-        if offered and offered != normalize_kind(kind):
-            raise ArtifactKindMismatch(slug or name, kind, offered)
+        if offered != normalize_kind(kind):
+            raise ArtifactKindMismatch(slug or name, kind, offered or mime or "untyped")
         # Admitted before any side effect, exactly as `create` admits a text artifact's pointer.
         origin = source_files.admit(source_path.strip()) if source_path.strip() else ""
         with self._lock:
@@ -979,9 +981,10 @@ class NativeArtifactProvider(ArtifactProvider):
             art = self._read_meta(slug)
             if art is None:
                 return None
+            # No MIME keeps the artifact's own; one the store can't name a kind for is refused.
             offered = kind_for_mime(mime)
-            if not is_binary_kind(art.kind) or (offered and offered != art.kind):
-                raise ArtifactKindMismatch(slug, art.kind, offered or "binary")
+            if not is_binary_kind(art.kind) or (mime and offered != art.kind):
+                raise ArtifactKindMismatch(slug, art.kind, offered or mime or "binary")
             _refuse_if_readonly(art)
             if expect_version is not None and art.version != expect_version:
                 raise ArtifactVersionConflict(slug, art.version, expect_version)

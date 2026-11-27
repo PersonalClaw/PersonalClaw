@@ -183,7 +183,13 @@ def install_library() -> dict:
     copy is missing or declares a LOWER ``version``. Everything else — including a
     user's own scenarios and locally edited ones at an equal-or-higher version — is
     left untouched and still recorded in the manifest (``origin: "local"``).
+
+    A harvested case built from a Temporary or Incognito chat's run that is still kept is removed
+    first (:func:`personalclaw.evals.harvest.drop_private_cases`), so no eval runs it.
     """
+    from personalclaw.evals import harvest  # noqa: PLC0415 - harvest imports this module
+
+    harvest.drop_private_cases()
     target = installed_dir()
     installed: dict[str, dict] = {}
 
@@ -255,22 +261,33 @@ def resolve_scenario_path(subject: str) -> Path:
     A path to an existing file wins (an ad-hoc scenario outside the library is
     still runnable and still pinnable). Otherwise ``subject`` is a bare name in
     ``~/.personalclaw/evals/scenarios/``; the library is installed on demand so a
-    fresh home resolves the shipped set without a setup step.
+    fresh home resolves the shipped set without a setup step. A harvested case whose run is a
+    Temporary or Incognito chat's, or one whose chat cannot be read, is refused
+    (:func:`personalclaw.evals.harvest.withheld_case`).
     """
     as_path = Path(subject)
     if as_path.is_file():
-        return as_path
+        return _not_withheld(subject, as_path)
     d = installed_dir()
     if not manifest_path().exists():
         install_library()
     for ext in SCENARIO_SUFFIXES:
         candidate = d / f"{subject}{ext}"
         if candidate.is_file():
-            return candidate
+            return _not_withheld(subject, candidate)
     raise ScenarioLibraryError(
         f"scenario {subject!r} not found (as a path or in {d}); "
         f"installed: {', '.join(list_installed()) or '<none>'}"
     )
+
+
+def _not_withheld(subject: str, path: Path) -> Path:
+    from personalclaw.evals import harvest  # noqa: PLC0415 - harvest imports this module
+
+    reason = harvest.withheld_case(path)
+    if reason:
+        raise ScenarioLibraryError(f"scenario {subject!r} is left out of every eval: {reason}")
+    return path
 
 
 def resolve_fixture_home(path: str | Path) -> str:

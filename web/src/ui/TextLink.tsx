@@ -57,7 +57,7 @@ const INK: Record<Ink, string> = {
 export function TextLink({
   children, href, external = false, onClick, icon: Icon, iconPosition = 'leading',
   iconSize = 13, size = 'inherit', ink = 'primary', disabled = false, title, className,
-  'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, 'aria-controls': ariaControls,
+  'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, 'aria-controls': ariaControls, download,
 }: {
   children: ReactNode
   href?: string
@@ -81,6 +81,8 @@ export function TextLink({
   /** The id of the region that disclosure opens. `aria-expanded` alone says "this
    *  expands" without saying WHAT — the same pairing `DisclosureCard` carries. */
   'aria-controls'?: string
+  /** For a link to a file: the name the browser saves it under, as `<a download>` does. */
+  download?: string
 }) {
   // `py-0.5 -my-0.5`: measured 10 of these at **20px tall** inside `#/tasks`' clickable rows, where
   // SC 2.5.8's spacing exception cannot apply — a link nested in a larger target can never clear it.
@@ -107,7 +109,7 @@ export function TextLink({
 
   if (href !== undefined) {
     return (
-      <a href={href} onClick={onClick} title={title} aria-label={ariaLabel} aria-expanded={ariaExpanded} aria-controls={ariaControls} data-type={role} className={cls}
+      <a href={href} onClick={onClick} title={title} aria-label={ariaLabel} aria-expanded={ariaExpanded} aria-controls={ariaControls} data-type={role} className={cls} download={download}
         {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>
         {body}
       </a>

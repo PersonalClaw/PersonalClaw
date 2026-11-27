@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-11-27
+
+This release holds a turn, a run and a file to where they belong: a stopped turn runs nothing more, a rewound or regenerated answer and a run's history keep what happened, a tool call, a command or a fetch that reaches past what you allowed is asked about first, and a file the agent sends shows only in its own chat. Each app capability has its own switch, every incident is kept with why and who, and Settings › Updates splits the desktop app from its gateway.
+
 ### Added
 
 - **`personalclaw chat` opens on the folder, agent, project or named chat you give it: `--cwd DIR` (set before your first message; a folder the gateway refuses ends the command with its reason, and nothing is sent), `--agent NAME`, `--project` by its name or id, and `--session NAME` to go on with a chat.**
@@ -24,6 +28,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **A skill already installed whose instructions pipe a download into a shell is refused at its next update, as a new install would be; the refusal names the file and line, says why, and says to remove the skill or update it to a version without that line.**
 - **For apps: `personalclaw.sdk.channel.MemoryService.lint()` no longer purges unless asked. It only reads, and counts what its purge would remove under the report's `fixable`. A keyword-only `lint(purge=True)` runs the purge, a permanent delete of memories superseded more than 90 days ago. No shipped app calls it; `slack-channel` uses `MemoryService` only to read lessons.**
 - **An agent's settings say its tool list holds for the PersonalClaw tools an agent CLI is offered, and that the CLI's own built-in tools follow its permission mode.**
 - **Saving the tool list of an agent on an agent CLI warns of each entry that lets the CLI call nothing.**
@@ -40,6 +45,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **In the desktop app, the System status card's update row reads Update App, and a gateway built into the app no longer offers an Update of its own beside it.**
 - **In the desktop app, rolling the gateway back past the app's own version says the app stays on its version, newer than the gateway, before it rolls back.**
 - **Incident mode: a stop an app or alert sends now always engages; an over-long reason is shortened and a missing one recorded as "(no reason given)". Turning it on yourself still asks for a reason.**
+- **For apps: the web fetch's link check now fails closed with no session. `personalclaw.sdk.net.web_fetch` and `web_extract` refuse a link when no `session_key` is given; pass the session's key, or `require_provenance=False` for a URL no model chose.**
+- **The install scanner reads install instructions in skills, READMEs and prerequisites as code. A skill that tells the agent to pipe a download into a shell is refused at install or update, as a script would be; the same line in a README or a prerequisite's `how` is a warning on the review, with the sentence beside it. Rules for stripping the macOS quarantine mark, opening a password-locked archive, linking to a paste site, fetching text to follow and keeping a credential in notes read all three, and the scan report lists each instruction it read.**
+- **The install review says why each security finding matters before showing its evidence.**
 
 ### Removed
 
@@ -114,6 +122,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A run page's Document panel shows the note a step keeps as soon as the step settles, without a reload, and a run that ended without its document says so instead of "The worker has not written it yet."**
 - **The buddy playground's Running now list wraps each line in its column at 200% text zoom. A line cut short ran into Focused work beside it.**
 - **A desktop app from 0.3.7 on a gateway newer than itself checks for its own update at once, instead of at its next daily check.**
+- **A Self-QA run started by its commit watch, outside any project, seals its proof bundle. It had no folder of its own, so its captures landed in the shared agent workspace and the seal step refused. Each run now works in a scratch folder of its own, in a project or not.**
+- **Each scenario of a self-qa run captures into, and seals, a folder of its own.**
+- **A self-qa run's seal reads no link its drive left among a scenario's captures, so nothing outside the scenario's folder is copied into its evidence.**
+- **A binary artifact's file opens only as the type the store keeps it as. Any other type downloads instead of opening as a page, every artifact file opened in a tab of its own runs nothing (a real PDF excepted, so its viewer works), a binary save refuses a type it can't name, and a generated image or video is stored as the type its bytes are, whatever its source said.**
 
 ### Security
 
@@ -124,6 +136,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An app granted the helper routes stops and clears only the helpers its own work started. Another chat's helper answers as an id that never existed and is left running, a fan-out holding one is not stopped, and an app's stop is recorded as the app's, so the helper's report reaches its chat as usual rather than reading as your own stop.**
 - **Deleting a loop forgets every chat it made, its task workers' included, as deleting a chat does.**
 - **Run in terminal runs a command only in the session it was meant for: the one the drawer shows, the Terminal page pane you're working in, or the one the drawer opens for it. When that session can't open, the command is dropped and you're told. It no longer runs later in the next terminal you open.**
+- **A tool call that names a host off your allowed hosts in its arguments, as a URL or as a host, is asked about past every grant, as a command naming one is, and an unattended run refuses it. That holds for the built-in agent's tools, apps' and MCP tools, and an agent CLI's own. The built-in web fetch still opens the exact link the conversation was given, and a tool that only stores a link to such a host asks too.**
+- **What a call's tool declares, a read or work that asks you itself, no longer answers a call that is put to you past every grant.**
+- **A file the agent sends shows in the chat whose turn sent it, as a card with Open and Download, live and after a reload, and in no other chat. The agent's answer says where it shows.**
+- **A file the agent sends from work no open chat is doing, such as an automation's or a workflow step's, or an app's notice, no longer shows in your newest chat: it is in Files › Outbox, and the agent is told it isn't shown in a chat.**
+- **The Android app holds its navigation list to hosts Android can enforce: `localhost`, `127.0.0.1`, `.local` and Tailscale names. A gateway reached by its IP address on Android now opens in your browser, outside the app, and the app says so first and opens it only when you choose Open in browser; a `.local` or Tailscale name keeps it in the app. iOS is unchanged.**
+- **The eval harvest leaves out the runs a Temporary or Incognito chat started, and any run whose chat's mode cannot be read. `personalclaw eval harvest` lists each as skipped (`private_run`), and the template optimizer scores none of them. A case harvested earlier from a Temporary or Incognito chat's run is removed the next time you harvest or run `personalclaw eval`, while the run is still kept. One whose chat cannot be read stays where it is and is left out of every eval, and one whose run is already gone cannot be told apart, and stays.**
+- **The helpers a chat starts end with it. When a Temporary chat ends, a helper still working is stopped, as one is when you delete a chat; and once each helper has ended, what it kept (its task, its state and what it wrote) is removed with what the chat kept, a deleted workflow run's helpers' too. A backup or an export taken while a Temporary chat is open leaves out its helpers and its workflow runs, and the notice after a restart names a helper whose chat has ended only as that.**
+- **A tool call's argument check reads only the schema its tool declared.**
 
 ## [0.4.1] — 2026-11-25
 

@@ -4016,7 +4016,9 @@ async def run_chat(
                 # answered here, is a read-only shell command. A tool that declares nothing
                 # (an ACP CLI's own, an untrusted MCP server's) is CAUTION, so it prompts like
                 # every other change.
-                _unasked_by = approval_grants.declared_answer(event)
+                _unasked_by = approval_grants.declared_answer(
+                    event, session_key=session_key, cwd=_call_folder
+                )
                 if (
                     not _unasked_by
                     and session._trust_reads

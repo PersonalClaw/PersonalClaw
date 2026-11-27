@@ -146,11 +146,13 @@ async def test_fetch_allowed_with_provenance(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_no_session_skips_provenance(monkeypatch):
-    # Context-less caller (no session_key) isn't falsely blocked — egress still applies.
+async def test_no_session_is_refused_the_link_check(monkeypatch):
+    # With no session there is no conversation that gave the link: the check fails closed.
     _patch_net(monkeypatch, _resp("<html><body><p>hello world body</p></body></html>"))
+    record_seen_urls("s1", ["https://example.com/x"])
     out = await web_fetch("https://example.com/x", session_key="")
-    assert out.ok is True
+    assert out.ok is False
+    assert "their own message" in out.error
 
 
 @pytest.mark.asyncio
@@ -318,11 +320,18 @@ async def test_tool_lists_web_fetch():
 async def test_tool_web_fetch_truncation_hint(monkeypatch):
     # The tool clamps max_tokens to a 500-token floor (→ 2000-char window), so the
     # body must exceed 2000 chars to truncate. citation URL is the fetched resp.url.
+    from personalclaw import mcp_core
+
     _patch_net(monkeypatch, _resp("Z" * 5000, ctype="text/plain", url="https://x.com/big"))
     WebToolProvider = _web_tool_provider_cls()
-    res = await WebToolProvider().invoke(
-        "web_fetch", {"url": "https://x.com/big", "max_tokens": 10}
-    )
+    record_seen_urls("s1", ["https://x.com/big"])  # the link the session was given
+    token = mcp_core.set_current_session_key("s1")
+    try:
+        res = await WebToolProvider().invoke(
+            "web_fetch", {"url": "https://x.com/big", "max_tokens": 10}
+        )
+    finally:
+        mcp_core.reset_current_session_key(token)
     assert res.success is True
     assert res.truncated is True
     assert res.metadata["next_index"] == 2000
@@ -331,6 +340,16 @@ async def test_tool_web_fetch_truncation_hint(monkeypatch):
     assert res.metadata["citations"] == [
         {"url": "https://x.com/big", "start_char": 0, "end_char": 2000}
     ]
+
+
+@pytest.mark.asyncio
+async def test_tool_web_fetch_with_no_session_is_refused(monkeypatch):
+    # Outside any session no conversation gave the link, so the app's fetch is refused.
+    _patch_net(monkeypatch, _resp("Z" * 50, ctype="text/plain", url="https://x.com/big"))
+    record_seen_urls("s1", ["https://x.com/big"])
+    res = await _web_tool_provider_cls()().invoke("web_fetch", {"url": "https://x.com/big"})
+    assert res.success is False
+    assert "their own message" in (res.error or "")
 
 
 @pytest.mark.asyncio

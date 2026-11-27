@@ -84,6 +84,31 @@ _MIME_TO_EXT = {
 }
 
 
+#: The leading bytes of each image and video type the store keeps, for :func:`binary_type_of`.
+_BINARY_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"\x1a\x45\xdf\xa3", "video/webm"),
+)
+
+
+def binary_type_of(data: bytes) -> str:
+    """The image or video type *data*'s own bytes are, of those :data:`_MIME_TO_EXT` keeps, or
+    ``""``. A generated file is stored under this rather than the ``Content-Type`` its source
+    answered with, which can say ``text/html`` or ``application/octet-stream`` for an image."""
+    head = bytes(data[:16])
+    for magic, mime in _BINARY_MAGIC:
+        if head.startswith(magic):
+            return mime
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[4:8] == b"ftyp":
+        return "video/quicktime" if head[8:12] == b"qt  " else "video/mp4"
+    return ""
+
+
 def is_binary_kind(kind: str) -> bool:
     return (kind or "").strip().lower() in BINARY_KINDS
 

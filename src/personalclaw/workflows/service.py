@@ -1750,8 +1750,8 @@ async def delete_run(
         supervisor=supervisor,
     )
     torn = await teardown_workspace(run, reason="delete", keep_open=keep_open)
-    if target.is_dir():
-        shutil.rmtree(target, ignore_errors=True)
+    shutil.rmtree(target, ignore_errors=True)  # a run that kept no folder has none to remove
+    started_work.forget_step_helpers(run_id, supervisor)
     # The inbox rows go too: a gate that was open when the run was cancelled would otherwise
     # outlive the run entirely and be unanswerable forever. The state comes off the supervisor,
     # which is what the route has — a delete is a request path, not the engine's own.
