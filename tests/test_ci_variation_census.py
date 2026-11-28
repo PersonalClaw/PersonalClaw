@@ -311,9 +311,9 @@ def test_a_suite_sized_collection_and_report_are_read_in_seconds() -> None:
         + "</testsuite></testsuites>"
     ).encode()
 
-    started = time.monotonic()
+    started = time.process_time()
     rows = census.census(collection, "", [junit])
-    elapsed = time.monotonic() - started
+    elapsed = time.process_time() - started
 
     assert rows == [], "eleven cases per function is under the threshold"
     assert elapsed < 30, f"took {elapsed:.1f} s"

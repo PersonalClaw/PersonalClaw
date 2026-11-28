@@ -58,15 +58,15 @@ def test_an_end_inside_a_markers_opening_moves_to_its_start():
     ids=["never-closed", "closed-past-its-line", "a-line-each"],
 )
 def test_openings_that_never_close_cost_what_their_length_costs(text):
-    started = time.perf_counter()
+    started = time.process_time()
     assert textfmt.cut_outside_masks(text, len(text) // 2) == len(text) // 2
-    assert time.perf_counter() - started < 0.05
+    assert time.process_time() - started < 0.05
 
 
 def test_a_cards_markers_are_taken_out_and_read_once():
     assert "stumble" not in cards._plain("[stumble: deploy] fix the build")
     assert cards._plain("[skill-ladder rung 2] keep it") == " keep it"
     text = "[stumble" * 50_000  # openings that never close
-    started = time.perf_counter()
+    started = time.process_time()
     assert cards._MARKER_RE.sub("", text) == text
-    assert time.perf_counter() - started < 0.05
+    assert time.process_time() - started < 0.05

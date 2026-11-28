@@ -276,6 +276,6 @@ def test_the_svg_check_reads_a_doctype_in_one_pass():
 
     from personalclaw.dashboard.handlers.files import _first_element_is_svg
 
-    began = time.monotonic()
+    began = time.process_time()
     assert _first_element_is_svg(b"<!DOCTYPE svg [" + b" " * 28 + b"x") is False
-    assert time.monotonic() - began < 1.0
+    assert time.process_time() - began < 1.0

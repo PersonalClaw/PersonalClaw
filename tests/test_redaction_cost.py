@@ -590,9 +590,9 @@ class TestTheCostTracksNothingQuadratic:
         If this ever reds, the scan is quadratic again — the number is not the knob.
         """
         token = self._unbroken(256 * 1024)
-        started = time.perf_counter()
+        started = time.process_time()
         out, warnings = S.redact_credentials(token)
-        elapsed = time.perf_counter() - started
+        elapsed = time.process_time() - started
         assert out == token and warnings == [], "an innocuous token must survive verbatim"
         assert elapsed < 3.0, f"256 KB of one unbroken token took {elapsed:.2f}s"
 
@@ -1037,9 +1037,9 @@ class TestManyMatchesIsNotQuadratic:
     def test_a_document_full_of_credentials_is_bounded(self):
         """Coarse floor, not a benchmark. ~24k matches in 1 MB cost 1.318s in pass 1 before."""
         text = self._many(24_000)
-        started = time.perf_counter()
+        started = time.process_time()
         out, warnings = S.redact_credentials(text)
-        elapsed = time.perf_counter() - started
+        elapsed = time.process_time() - started
         assert len(warnings) == 24_000, f"expected one warning per match, got {len(warnings)}"
         assert "AKIA" not in out, "a credential survived"
         assert elapsed < 2.0, f"24k credentials took {elapsed:.2f}s"

@@ -471,9 +471,9 @@ def test_the_worst_case_document_is_served_in_bounded_time(run_home):
     token = "B" * D.MAX_TOKEN_CHARS
     body = " ".join([token] * (D.MAX_DOC_BYTES // (D.MAX_TOKEN_CHARS + 1)))
     (run_home / "REPORT.md").write_text(body)
-    started = time.perf_counter()
+    started = time.process_time()
     document = D.read_document(docs, "REPORT.md")
-    elapsed = time.perf_counter() - started
+    elapsed = time.process_time() - started
     assert document.present is True
     assert document.clipped_blobs == 0, "at the limit is not past it"
     assert elapsed < 30.0, f"reading a worst-case document took {elapsed:.1f}s"
