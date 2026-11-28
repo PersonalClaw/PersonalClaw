@@ -1647,13 +1647,108 @@ def _swapped(old: Sequence[str], new: Sequence[str]) -> Callable[[list[str]], li
     return edit
 
 
-#: random-order's first order, written out for good: #5600 leaves the leg's steps its own (run-job
-#: would run its two orders back to back, with no state-leak report between), so the plants that
-#: need a written-out leg read it.
-_ORDER_ONE = (
-    'run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt"'
-    " --random-order-seed ${{ github.run_number }}1"
+#: planned-ids-random-order's collection, a step breadth.yml writes out for good: #5600 moves the
+#: legs that run tests to run-job, and the planned-ids legs, which only collect, stay as they are
+#: (`_STEPS_THAT_RUN_THEIR_OWN_TEST`, `RUN_JOB_LEGS`). The plants that hold a written-out leg to its
+#: entry are made on it, so they hold whichever legs run through run-job. Its run: line is the
+#: job's own (its report and its ids name it); its step's name every planned-ids job shares, so a
+#: plant on the name is made inside its job.
+_PLANNED = "planned-ids-random-order"
+_PLANNED_ONE = (
+    'run: uv run pytest --collect-only -qq -n0 tests --shard-list "$RUNNER_TEMP/universe.txt"'
+    " --junitxml=reports/junit-planned-random-order.xml"
+    ' --shard-ids "$RUNNER_TEMP/ids/planned-ids-random-order.txt"'
 )
+_PLANNED_ONE_NAME = "pytest (collect the planned suite, writing its ids)"
+_PLANNED_ONE_RENAMED = "pytest (collect the planned suite, the ids)"
+#: The lines before its run: and the line itself, where a step env goes.
+_PLANNED_ONE_STEP = "        id: pytest\n        " + _PLANNED_ONE + "\n"
+#: The step after it: a new step goes before it.
+_AFTER_PLANNED_ONE = "      - name: Upload JUnit results (planned-ids-random-order)\n"
+#: The end of its entry's line in a run: block of its own: a line goes after it.
+_PLANNED_RAN = '--out "$RUNNER_TEMP/entry/planned-ids-random-order__1.json"\n'
+#: Its collection in its entry.
+_ENTRY_PLANNED_ONE = '"--junitxml=reports/junit-planned-random-order.xml"'
+
+
+#: random-order's run-job step, the first line of it, as breadth.yml writes it once the leg runs
+#: its entry: suite legs share the name, so a plant finds it inside the random-order job.
+_RANDOM_ORDER_RUN_JOB = (
+    "      - name: the leg's catalogue job, through run-job (shard ${{ matrix.shard }})\n"
+)
+
+
+def _runs_random_order_through_run_job(text: str) -> bool:
+    """Whether breadth.yml's text runs random-order's entry through run-job, not its orders."""
+    start = text.find("\n  random-order:\n")
+    end = text.find("\n  install-smoke:\n", start)
+    return start >= 0 and _RANDOM_ORDER_RUN_JOB in text[start : end if end > 0 else None]
+
+
+def _random_orders(
+    name: str,
+    written: tuple[tuple[str, str], ...] | tuple[str, str],
+    through_run_job: Callable[[Path], None],
+    expect: str,
+) -> Control:
+    """A plant on random-order's orders in the form the tree holds them: in breadth.yml while it
+    writes them out (*written*, an edit or several, the old text and the new, each of which must
+    find its text), or on the leg as it runs its entry through run-job (*through_run_job*, which
+    plants in its catalogue entry or on its run-job step). Either form fails loudly when its text
+    is gone."""
+    edits = (written,) if isinstance(written[0], str) else written
+
+    def plant(root: Path) -> None:
+        text = (root / _BREADTH).read_text(encoding="utf-8")
+        if _runs_random_order_through_run_job(text):
+            through_run_job(root)
+            return
+        for old, new in edits:  # type: ignore[misc]
+            assert old in text, f"the plant {name!r} found no {old!r} in {_BREADTH}"
+            text = text.replace(old, new, 1)
+        _write(root, _BREADTH, text)
+
+    return Control(name, plant, True, expect)
+
+
+def _in_entry(old: str, new: str, entry: str = "random-order") -> Callable[[Path], None]:
+    """One edit of the catalogue's *entry* (random-order's), which must find its text there
+    (:func:`_edit_in_entry`, bounded by the entry's own table)."""
+
+    def plant(root: Path) -> None:
+        rel = catalogue.CATALOGUE
+        text = (root / rel).read_text(encoding="utf-8")
+        _write(root, rel, _edit_in_entry(text, entry, old, new, f"in {entry}", rel))
+
+    return plant
+
+
+def _on_run_job_step(edit: Callable[[str], str]) -> Callable[[Path], None]:
+    """random-order's job in breadth.yml with *edit* made to its text from its run-job step on."""
+
+    def plant(root: Path) -> None:
+        text = (root / _BREADTH).read_text(encoding="utf-8")
+        start = text.find("\n  random-order:\n")
+        at = text.find(_RANDOM_ORDER_RUN_JOB, start)
+        assert start >= 0 and at >= 0, "no run-job step in breadth.yml's random-order job"
+        _write(root, _BREADTH, text[:at] + edit(text[at:]))
+
+    return plant
+
+
+def _masking_plant(name: str, rel: str, old: str, new: str, *through: str) -> Control:
+    """One of ``ci_masking.PLANTS``: an edit of *rel*, or, for a plant on random-order's two
+    orders, the edit *through* gives (its old text and new) once breadth.yml runs the leg's entry
+    through run-job, inside the random-order job. Either form fails loudly when its text is gone."""
+    if not through:
+        return _plant(name, rel, old, new)
+    run_job_old, run_job_new = through
+    return _random_orders(
+        name,
+        (old, new),
+        _plant_in_job(name, _BREADTH, "random-order", run_job_old, run_job_new).plant,
+        expect="",
+    )
 
 
 def _plant_step(
@@ -3384,16 +3479,19 @@ def shard_union_violations(tree: Tree) -> list[str]:
 #: The randomized-order leg's seeds (#3949): the run's number with 1 and with 2, as written.
 _RANDOM_ORDER_SEEDS = ("${{ github.run_number }}1", "${{ github.run_number }}2")
 #: A flag's value in a ``run:`` line: quoted, an expression with what follows it, or a word.
-_FLAG_VALUE = r'[\s=]+("[^"]*"|\$\{\{[^}]*\}\}\S*|\S+)'
+_FLAG_VALUE = r'[\s=]+("[^"]*"|\'[^\']*\'|\S*\$\{\{[^}]*\}\}\S*|\S+)'
 _ALWAYS = frozenset({"always()", "${{ always() }}"})
 _WHATEVER_IT_CONCLUDED = _ALWAYS | {"!cancelled()", "${{ !cancelled() }}"}
 
 
 def _flag_values(step: dict[str, Any], flag: str) -> list[str]:
-    """Every value *flag* takes in the step's ``run:`` text, quotes stripped and each
-    expression's spacing as ``${{ x }}``."""
+    """Every value *flag* takes in the step's ``run:`` text, quotes stripped (double, or single
+    as a run-job step reads its entry's argv back) and each expression's spacing as ``${{ x }}``."""
     found = re.findall(re.escape(flag) + _FLAG_VALUE, str(step.get("run", "")))
-    return [re.sub(r"\$\{\{\s*(.*?)\s*\}\}", r"${{ \1 }}", value.strip('"')) for value in found]
+    return [
+        re.sub(r"\$\{\{\s*(.*?)\s*\}\}", r"${{ \1 }}", value.strip('"').strip("'"))
+        for value in found
+    ]
 
 
 def random_order_violations(tree: Tree) -> list[str]:
@@ -6720,15 +6818,15 @@ ROWS: tuple[Row, ...] = (
                 _SUITE_PYTEST.replace('"-q",', '"--no-cov", "-q",'),
                 expect="the catalogue's python-suite passes --no-cov",
             ),
-            # random-order's first order folded over lines, as no leg #5600 leaves written out
-            # spells one: the fold is the plant's, so it holds whatever the security legs run.
+            # The planned ids' collection folded over lines, as no leg written out spells one:
+            # the fold is the plant's, so it holds whatever the other legs run.
             _plant(
                 "--no-cov inside a folded multi-line run",
                 _BREADTH,
-                _ORDER_ONE,
-                _ORDER_ONE.replace(
-                    "run: uv run pytest -n auto",
-                    "run: >\n          uv run pytest\n          --no-cov\n          -n auto",
+                _PLANNED_ONE,
+                _PLANNED_ONE.replace(
+                    "run: uv run pytest --collect-only",
+                    "run: >\n          uv run pytest\n          --no-cov\n          --collect-only",
                 ),
             ),
         ),
@@ -7481,7 +7579,7 @@ NOTHING_IS_MASKED_UNSEEN = Row(
     check=ci_masking.violations,
     scaffold=ci_masking.scaffold,
     controls=(
-        *(_plant(name, rel, old, new) for name, rel, old, new in ci_masking.PLANTS),
+        *(_masking_plant(*plant) for plant in ci_masking.PLANTS),
         Control(
             "a leg's shard list, through run-job, that throws its exit status away",
             _a_masked_shard_list_through_run_job,
@@ -7532,6 +7630,8 @@ _RANDOM_ORDER_UPLOAD = (
     "          retention-days: 14\n"
 )
 _SECOND_ORDER = "      - name: pytest (random-order shard ${{ matrix.shard }}, second order)\n"
+
+
 _RANDOM_ORDER_SEEDED = "breadth.yml:random-order seeds its orders"
 _RANDOM_ORDER_BASETEMP = "breadth.yml:random-order runs its orders in basetemps"
 
@@ -7539,53 +7639,70 @@ RANDOM_ORDER_RUNS_TWO_SEEDED_ORDERS = _toolchain_row(
     "breadth-random-order-runs-two-seeded-orders-and-keeps-them",
     random_order_violations,
     (
-        _plant(
+        _random_orders(
             "the first order seeded from a constant",
-            _BREADTH,
-            "--random-order-seed ${{ github.run_number }}1",
-            "--random-order-seed 7771",
+            ("--random-order-seed ${{ github.run_number }}1", "--random-order-seed 7771"),
+            _in_entry('"--random-order-seed", "{run_number}1"', '"--random-order-seed", "7771"'),
             expect=_RANDOM_ORDER_SEEDED,
         ),
-        _plant(
+        _random_orders(
             "the first order seeded from the run's attempt",
-            _BREADTH,
-            "--random-order-seed ${{ github.run_number }}1",
-            "--random-order-seed ${{ github.run_attempt }}1",
+            (
+                "--random-order-seed ${{ github.run_number }}1",
+                "--random-order-seed ${{ github.run_attempt }}1",
+            ),
+            # The catalogue has no placeholder for the attempt: its spelling is refused as one,
+            # so the entry reads no order at all.
+            _in_entry(
+                '"--random-order-seed", "{run_number}1"', '"--random-order-seed", "{run_attempt}1"'
+            ),
             expect=_RANDOM_ORDER_SEEDED,
         ),
-        _plant(
+        _random_orders(
             "the first order unseeded, in collection order",
-            _BREADTH,
-            " --random-order-seed ${{ github.run_number }}1",
-            "",
+            (" --random-order-seed ${{ github.run_number }}1", ""),
+            _in_entry(', "--random-order-seed", "{run_number}1"', ""),
             expect=_RANDOM_ORDER_SEEDED,
         ),
-        _plant(
+        _random_orders(
             "both orders on one seed",
-            _BREADTH,
-            "--random-order-seed ${{ github.run_number }}2",
-            "--random-order-seed ${{ github.run_number }}1",
+            (
+                "--random-order-seed ${{ github.run_number }}2",
+                "--random-order-seed ${{ github.run_number }}1",
+            ),
+            _in_entry(
+                '"--random-order-seed", "{run_number}2"', '"--random-order-seed", "{run_number}1"'
+            ),
             expect=_RANDOM_ORDER_SEEDED,
         ),
-        _plant(
+        _random_orders(
             "an order seeded twice",
-            _BREADTH,
-            "--random-order-seed ${{ github.run_number }}2",
-            "--random-order-seed ${{ github.run_number }}2 --random-order-seed 5",
+            (
+                "--random-order-seed ${{ github.run_number }}2",
+                "--random-order-seed ${{ github.run_number }}2 --random-order-seed 5",
+            ),
+            _in_entry(
+                '"--random-order-seed", "{run_number}2"',
+                '"--random-order-seed", "{run_number}2", "--random-order-seed", "5"',
+            ),
             expect=_RANDOM_ORDER_SEEDED,
         ),
-        _plant(
+        _random_orders(
             "the first order in pytest's shared basetemp",
-            _BREADTH,
-            ' --basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}1"',
-            "",
+            (' --basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}1"', ""),
+            _in_entry(', "--basetemp", "/var/tmp/pytest-random-order-{run_number}1"', ""),
             expect=_RANDOM_ORDER_BASETEMP,
         ),
-        _plant(
+        _random_orders(
             "both orders in one basetemp",
-            _BREADTH,
-            '--basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}2"',
-            '--basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}1"',
+            (
+                '--basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}2"',
+                '--basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}1"',
+            ),
+            _in_entry(
+                '"/var/tmp/pytest-random-order-{run_number}2"',
+                '"/var/tmp/pytest-random-order-{run_number}1"',
+            ),
             expect=_RANDOM_ORDER_BASETEMP,
         ),
         _plant(
@@ -7611,12 +7728,19 @@ RANDOM_ORDER_RUNS_TWO_SEEDED_ORDERS = _toolchain_row(
             '            --external "seeds=${{ github.run_number }}1,${{ github.run_number }}2"\n',
             expect="breadth.yml:random-order records its seeds among its inputs",
         ),
-        _plant(
+        _random_orders(
             "the second order run only after a green first",
-            _BREADTH,
-            _SECOND_ORDER,
-            _SECOND_ORDER + "        if: steps.pytest-1.outcome == 'success'\n",
-            expect="breadth.yml:random-order runs its order pytest-2 under `if:",
+            (_SECOND_ORDER, _SECOND_ORDER + "        if: steps.pytest-1.outcome == 'success'\n"),
+            # Through run-job its steps take the run-job step's keys: a condition there is each
+            # order's.
+            _on_run_job_step(
+                lambda job: job.replace(
+                    _RANDOM_ORDER_RUN_JOB,
+                    _RANDOM_ORDER_RUN_JOB + "        if: steps.shard.outcome == 'success'\n",
+                    1,
+                )
+            ),
+            expect="breadth.yml:random-order runs its order",
         ),
         _plant(
             "no upload of the orders",
@@ -7639,10 +7763,12 @@ RANDOM_ORDER_RUNS_TWO_SEEDED_ORDERS = _toolchain_row(
             _RANDOM_ORDER_UPLOAD.replace("        if: always()\n", ""),
             expect="breadth.yml:random-order uploads its orders under `if: None`",
         ),
-        _plants(
+        _random_orders(
             "the upload before the second order ran",
-            _BREADTH,
             ((_RANDOM_ORDER_UPLOAD, ""), (_SECOND_ORDER, _RANDOM_ORDER_UPLOAD + _SECOND_ORDER)),
+            _on_run_job_step(
+                lambda job: _RANDOM_ORDER_UPLOAD + job.replace(_RANDOM_ORDER_UPLOAD, "", 1)
+            ),
             expect="breadth.yml:random-order uploads its orders before",
         ),
         _plant(
@@ -9244,6 +9370,15 @@ _NOT_COMMANDS = {k: v.replace("@UBUNTU_DIGEST@", _UBUNTU_DIGEST) for k, v in _NO
 _NOT_COMMAND_LINES = frozenset(
     tuple(words) for text in _NOT_COMMANDS.values() for _, words in _run_lines(text) if words
 )
+#: random-order's moves of each order's state-leak report beside its order files, which only a
+#: leg that writes its two orders out runs: through run-job each order writes its own report
+#: there (``tests/state_leak_guard.py``), so a breadth.yml that runs the entry runs none of them.
+_RANDOM_ORDER_WRITTEN_LINES = frozenset(tuple(words) for _, words in _run_lines("""
+if [ -f reports/state-leaks.json ]; then
+  mv reports/state-leaks.json "reports/random-order/state-leaks-${{ github.run_number }}1.json"
+  mv reports/state-leaks.json "reports/random-order/state-leaks-${{ github.run_number }}2.json"
+fi
+""") if words)
 
 
 @dataclass(frozen=True)
@@ -9538,7 +9673,12 @@ def _catalogue_check(root: Path) -> list[str]:
         for _, words in _run_lines(str(step["run"]))
         if words
     }
-    for words in sorted(_NOT_COMMAND_LINES - ran):
+    retired = (
+        _RANDOM_ORDER_WRITTEN_LINES
+        if _runs_random_order_through_run_job((root / _BREADTH).read_text(encoding="utf-8"))
+        else frozenset()
+    )
+    for words in sorted(_NOT_COMMAND_LINES - ran - retired):
         bad.append(
             f"this row lists {shlex.join(words)} as a line that validates nothing, and no mapped"
             " workflow job runs it"
@@ -9699,23 +9839,6 @@ def _ubuntu_suite_step_env(root: Path) -> None:
     ).plant(root)
 
 
-#: The first order's step's name, as breadth.yml writes it and as a plant renames it.
-_ORDER_ONE_NAME = "pytest (random-order shard ${{ matrix.shard }}, first order)"
-_ORDER_ONE_RENAMED = "pytest (random-order shard ${{ matrix.shard }}, the first order)"
-#: The first order's step, by its id, where an env goes.
-_ORDER_ONE_STEP = "        id: pytest-1\n        continue-on-error: true\n"
-#: The line after the first order's step: a new step goes before it.
-_AFTER_ORDER_ONE = "      # The next order writes its own state-leak report where this one's is.\n"
-#: The first order's state-leak report, which a line goes after.
-_ORDER_ONE_LEAKS = (
-    "            mv reports/state-leaks.json"
-    ' "reports/random-order/state-leaks-${{ github.run_number }}1.json"\n          fi\n'
-)
-#: random-order's first order in its entry, and its second.
-_ENTRY_ORDER_ONE = '"--random-order-seed", "{run_number}1"'
-_ENTRY_ORDER_TWO = '"--random-order-seed", "{run_number}2"'
-
-
 def _entry_line(marker: str, edit: Callable[[str], str]) -> Callable[[Path], None]:
     """A plant on the one catalogue line holding *marker*: the line becomes *edit*'s."""
 
@@ -9729,15 +9852,19 @@ def _entry_line(marker: str, edit: Callable[[str], str]) -> Callable[[Path], Non
     return plant
 
 
-def _order_one_env(workflow: str, entry: str) -> Callable[[Path], None]:
-    """random-order's first order with the step env *workflow* (its lines) in breadth.yml, and
-    the env table *entry* on its catalogue step (none when empty)."""
+def _planned_one_env(workflow: str, entry: str) -> Callable[[Path], None]:
+    """planned-ids-random-order's collection with the step env *workflow* (its lines) in
+    breadth.yml, and the env table *entry* on its catalogue step (none when empty)."""
 
     def plant(root: Path) -> None:
-        _edit(_BREADTH, _ORDER_ONE_STEP, _ORDER_ONE_STEP + "        env:\n" + workflow)(root)
+        _edit(
+            _BREADTH,
+            _PLANNED_ONE_STEP,
+            "        id: pytest\n        env:\n" + workflow + "        " + _PLANNED_ONE + "\n",
+        )(root)
         if entry:
             _entry_line(
-                _ENTRY_ORDER_ONE, lambda line: line.replace("] },", f"], env = {entry} }},")
+                _ENTRY_PLANNED_ONE, lambda line: line.replace("] },", f"], env = {entry} }},")
             )(root)
 
     return plant
@@ -9868,23 +9995,43 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         Control(
             "a command one token off the workflow's",
             _entry_line(
-                _ENTRY_ORDER_ONE, lambda line: line.replace('"-q", "tests"', '"-qq", "tests"')
+                _ENTRY_PLANNED_ONE,
+                lambda line: line.replace('"-qq", "-n0", "tests"', '"-q", "-n0", "tests"'),
             ),
-            expect="random-order: command step 2",
+            expect=f"{_PLANNED}: command step 2",
         ),
-        _plant(
+        # A placeholder the workflow spells with another value than the entry's: random-order's
+        # seeds while it writes its orders out; once it runs its entry, that leg cannot differ
+        # from it, and the planned ids' list folder, which stays written out, is spelled instead.
+        _random_orders(
             "the first random-order seed drawn from another number than the run's",
-            _BREADTH,
-            "--random-order-seed ${{ github.run_number }}1",
-            "--random-order-seed ${{ github.run_attempt }}1",
-            expect="random-order: command step 2",
+            (
+                "--random-order-seed ${{ github.run_number }}1",
+                "--random-order-seed ${{ github.run_attempt }}1",
+            ),
+            _plant_in_job(
+                "",
+                _BREADTH,
+                "planned-ids-random-order",
+                '"$RUNNER_TEMP/universe.txt"',
+                '"$HOME/universe.txt"',
+            ).plant,
+            expect="random-order: command step",
         ),
-        _plant(
+        _random_orders(
             "the second random-order seed drawn from another number than the run's",
-            _BREADTH,
-            "--random-order-seed ${{ github.run_number }}2",
-            "--random-order-seed ${{ github.run_attempt }}2",
-            expect="random-order: command step 3",
+            (
+                "--random-order-seed ${{ github.run_number }}2",
+                "--random-order-seed ${{ github.run_attempt }}2",
+            ),
+            _plant_in_job(
+                "",
+                _BREADTH,
+                "planned-ids-random-order",
+                '"$RUNNER_TEMP/universe.txt"',
+                '"$RUNNER_TEMP/universe-2.txt"',
+            ).plant,
+            expect="random-order: command step",
         ),
         _plant(
             "an entry naming a breadth.yml job that does not exist",
@@ -9919,22 +10066,22 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         ),
         Control(
             "a step without its workflow step's environment",
-            _order_one_env("          PYTHONPATH: tests\n", ""),
-            expect="random-order: command step 2",
+            _planned_one_env("          PYTHONPATH: tests\n", ""),
+            expect=f"{_PLANNED}: command step 2",
         ),
         Control(
             "the workflow step's environment changed without its entry",
-            _order_one_env("          PYTHONPATH: tests:harness\n", '{ PYTHONPATH = "tests" }'),
-            expect="random-order: command step 2",
+            _planned_one_env("          PYTHONPATH: tests:harness\n", '{ PYTHONPATH = "tests" }'),
+            expect=f"{_PLANNED}: command step 2",
         ),
         # GitHub expands only `${{ }}` in a step's env:, so `$RUNNER_TEMP` there is the literal
         # text, and the entry's `{runner_temp}` is the real folder when it runs locally.
         Control(
             "a step env that spells a placeholder the shell's way",
-            _order_one_env(
+            _planned_one_env(
                 "          PW_SCRATCH: $RUNNER_TEMP/pw\n", '{ PW_SCRATCH = "{runner_temp}/pw" }'
             ),
-            expect="random-order: command step 2",
+            expect=f"{_PLANNED}: command step 2",
         ),
         Control(
             "a step env that spells a placeholder as an expression passes",
@@ -9949,23 +10096,28 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         Control("the catalogue removed", _remove(catalogue.CATALOGUE), expect="is missing"),
         # Both directions, in order: every validating run: line is one entry's step.
         Control(
-            "an entry missing a step breadth.yml runs: random-order without its second order",
-            _entry_line(_ENTRY_ORDER_TWO, lambda line: ""),
-            expect="breadth.yml job random-order runs uv run pytest -n auto",
+            "an entry missing a step breadth.yml runs: the planned ids without their list",
+            _in_entry(
+                '  { argv = ["{python}", "-m", "tools.ci", "shards", "universe", "--out",'
+                ' "{runner_temp}/universe.txt"] },\n',
+                "",
+                _PLANNED,
+            ),
+            expect=f"breadth.yml job {_PLANNED} runs '{{python}}' -m tools.ci shards universe",
         ),
         Control(
             "a step listed twice",
-            _entry_line(_ENTRY_ORDER_ONE, lambda line: line + line),
-            expect="random-order: command step 3 repeats command step 2",
+            _entry_line(_ENTRY_PLANNED_ONE, lambda line: line + line),
+            expect=f"{_PLANNED}: command step 3 repeats command step 2",
         ),
         _plant(
             "a gate that a printf pipes into",
             _BREADTH,
-            _AFTER_ORDER_ONE,
+            _AFTER_PLANNED_ONE,
             "      - name: a new gate\n"
             "        run: printf '%s\\n' \"$PWD\" | uv run python scripts/new_gate.py\n"
-            + _AFTER_ORDER_ONE,
-            expect="breadth.yml job random-order runs printf",
+            + _AFTER_PLANNED_ONE,
+            expect=f"breadth.yml job {_PLANNED} runs printf",
         ),
         _plant(
             "a gate added to an install line",
@@ -9977,9 +10129,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a line no argv can be",
             _BREADTH,
-            _ORDER_ONE_LEAKS,
-            _ORDER_ONE_LEAKS + "          echo it's moved\n",
-            expect='breadth.yml job random-order runs "echo it\'s moved"',
+            _PLANNED_RAN,
+            _PLANNED_RAN + "          echo it's moved\n",
+            expect=f'breadth.yml job {_PLANNED} runs "echo it\'s moved"',
         ),
         # The census: an entry whose steps run a security-marked module is security posture.
         # By the entry's id, not its whole text, so a change to browse-live's inputs or toolchain
@@ -10161,9 +10313,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a run: line folded over two lines with a backslash still matches",
             _BREADTH,
-            _ORDER_ONE,
-            _ORDER_ONE.replace("run: uv run pytest", "run: |\n          uv run pytest").replace(
-                " --shard-list", " \\\n            --shard-list"
+            _PLANNED_ONE,
+            _PLANNED_ONE.replace("run: uv run pytest", "run: |\n          uv run pytest").replace(
+                " --junitxml", " \\\n            --junitxml"
             ),
             fails=False,
         ),
@@ -10179,17 +10331,17 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a breadth command one token off its entry's",
             _BREADTH,
-            _ORDER_ONE,
-            _ORDER_ONE.replace(" -q tests ", " -qq tests "),
-            expect="random-order: command step 2",
+            _PLANNED_ONE,
+            _PLANNED_ONE.replace(" -qq -n0 tests ", " -q -n0 tests "),
+            expect=f"{_PLANNED}: command step 2",
         ),
         _plant(
             "a breadth step no entry holds",
             _BREADTH,
-            _AFTER_ORDER_ONE,
+            _AFTER_PLANNED_ONE,
             "      - name: a new check\n        run: uv run python scripts/new_check.py\n"
-            + _AFTER_ORDER_ONE,
-            expect="breadth.yml job random-order runs uv run python scripts/new_check.py",
+            + _AFTER_PLANNED_ONE,
+            expect=f"breadth.yml job {_PLANNED} runs uv run python scripts/new_check.py",
         ),
         _plant(
             "a breadth entry's cap that is not its job's",
@@ -14062,32 +14214,31 @@ A_TIER_WORKFLOW_RUNS_EACH_TEST_THROUGH_RUN_JOB = _toolchain_row(
             "uv run pytest tests/test_more.py",
             expect="breadth.yml job ubuntu step 'planted' runs uv run pytest tests/test_more.py",
         ),
-        # On random-order's first order, which the list holds for good: #5600 leaves that leg's
-        # steps its own.
-        Control(
+        # On the planned ids' collection, which the list holds for good: the planned-ids legs only
+        # collect, and stay written out.
+        _plant_in_job(
             "a listed step renamed",
-            _edit(
-                _BREADTH,
-                f"      - name: {_ORDER_ONE_NAME}\n",
-                f"      - name: {_ORDER_ONE_RENAMED}\n",
-            ),
-            expect=f"breadth.yml job random-order step {_ORDER_ONE_RENAMED!r} runs uv run pytest",
+            _BREADTH,
+            _PLANNED,
+            f"      - name: {_PLANNED_ONE_NAME}\n",
+            f"      - name: {_PLANNED_ONE_RENAMED}\n",
+            expect=f"breadth.yml job {_PLANNED} step {_PLANNED_ONE_RENAMED!r} runs uv run pytest",
         ),
         _plant_step(
             "a listed step gone, and its job running no run-job",
-            "random-order",
-            "pytest-1",
-            _with_run("echo no first order tonight"),
+            _PLANNED,
+            "pytest",
+            _with_run("echo no planned ids tonight"),
             expect=(
-                f"breadth.yml job random-order step {_ORDER_ONE_NAME!r} runs no test any more, and"
+                f"breadth.yml job {_PLANNED} step {_PLANNED_ONE_NAME!r} runs no test any more, and"
                 " its job runs no run-job"
             ),
         ),
         _plant_step(
             "a listed step moved to run-job passes",
-            "random-order",
-            "pytest-1",
-            _with_run("python3 -m tools.ci run-job random-order"),
+            _PLANNED,
+            "pytest",
+            _with_run(f"python3 -m tools.ci run-job {_PLANNED}"),
             fails=False,
         ),
         _own_test(

@@ -68,9 +68,15 @@ class Tolerated:
     step: str | None
     reason: str
     outcome_read: bool = False
+    #: The form of its leg it is for, when the leg has two (random-order: its two orders written
+    #: out, or its entry run through run-job): an entry for the other form is not looked for.
+    form: str = ""
 
 
 _MERGE = ".github/workflows/merge.yml"
+#: random-order's two forms (:attr:`Tolerated.form`).
+WRITTEN = "written"
+THROUGH_RUN_JOB = "through run-job"
 _WALK = ".github/workflows/clean-machine-walkthroughs.yml"
 _BREADTH = ".github/workflows/breadth.yml"
 _PR = ".github/workflows/pr.yml"
@@ -172,8 +178,19 @@ TOLERATED: tuple[Tolerated, ...] = (
             "the shard's result: `ran` records it, and the last step fails the job on a red "
             "entry, after the evidence is written and uploaded.",
             outcome_read=True,
+            form=WRITTEN,
         )
         for order in ("pytest-1", "pytest-2")
+    ),
+    Tolerated(
+        _BREADTH,
+        ("random-order",),
+        "pytest",
+        "Its outcome, both orders' (run-job runs the second whatever the first did), is the "
+        "shard's result: `ran` records it, and the last step fails the job on a red entry, after "
+        "the evidence is written and uploaded.",
+        outcome_read=True,
+        form=THROUGH_RUN_JOB,
     ),
     Tolerated(
         _BREADTH,
@@ -297,7 +314,13 @@ def violations(root: Path) -> list[str]:
             if _on(step.get("continue-on-error")):
                 key = str(step.get("id") or step.get("name") or f"step {i + 1}")
                 sites[(rel, job_id, key)] = (job, i)
-    named = {(e.file, job, e.step): e for e in TOLERATED for job in e.jobs}
+    form = THROUGH_RUN_JOB if (_BREADTH, "random-order", "pytest") in sites else WRITTEN
+    named = {
+        (e.file, job, e.step): e
+        for e in TOLERATED
+        for job in e.jobs
+        if not e.form or e.form == form
+    }
     for (rel, job_id, step), (job, index) in sites.items():
         entry = named.get((rel, job_id, step))
         where = f"{rel}:{job_id}" + (f" step {step!r}" if step else "")
@@ -362,20 +385,23 @@ def _read_together(
     return bad
 
 
-#: The end of random-order's first order, its report and its ids.
-_ORDER_ONE_END = (
-    "--junitxml=reports/junit-random-order-1.xml"
-    ' --shard-ids "$RUNNER_TEMP/ids/shard-ids-random-order-${{ matrix.shard }}.txt"\n'
+#: The end of planned-ids-random-order's collection, its report and its ids: a pytest line the
+#: planned-ids legs, which only collect, keep written out whichever legs run through run-job.
+_PLANNED_END = (
+    "--junitxml=reports/junit-planned-random-order.xml"
+    ' --shard-ids "$RUNNER_TEMP/ids/planned-ids-random-order.txt"\n'
 )
-#: The row's planted violations: (name, file, old text, new text). Each must fail the check.
-PLANTS: tuple[tuple[str, str, str, str], ...] = (
+#: random-order's one outcome once it runs its entry through run-job, as its record reads it.
+_ONE_OUTCOME = "OUTCOME: ${{ steps.pytest.outcome }}"
+#: The row's planted violations: (name, file, old text, new text), and for a plant on
+#: random-order's two orders the old text and new on the leg run through run-job. Each must fail
+#: the check.
+PLANTS: tuple[tuple[str, ...], ...] = (
     (
-        # random-order's first order: a pytest line written out for good, since #5600 leaves that
-        # leg's steps its own.
         "a pytest whose exit status is thrown away",
         _BREADTH,
-        _ORDER_ONE_END,
-        _ORDER_ONE_END.replace("\n", " || true\n"),
+        _PLANNED_END,
+        _PLANNED_END.replace("\n", " || true\n"),
     ),
     (
         "a validation step that may fail without failing its job",
@@ -422,6 +448,8 @@ PLANTS: tuple[tuple[str, str, str, str], ...] = (
         " && 'success' || 'failure' }}",
         "OUTCOME: ${{ (steps.pytest-1.outcome == 'success' || steps.pytest-2.outcome =="
         " 'success') && 'success' || 'failure' }}",
+        _ONE_OUTCOME,
+        "OUTCOME: success",
     ),
     (
         "two tolerated orders whose shard is green when the first was, and the second read apart",
@@ -430,6 +458,8 @@ PLANTS: tuple[tuple[str, str, str, str], ...] = (
         " && 'success' || 'failure' }}",
         "OUTCOME: ${{ steps.pytest-1.outcome == 'success' && 'success' || 'failure' }}\n"
         "          SECOND: ${{ steps.pytest-2.outcome }}",
+        _ONE_OUTCOME,
+        "OUTCOME: ${{ steps.shard.outcome }}",
     ),
     (
         "an entry whose step is gone",
