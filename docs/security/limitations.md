@@ -1435,7 +1435,16 @@ What the screen does not see:
   files of a shell not listed there.
 - **An agent CLI's tools that do not ask first** (§1, §11).
 
-Editor and task-runner settings in a repository are not in the rule: `.vscode/settings.json` and
+Editor settings that name a program your editor starts are asked about instead of refused: a
+write to `.vscode/settings.json`, a `.code-workspace` file or `.zed/settings.json` at the folder an
+agent works in or at a repository's root (an interpreter, a formatter or a terminal it starts when
+you open the folder) is put to you every time, whatever Trust, YOLO or a standing grant would
+answer, by a shell command's redirect, `tee`, `cp`, `mv` or `ln`, the native file tools, or an
+agent CLI's edit. Its card names the file and what runs it, and unattended work is refused it
+(`persistence_paths`). Not yet covered: a `sed -i` command (its target is not read), a command
+whose target is built from a variable, and a program or script that writes one.
+
+The other editor and task-runner files in a repository are not in either rule yet:
 `.vscode/tasks.json`, `.idea/`, a `Makefile`, `package.json` scripts, a `justfile` or
 `Taskfile.yml`, `.envrc`, `.mise.toml` and the like. They are the project's own files, which you ask
 an agent to change and which show in `git status` when the repository tracks them, and the tools

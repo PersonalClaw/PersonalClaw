@@ -124,6 +124,14 @@ class CommandEffects:
     reach a reading names sends, unless its program's reader holds it to a known fetch, one that
     only brings data here (:func:`_fetches`): a package manager's install, ``git clone`` and its
     kin, ``curl`` and ``wget`` given only download options.
+
+    ``into`` pairs each destination of a copy, a move or a link (``cp``, ``mv``, ``ln``,
+    ``install``) with each source it names, as the command spells them, where the destination may
+    be a folder: what lands in a folder is its entry of the source's name, which ``targets`` (the
+    folder) does not name. A destination ``-t`` gives is a folder, spelled with a trailing ``/``;
+    the last of two or more operands is one when it is spelled so or is a folder on disk, which
+    only a reader that knows the command's folder can tell. Not compared: it says more of what
+    ``targets`` says.
     """
 
     writes: bool = False
@@ -138,6 +146,7 @@ class CommandEffects:
     removes_unread: bool = False
     identity: frozenset[str] = frozenset()
     sends: bool = False
+    into: frozenset[tuple[str, str]] = field(default=frozenset(), compare=False)
 
     @property
     def reads_only(self) -> bool:
@@ -157,6 +166,7 @@ class CommandEffects:
             removes_unread=self.removes_unread or other.removes_unread,
             identity=self.identity | other.identity,
             sends=self.sends or other.sends,
+            into=self.into | other.into,
         )
 
 
@@ -327,11 +337,12 @@ def _relayed(effects: CommandEffects) -> CommandEffects:
 def _under(
     effects: CommandEffects, base: str, *, lost: bool = False, base_glob: int = -1
 ) -> CommandEffects:
-    """*effects* with each relative target and removal read from folder *base* (``""``: where it
-    starts). *base_glob* is where the first glob character of *base* is, or -1.
+    """*effects* with each relative target, removal and copy (``into``) read from folder *base*
+    (``""``: where it starts). *base_glob* is where the first glob character of *base* is, or -1.
 
-    With *lost*, the folder is not known, so a relative target names no place."""
-    if not (effects.targets or effects.removes) or (not base and not lost):
+    With *lost*, the folder is not known, so a relative target names no place, and a copy with a
+    relative path is not placed."""
+    if not (effects.targets or effects.removes or effects.into) or (not base and not lost):
         return effects
     targets: set[str] = set()
     unread = effects.target_unread
@@ -354,13 +365,25 @@ def _under(
             shifted = removal.glob_at + len(joined) - len(removal.path)
             at = base_glob if base_glob >= 0 else (shifted if removal.glob_at >= 0 else -1)
             removes.add(Removal(joined, at))
+    placed = lambda path: path.startswith(("/", "~", "$"))  # noqa: E731
+    into = frozenset(
+        (_joined(base, destination), _joined(base, source))
+        for destination, source in effects.into
+        if not lost or (placed(destination) and placed(source))
+    )
     return replace(
         effects,
         targets=frozenset(targets),
         target_unread=unread,
         removes=frozenset(removes),
         removes_unread=removes_unread,
+        into=into,
     )
+
+
+def _joined(base: str, path: str) -> str:
+    """*path* read from folder *base*, a trailing ``/`` kept (a folder spelled as one)."""
+    return path if path.startswith(("/", "~", "$")) else posixpath.join(base, path)
 
 
 #: The files a write to which is no write: where output goes to be thrown away or shown.
@@ -2409,11 +2432,14 @@ def _to_destination(*, valued: str, long_valued: str, moves: bool = False) -> _R
         if folders:
             for word in folders:
                 effects = effects | _target_of(word)
+            effects = effects | _into(folders, scan.operands, folder=True)
         elif "-d" in scan.seen and not moves:
             for word in scan.operands:  # `install -d` makes each folder
                 effects = effects | _target_of(word)
         elif len(scan.operands) >= 2:
             effects = effects | _target_of(scan.operands[-1])
+            # The last operand, as a list of one: it names where every other one lands.
+            effects = effects | _into([scan.operands[-1]], scan.operands[:-1], folder=False)
         elif len(scan.operands) == 1 and not moves:
             effects = effects | _writes_to(".")  # `ln -s target` links it here
         else:
@@ -2421,6 +2447,24 @@ def _to_destination(*, valued: str, long_valued: str, moves: bool = False) -> _R
         return effects
 
     return read
+
+
+def _into(destinations: list[Word], sources: list[Word], *, folder: bool) -> CommandEffects:
+    """Each source paired with each destination it may land in (``CommandEffects.into``), for
+    the words this reading names literally; a destination *folder* says is one is spelled with a
+    trailing ``/``."""
+
+    def literal(word: Word) -> bool:
+        return not word.opaque and word.glob_at < 0 and bool(word.text)
+
+    pairs = frozenset(
+        ((dest.text.rstrip("/") + "/") if folder else dest.text, src.text)
+        for dest in destinations
+        if literal(dest)
+        for src in sources
+        if literal(src)
+    )
+    return CommandEffects(into=pairs) if pairs else _READ
 
 
 def _dd(args: list[Word]) -> CommandEffects:

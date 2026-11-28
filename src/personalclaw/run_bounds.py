@@ -61,6 +61,7 @@ from personalclaw import protected_folders
 from personalclaw.command_effects import DEVICES, CommandEffects, command_effects, url_host
 from personalclaw.file_scope import PATH_TOOLS
 from personalclaw.periodic_sweep import PeriodicSweep
+from personalclaw.persistence_paths import TOO_MANY_TO_READ, Planted, planted
 from personalclaw.protected_folders import NOTHING, ProtectedDelete
 from personalclaw.shell_syntax import LEADING_VARIABLES
 
@@ -592,6 +593,8 @@ class Reach:
     #: It only fetches from every host it reaches: a shell command whose reading says it sends
     #: nothing of this machine's (``CommandEffects.sends``). Never so of any other call's reach.
     only_fetches: bool = False
+    #: Each file it writes that your own tools run later (``persistence_paths``).
+    plants: tuple[Planted, ...] = ()
 
     @property
     def network(self) -> bool:
@@ -604,11 +607,12 @@ class Reach:
     @property
     def asks(self) -> bool:
         """It is put to a person whatever grant stands: past the allowed hosts, a delete of a
-        protected folder, or a commit under an identity it gives git itself."""
-        return self.network or bool(self.deletes) or bool(self.identity)
+        protected folder, a commit under an identity it gives git itself, or a write to a file
+        your own tools run later."""
+        return self.network or bool(self.deletes) or bool(self.identity) or bool(self.plants)
 
     def __bool__(self) -> bool:
-        return self.network or self.writes or bool(self.deletes) or bool(self.identity)
+        return self.asks or self.writes
 
 
 NOWHERE = Reach()
@@ -652,8 +656,14 @@ def call_reach(
     within: Sequence[str] | None = None,
     scratch: str = "",
     tmpdir: str | None = None,
+    named: Sequence[str] = (),
 ) -> Reach:
     """Where one tool call reaches past its run's bounds, run in the folder *cwd*.
+
+    What it writes of the files your own tools run later (``persistence_paths``) is read of every
+    call that writes, attended or not: the targets of a shell command's write facet, a native file
+    write's path, and the files an agent CLI's edit or move names (*named*, the call's
+    ``named_files``).
 
     The network half is asked of every shell call (:func:`personalclaw.task_modes.shell_command`
     says whether a call is one), and so is the protected folders' half, of the command the call
@@ -669,24 +679,115 @@ def call_reach(
     identity = tuple(sorted(command_effects(runs).identity)) if runs else ()
     command = shell_command(title, tool_kind, tool_input, declared)
     if command:
+        effects = command_effects(command)
         reach = effects_reach(
-            command_effects(command),
+            effects,
             policy=shell_egress_policy(session_key),
             cwd=cwd,
             within=within,
             scratch=scratch,
         )
-        return replace(reach, deletes=deletes, identity=identity)
+        landed, unread = _landed(effects.into, cwd, effects.targets) if effects.writes else ([], [])
+        written = [*effects.targets, *landed] if effects.writes else []
+        plants = planted(written, cwd=cwd)
+        plants += tuple(Planted(path, TOO_MANY_TO_READ) for path in dict.fromkeys(unread))
+        return replace(reach, deletes=deletes, identity=identity, plants=plants)
     hosts, unnamed = argument_network(title, tool_kind, tool_input, session_key=session_key)
+    plants = planted(_written(title, tool_kind, tool_input, declared, named), cwd=cwd)
     if deletes or identity or hosts or unnamed:
-        return Reach(hosts, unnamed, deletes=deletes, identity=identity)
+        return Reach(hosts, unnamed, deletes=deletes, identity=identity, plants=plants)
     arg = FILE_WRITES.get(title)
     if within is None or arg is None or not declared_level(declared):
-        return NOWHERE
+        return Reach(plants=plants) if plants else NOWHERE
     raw = tool_input.get(arg) if isinstance(tool_input, dict) else None
     if not isinstance(raw, str) or not raw:
         return NOWHERE  # the tool says what is missing
-    return Reach(paths=outside([raw], cwd=cwd, within=within, scratch=scratch))
+    return Reach(paths=outside([raw], cwd=cwd, within=within, scratch=scratch), plants=plants)
+
+
+#: The most of a copied folder's entries read for where they land.
+_LANDED_ENTRIES = 10_000
+
+
+def _landed(
+    into: Iterable[tuple[str, str]], cwd: str, written: Iterable[str] = ()
+) -> tuple[list[str], list[str]]:
+    """Where each copy, move or link lands (``CommandEffects.into``), read from *cwd*; and each
+    destination whose source holds more than :data:`_LANDED_ENTRIES` entries, too many to read.
+
+    Into a folder (a destination spelled as one, or one that is a folder on disk), the folder's
+    entry of the source's name. A source that is a folder lands its entries too, below where it
+    lands: those on disk, and those the same command writes inside it (*written*, the command's
+    own write targets). It lands at the destination itself when the destination is not spelled
+    as a folder: a new name (``mv evil .vscode``), and a folder on disk that the same command may
+    take away or replace first (``rmdir .vscode && mv evil .vscode``), so such a folder is landed
+    both ways, the safe side. It lands there too when what is copied is the folder's contents:
+    ``src/.`` (whose entry in the folder is the folder), and ``src/``, which a BSD ``cp -R`` reads
+    so."""
+    targets = [_absolute(path, cwd) for path in written]
+    landed: list[str] = []
+    unread: list[str] = []
+    for destination, source in into:
+        spelled = os.path.expanduser(destination)
+        named_a_folder = destination.endswith("/")
+        roots = [] if named_a_folder else [destination]
+        if named_a_folder or os.path.isdir(os.path.join(cwd or ".", spelled)):
+            # The folder's entry of the source's name: the folder itself for ``src/.``.
+            roots.append(os.path.join(destination, os.path.basename(source.rstrip("/"))))
+            landed.append(roots[-1])
+            if source.endswith("/"):
+                roots.append(destination)
+        entries, whole = _entries(source, cwd, targets)
+        if not whole:
+            unread.append(destination)
+        landed += [os.path.join(root, entry) for root in dict.fromkeys(roots) for entry in entries]
+    return landed, unread
+
+
+def _absolute(path: str, cwd: str) -> str:
+    expanded = os.path.expanduser(path)
+    return os.path.normpath(os.path.join(cwd or os.getcwd(), expanded))
+
+
+def _entries(source: str, cwd: str, targets: Sequence[str]) -> tuple[list[str], bool]:
+    """What a folder *source* holds, each relative to it: its entries on disk, at most
+    :data:`_LANDED_ENTRIES`, and each of *targets* (absolute) the same command writes inside it;
+    and whether that is all of them. Nothing for a source that is no folder."""
+    folder = _absolute(source, cwd)
+    inside = folder.rstrip(os.sep) + os.sep
+    found = [os.path.relpath(target, folder) for target in targets if target.startswith(inside)]
+    if not os.path.isdir(folder):
+        return found, True
+    read = 0
+    for at, folders, files in os.walk(folder):
+        for entry in (*folders, *files):
+            if read >= _LANDED_ENTRIES:
+                return found, False
+            found.append(os.path.relpath(os.path.join(at, entry), folder))
+            read += 1
+    return found, True
+
+
+#: The kinds of an agent CLI's call that write the files they name (``acp.translate``).
+_WRITING_KINDS = frozenset({"edit", "move"})
+
+
+def _written(
+    title: str, tool_kind: str, tool_input: object, declared: object, named: Sequence[str]
+) -> tuple[str, ...]:
+    """The paths a call that is no shell command writes, as it names them: a native file write's
+    path argument, and the files an agent CLI's edit or move names."""
+    from personalclaw.task_modes import declared_level
+
+    found: list[str] = []
+    arg = FILE_WRITES.get(title)
+    if arg is not None and declared_level(declared) and isinstance(tool_input, dict):
+        raw = tool_input.get(arg)
+        if isinstance(raw, str) and raw:
+            found.append(raw)
+    if tool_kind in _WRITING_KINDS:
+        found.extend(p for p in named if isinstance(p, str))
+    return tuple(found)
 
 
 def session_roots(tool_index: Any, cwd: Any) -> list[str]:
@@ -753,6 +854,7 @@ def asked_call_reach(
     workspace: str,
     extra_roots: Iterable[str] = (),
     unattended: bool,
+    named: Sequence[str] = (),
 ) -> tuple[Reach, tuple[str, ...], str]:
     """:func:`call_reach` for a call put to a chat session's approval gate (an agent CLI's, or a
     native runtime's ask): the reach, the folders an unattended session's writes are held to (its
@@ -768,6 +870,7 @@ def asked_call_reach(
         cwd=workspace,
         within=within,
         scratch=scratch,
+        named=named,
     )
     return reach, within or (), scratch
 
@@ -823,6 +926,7 @@ def past_bounds(reach: Reach, within: Sequence[str] = ()) -> str:
         writes_sentence(reach, within),
         protected_folders.clause(reach.deletes),
         identity_sentence(reach),
+        plants_sentence(reach),
     ]
     return (
         "this run is unattended, so nobody is here to allow a call past its bounds: "
@@ -856,6 +960,11 @@ def refusal(
         )
     if reach.identity:
         steps.append(_IDENTITY_STEP)
+    if reach.plants:
+        steps.append(
+            f"leave {_listed([p.path for p in reach.plants])} alone, which only the user changes, "
+            "and write the step's other files"
+        )
     return (
         past_bounds(reach, within)
         + ". To go on, "
@@ -866,9 +975,9 @@ def refusal(
 
 def ask_note(reach: Reach) -> str:
     """The line an attended run's card shows for a call put to a person past every grant (one
-    that reaches past the allowed hosts, that deletes a protected folder, or that gives git its
-    own author or committer): why it asks, though a standing grant would have answered any other
-    call."""
+    that reaches past the allowed hosts, that deletes a protected folder, that gives git its own
+    author or committer, or that writes a file your own tools run later): why it asks, though a
+    standing grant would have answered any other call."""
     notes = []
     sentence = network_sentence(reach)
     if sentence:
@@ -893,7 +1002,17 @@ def ask_note(reach: Reach) -> str:
             + ". A command that gives git its own author or committer is always asked about, "
             "whatever this chat or its agent allows."
         )
+    notes.extend(plant.sentence() for plant in reach.plants)
     return " ".join(notes)
+
+
+def plants_sentence(reach: Reach) -> str:
+    """What the call writes of the files your own tools run later, in a clause (``it writes …``)."""
+    if not reach.plants:
+        return ""
+    return "it writes " + "; and ".join(
+        f"{plant.path}, which {plant.row.what}" for plant in reach.plants
+    )
 
 
 #: What a run refused a commit under its own identity can do instead.
@@ -922,12 +1041,15 @@ def reach_note(
     session_key: str,
     *,
     cwd: str,
+    named: Sequence[str] = (),
 ) -> str:
-    """The card's line (:func:`ask_note`) for a call put to a person, run in the folder *cwd*;
-    ``""`` when nothing puts it past every grant. A display line, so a reading that fails says
-    nothing."""
+    """The card's line (:func:`ask_note`) for a call put to a person, run in the folder *cwd*
+    (*named*: the files an agent CLI's call names); ``""`` when nothing puts it past every grant.
+    A display line, so a reading that fails says nothing."""
     try:
-        reach = call_reach(declared, title, tool_kind, tool_input, session_key=session_key, cwd=cwd)
+        reach = call_reach(
+            declared, title, tool_kind, tool_input, session_key=session_key, cwd=cwd, named=named
+        )
     except Exception:  # noqa: BLE001 - the card still shows the call and its risk
         logger.warning("run bounds: could not read where an asked call reaches", exc_info=True)
         return ""
@@ -942,7 +1064,13 @@ def _event_reach(event: Any, session_key: str, cwd: str) -> Reach:
         getattr(event, "tool_input", ""),
         session_key=session_key,
         cwd=cwd,
+        named=named_files(event),
     )
+
+
+def named_files(event: Any) -> tuple[str, ...]:
+    """The files an agent CLI's call names (``AgentEvent.named_files``), ``()`` for any other."""
+    return tuple(p for p in (getattr(event, "named_files", ()) or ()) if isinstance(p, str))
 
 
 def put_to_a_person(event: Any, *, session_key: str, cwd: str) -> bool:
@@ -1029,6 +1157,7 @@ def event_note(event: Any, session_key: str, *, cwd: str) -> str:
         getattr(event, "tool_input", ""),
         session_key,
         cwd=cwd,
+        named=named_files(event),
     )
 
 

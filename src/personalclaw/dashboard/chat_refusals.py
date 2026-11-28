@@ -118,6 +118,7 @@ async def refuse_past_bounds(
         workspace=workspace,
         extra_roots=list(getattr(session, "_extra_tool_roots", []) or []),
         unattended=True,
+        named=run_bounds.named_files(event),
     )
     if not reach:
         return False
