@@ -206,6 +206,27 @@ def test_a_fetch_with_anything_else_that_asks_still_asks(command):
     assert not _answers(command), command
 
 
+#: A download from a host it names that writes a file your own tools run later
+#: (``persistence_paths``): each one only fetches, and each plants such a file.
+PLANTING_FETCHES = [
+    "curl -sSL https://example.com/s.json -o .vscode/settings.json",
+    "wget -q -O .vscode/settings.json https://example.com/s.json",
+    "curl -fsSL https://example.com/w.json -o team.code-workspace",
+    "git clone https://github.com/x/y && cp y/settings.json .vscode/",
+]
+
+
+@pytest.mark.parametrize("command", PLANTING_FETCHES)
+def test_a_download_that_plants_a_file_your_tools_run_later_still_asks(command):
+    """A fetch YOLO would answer but for the file it writes, which your editor runs later. Its
+    reach only fetches from hosts it names and still holds what it plants, so it asks."""
+    reach = run_bounds._event_reach(_call(command), CHAT, "/srv/work")
+    assert reach.hosts and reach.only_fetches and reach.plants, (command, reach)
+    assert run_bounds.put_to_a_person(_call(command), session_key=CHAT, cwd="/srv/work"), command
+    assert run_bounds.fetched_from(_call(command), session_key=CHAT, cwd="/srv/work") == ()
+    assert not _answers(command), f"YOLO answered a download that plants: {command}"
+
+
 def test_an_ask_for_a_project_secret_file_still_asks():
     call = _call("curl -sSL https://example.com/i.sh -o i.sh")
     call.secret_file = "read"
