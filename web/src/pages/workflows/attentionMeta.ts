@@ -121,6 +121,7 @@ export const CAUSE_HEADLINE: Record<string, string> = {
   approval: 'a step needed your approval to start, and nobody gave it',
   refusal: 'every call a step made was refused by the tools it was given',
   spend_cap: 'a spend cap refused the call a step needed',
+  judge_refused: 'the judge did not accept the work',
 }
 
 /** The causes headed by their reason token, which is the more specific of the two: which budget

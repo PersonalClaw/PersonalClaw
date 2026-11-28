@@ -341,6 +341,12 @@ class SubagentInfo:
     #: (``turn_source.came_from_thread``), wherever the chat is by then; else to the owner's DM.
     #: Last, as above.
     started_on: dict[str, str] = field(default_factory=dict)
+    #: The spend ceiling's own words when one refused a call it made
+    #: (`guardrails.failure.budget_refusal`): ``headline`` (which ceiling, and what was spent
+    #: against it), ``fix`` (where it is lifted) and ``scope`` (``run`` or ``day``), so a workflow
+    #: step it ran settles as the ceiling's stop (`workflows.stage_settlement`), never as a failure
+    #: of the step. ``{}`` when no ceiling ended it. Last, as above.
+    spend_cap: dict[str, str] = field(default_factory=dict)
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1648,6 +1654,12 @@ class SubagentManager:
             cap = budget_refusal(exc)  # a spend cap's refusal is said as itself, and not traced
             if not info.reaped:
                 info.error = cap.sentence() if cap is not None else str(exc)
+                if cap is not None:
+                    info.spend_cap = {
+                        "headline": cap.headline(),
+                        "fix": cap.fix(),
+                        "scope": cap.scope,
+                    }
                 if cap is not None and cap.scope == "day":
                     info.ended_by = DAY_SPEND_CEILING
                 info.done = True

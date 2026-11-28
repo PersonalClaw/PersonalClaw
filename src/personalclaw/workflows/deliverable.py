@@ -400,13 +400,42 @@ def document_path(run: Any, spec: Any) -> str:
 
 
 def kept_document_check(run: Any, spec: Any, check: Any) -> bool | None:
-    """The run's own check of a judge's pass of a run that keeps its document: whether the
-    document is there, when the judge declares ``artifact_exists`` (``judge_pretier``'s check).
-    ``None`` when the judge declares another check or the run keeps no document of its own."""
-    from personalclaw.workflows.judge_pretier import artifact_check
+    """The run's own check of a judge's pass of a run that has a document: whether the document
+    is there, when the judge declares ``artifact_exists`` (``judge_pretier``'s check). ``None`` when
+    the judge declares another check or the run has no document.
+
+    A run that keeps its document in its own folder is checked at the one path it hands its steps
+    (:func:`document_path`). A run whose template hands its steps no path, but that was started to
+    produce a document (:func:`run_document`, as a General loop is), is checked where its Document
+    panel finds it (:func:`started_document`): a pass while that document is nowhere the run owns
+    is the judge and the run disagreeing, as it is for a run that keeps its own."""
+    from personalclaw.workflows.judge_pretier import artifact_check, declares_artifact_check
 
     path = document_path(run, spec)
-    return artifact_check(check, path) if path else None
+    if path:
+        return artifact_check(check, path)
+    name = run_document(run)
+    if not name or not declares_artifact_check(check):
+        return None
+    return bool(started_document(run, spec, name))
+
+
+def started_document(run: Any, spec: Any, name: str) -> str:
+    """Where the document *name*, which *run* was started to produce, is, or ``""``: read in the
+    roots its Document panel reads, in their order (:func:`run_roots`, as :func:`read_document`
+    reads them). Each is the run's own, so a file of that name another run left in a folder runs
+    share is not found; and a copy in its documents folder counts only when its manifest says one
+    of this run's steps wrote it (:func:`keep_step_documents`)."""
+    for root in run_roots(run, spec).readable:
+        target = _confined(root.path, name)
+        if target is None or not target.is_file():
+            continue
+        if root.kind == ROOT_KEPT and not isinstance(
+            _kept_entries(Path(root.path)).get(name), dict
+        ):
+            continue
+        return str(target)
+    return ""
 
 
 def continues(run: Any) -> str:

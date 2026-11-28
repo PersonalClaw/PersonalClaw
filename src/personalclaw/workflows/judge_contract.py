@@ -241,10 +241,18 @@ DEFAULT_JUDGE_SAMPLES = 3
 #: Marginal-value thresholds seeded from the REAL granularity dial, so the numbers
 #: mean what the existing UI already means by them.
 GRANULARITY_PRESETS: dict[str, dict[str, float]] = {
-    "quick": {"marginal_threshold": 3.0, "consecutive_clean": 1},
-    "balanced": {"marginal_threshold": 2.0, "consecutive_clean": 2},
-    "exhaustive": {"marginal_threshold": 1.0, "consecutive_clean": 3},
+    "quick": {"marginal_threshold": 3.0},
+    "balanced": {"marginal_threshold": 2.0},
+    "exhaustive": {"marginal_threshold": 1.0},
 }
+
+#: `runtime_hints.judge` keys that once declared a rule and no longer do anything. A saved or
+#: user-made workflow that still carries one loads and runs as before: the key is read past, and
+#: named once in the log. `stop_condition` (`{"consecutive_clean": N}`) promised that N clean
+#: judge passes in a row end a loop, and nothing read it: a loop's judge grades one cycle's step,
+#: not whether the task is done, so two good steps of six would have ended the work. A loop ends
+#: at its own exit or its round cap, when its judge hands the decision to you, or when you stop it.
+RETIRED_JUDGE_HINTS = ("stop_condition",)
 
 #: The forbidden success modes every code-flavoured judge must actively verify did
 #: NOT happen. These are the passes a worker under pressure actually produces.
@@ -279,7 +287,6 @@ class JudgeHints:
 
     rubric: list[RubricCriterion] = field(default_factory=list)
     ratchet: Ratchet = Ratchet.STRICT
-    stop_condition: dict[str, int] = field(default_factory=lambda: {"consecutive_clean": 2})
     marginal_threshold: float = 2.0
     forbidden_success_modes: list[str] = field(
         default_factory=lambda: list(DEFAULT_FORBIDDEN_MODES)
@@ -299,19 +306,23 @@ class JudgeHints:
     fallback_check: FallbackCheck = FallbackCheck.ARTIFACT_EXISTS
     freedom_level: FreedomLevel = FreedomLevel.HIGH
 
-    @property
-    def consecutive_clean(self) -> int:
-        """The double-clean rule: exit only after N INDEPENDENT clean passes.
-
-        One clean pass is a sample; two is a signal. This is what stops a loop
-        exiting on the judge's first good mood.
-        """
-        return max(1, int(self.stop_condition.get("consecutive_clean", 2)))
-
     def sample_count(self) -> int:
         """Odd-forced sample count — an even count has no median."""
         n = max(1, int(self.judge_samples))
         return n if n % 2 else n + 1
+
+
+_RETIRED_NOTED: set[str] = set()
+
+
+def _note_retired_hints(raw: dict[str, Any]) -> None:
+    """Name a retired key once per process: every judge's settlement parses its hints again."""
+    for key in RETIRED_JUDGE_HINTS:
+        if key in raw and key not in _RETIRED_NOTED:
+            _RETIRED_NOTED.add(key)
+            logger.info(
+                "a workflow's runtime_hints.judge.%s no longer does anything; it is ignored", key
+            )
 
 
 def hints_from_dict(raw: Any) -> JudgeHints:
@@ -352,10 +363,7 @@ def hints_from_dict(raw: Any) -> JudgeHints:
             except ValueError:
                 logger.debug("unknown %s %r — keeping the strict default", enum_field, value)
 
-    if isinstance(raw.get("stop_condition"), dict):
-        hints.stop_condition = {
-            k: int(v) for k, v in raw["stop_condition"].items() if isinstance(v, (int, float))
-        }
+    _note_retired_hints(raw)
     for num_field in ("marginal_threshold", "judge_samples"):
         if isinstance(raw.get(num_field), (int, float)):
             setattr(hints, num_field, type(getattr(hints, num_field))(raw[num_field]))
@@ -463,6 +471,20 @@ class JudgeVerdict:
         """
         return self.verdict is Verdict.PASS
 
+    @property
+    def set_aside(self) -> str:
+        """What the next cycle's worker reads beside a PASS the contract set aside for what the
+        work did, in the contract's own words; empty for any other verdict.
+
+        A loop's worker prompt hands it the last ruling as its verdict and the criteria scored
+        below target, and a pass set aside for a forbidden success mode has none: it read "PASS"
+        with nothing below target, and nothing told it the pass did not stand. A pass set aside
+        for the judge's own answer (`protocol_error`: no proof cited, nothing scored) says
+        nothing about the work, so it sends the worker nowhere."""
+        if self.verdict is not Verdict.PASS or not self.invalid_reason or self.protocol_error:
+            return ""
+        return f" — set aside, so it does not stand: {self.invalid_reason}"
+
     def to_dict(self) -> dict[str, Any]:
         """The record a node output carries, so a template binds VALIDATED data.
 
@@ -549,6 +571,9 @@ def adjudicate(primary: JudgeVerdict, skeptic: JudgeVerdict | None) -> JudgeVerd
     reason = primary.done_reason
     if primary.done and not done:
         reason = f"skeptic overturned completion: {skeptic.done_reason}".strip()[:500]
+    # A skeptic that could not tell overturns a completion as one that refuted it does, and says
+    # why: the cycle is one neither judge could rule done, not one shown unfinished.
+    cannot_judge = "" if done else (primary.cannot_judge or skeptic.cannot_judge)
     return JudgeVerdict(
         verdict=verdict_for_cycle(done, regressed),
         reasoning=primary.reasoning,
@@ -563,6 +588,7 @@ def adjudicate(primary: JudgeVerdict, skeptic: JudgeVerdict | None) -> JudgeVerd
         regressed=regressed,
         adversarial=True,  # the skeptic ran → this verdict was adversarially cross-checked
         band_used=primary.band_used,
+        cannot_judge=cannot_judge,
     )
 
 

@@ -124,7 +124,6 @@ def test_maturity_is_l0_for_a_bare_template_and_l3_when_proven() -> None:
         },
         "runtime_hints": {
             "execution": {"escalation": {"attempt_cap": 3}, "breaker": {"no_progress_stop": 5}},
-            "judge": {"stop_condition": {"consecutive_clean": 1}},
         },
     }
     mature = versions.template_maturity(proven_spec, clean_runs=5, evaluator_rejected=True)

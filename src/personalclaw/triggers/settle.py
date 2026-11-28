@@ -206,6 +206,7 @@ def settle_workflow_run(
     *,
     error: str,
     summary: str,
+    held: bool = False,
     base_dir: Path | None = None,
     on_attention: OnAttention | None = None,
 ) -> bool:
@@ -216,7 +217,10 @@ def settle_workflow_run(
     *ending* is the run's `RunStatus`: it finished (`success`, with *summary*, what it said it
     produced), its owner cancelled it (`stopped`) or declined an approval it needed (`declined`),
     or it failed or gave up on a step (`failure`); *error* says why, for every ending but the
-    first. Returns whether its row took the ending, as :func:`settle_agent_run` does. Never raises.
+    first. *held* says the day's spend ceiling refused the calls it failed on: held, as an agent
+    the ceiling ended is (:func:`settle_agent_run`), with the refusal's own sentence, and no
+    failure toward pausing the automation. Returns whether its row took the ending, as
+    :func:`settle_agent_run` does. Never raises.
     """
     if not trigger_id or not run_id:
         return False
@@ -235,7 +239,11 @@ def settle_workflow_run(
             else (
                 "stopped"
                 if ending == RunStatus.CANCELLED
-                else "declined" if ending == RunStatus.DECLINED else "failure"
+                else (
+                    "declined"
+                    if ending == RunStatus.DECLINED
+                    else "needs_input" if held else "failure"
+                )
             )
         )
         finished = summary or f"The workflow run {run_ending(RunStatus.COMPLETE)}."
@@ -250,7 +258,7 @@ def settle_workflow_run(
             error=failure,
             exit_type=_exit_for(status),
         )
-        if taken and status in ("success", "failure"):
+        if taken and status in ("success", "failure", "needs_input"):
             _took(
                 trigger_id,
                 work_id,

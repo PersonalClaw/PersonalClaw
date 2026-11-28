@@ -490,6 +490,11 @@ async def _stream(judge, prompt: str, usage: Attribution) -> str:
     return "".join(chunks)
 
 
+#: What a judge writes in ``cannot_judge`` when it could tell: the field is to be empty then, and a
+#: model told so still fills it with a word for nothing.
+_NOTHING_SAID = frozenset({"", "none", "n/a", "na", "null", "nothing", "-", "no"})
+
+
 def _parse_verdict(
     raw: str, evidence_refs: list[str] | None = None, evidence_text: str = ""
 ) -> JudgeVerdict | None:
@@ -512,7 +517,12 @@ def _parse_verdict(
     # Each is a yes only when the judge said yes, as the word it spells or the literal: a
     # model writes `"done": "true"` as often as `true`, and an identity check read that as
     # not done, so a finished loop kept running cycles. The skeptic still has to agree.
-    done = yes_or_no(data.get("done")) is True
+    # A judge that says it cannot tell has not said the goal is met, whatever else it answered:
+    # its cycle is one nobody could rule on (`supervisor._judge_assessment_signal`), never done.
+    cannot_judge = str(data.get("cannot_judge") or "").strip()[:500]
+    if cannot_judge.casefold().strip(" .") in _NOTHING_SAID:
+        cannot_judge = ""
+    done = yes_or_no(data.get("done")) is True and not cannot_judge
     regressed = yes_or_no(data.get("regressed")) is True
     return JudgeVerdict(
         verdict=verdict_for_cycle(done, regressed),
@@ -526,4 +536,5 @@ def _parse_verdict(
         # SAME observed block (answerable by construction), so no grounding check is needed
         # here — the hash alone makes the record auditable.
         evidence_hash=evidence_hash_of(evidence_text),
+        cannot_judge=cannot_judge,
     )

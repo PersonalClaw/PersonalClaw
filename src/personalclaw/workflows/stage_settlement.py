@@ -162,7 +162,7 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
         failure: Failure | None
         output: Any = None
         if error:
-            failure = _subagent_failure(error, reaped=reaped)
+            failure = _stopped_by_a_spend_cap(info) or _subagent_failure(error, reaped=reaped)
         else:
             stage_result = _settled_stage_output(ctl, node, str(getattr(info, "result", "") or ""))
             output = stage_result.output
@@ -289,6 +289,21 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
         # watching would report zero for its whole life. `_persist_state` writes instances
         # only, which is why the counter needs its own flush here.
         ctl._save_run()
+
+
+def _stopped_by_a_spend_cap(info: Any) -> Failure | None:
+    """The stop of a stage whose helper a spend ceiling ended, refusing a call it made
+    (`SubagentInfo.spend_cap`, kept where `guardrails.failure.budget_refusal` matched): the
+    ceiling's own headline and where it is lifted, then Retry (`failure_taxonomy.budget_failure`),
+    which the run's ending reads as a spend cap's stop. ``None`` for any other ending."""
+    cap = getattr(info, "spend_cap", None)
+    if not isinstance(cap, dict) or not cap.get("headline"):
+        return None
+    from personalclaw.workflows.failure_taxonomy import budget_failure
+
+    return budget_failure(
+        str(cap["headline"]), str(cap.get("fix") or ""), scope=str(cap.get("scope") or "")
+    )
 
 
 def _subagent_failure(error: str, *, reaped: bool) -> Failure:

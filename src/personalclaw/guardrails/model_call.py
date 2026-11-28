@@ -50,6 +50,7 @@ from personalclaw.guardrails.budgets import (
     current_run_budget,
     current_run_key,
     get_meter,
+    note_refusal,
     prompt_tokens,
 )
 from personalclaw.guardrails.calls import (
@@ -256,10 +257,12 @@ async def admit_call(
     while True:
         verdict = meter.admit(cost, day=day, run=ceiling, run_key=run_key)
         if isinstance(verdict, BudgetExceededError):
+            note_refusal(verdict)
             raise verdict
         if not isinstance(verdict, Waiting):
             return verdict
         if loop.time() >= deadline:
+            note_refusal(verdict.refusal)
             raise verdict.refusal
         await asyncio.sleep(_ROOM_POLL_SECS)
 

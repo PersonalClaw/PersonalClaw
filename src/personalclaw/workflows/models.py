@@ -556,6 +556,12 @@ RETRYABLE_CLASSES = frozenset({FailureClass.TRANSIENT, FailureClass.NETWORK})
 #: failure policy does not walk past a control's refusal.
 REFUSED_TO_START = "refused_to_start"
 
+#: The `terminal_reason` of a judge gate that read the work and did not accept it: a REJECT, or a
+#: PASS its contract set aside for what the work did (a forbidden success mode, a rubric
+#: shortfall). A verdict on the work, not a step that gave up, so its run's ending says to fix
+#: what the judge found (`ending_sentence.JUDGE_REFUSED`), never to change the gate.
+JUDGE_REFUSED = "judge_refused"
+
 
 @dataclass
 class Failure:
@@ -579,6 +585,12 @@ class Failure:
     #: the step failed (any other call to the same provider counts). Absent from ``to_dict`` when
     #: empty.
     providers: list[str] = field(default_factory=list)
+    #: Which spend ceiling refused, for a `budget` failure: ``"day"`` (the day's, which lifts
+    #: tomorrow or when it is raised) or ``"run"`` (the run's own cap, which nothing resets), from
+    #: the refusal itself (`guardrails.failure.BudgetExceededError.scope`); ``""`` when not known.
+    #: An automation's run the day's ceiling ended is held, not counted toward pausing it
+    #: (`triggers.settle.settle_workflow_run`). Absent from ``to_dict`` when empty.
+    budget_scope: str = ""
 
     @property
     def retryable(self) -> bool:
@@ -598,6 +610,8 @@ class Failure:
             out["retry_at"] = round(self.retry_at, 3)
         if self.providers:
             out["providers"] = list(self.providers)
+        if self.budget_scope:
+            out["budget_scope"] = self.budget_scope
         return out
 
     @classmethod
@@ -622,6 +636,7 @@ class Failure:
                 if isinstance(providers, list)
                 else []
             ),
+            budget_scope=str(d.get("budget_scope", "") or ""),
         )
 
 

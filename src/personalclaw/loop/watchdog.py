@@ -46,7 +46,7 @@ from personalclaw.loop.loop import (
     LoopStatus,
     LoopStopReason,
 )
-from personalclaw.workflows.supervisor_policy import policy_for_kind
+from personalclaw.workflows.supervisor_policy import SupervisorPolicy, policy_for_kind
 
 logger = logging.getLogger(__name__)
 
@@ -1357,6 +1357,38 @@ class LoopWatchdog:
             except asyncio.CancelledError:
                 raise
 
+    def _surface_a_deferred_check(
+        self, cid: str, loop: Loop, policy: SupervisorPolicy, count: int
+    ) -> None:
+        """What a loop's deferred done-signal says to its owner.
+
+        None has TWO meanings: (a) a loop that HAS a point-in-time done-check genuinely couldn't
+        assess (judge errored / verify un-runnable / judge could not tell) → surface it; (b) a
+        loop whose policy declares NO such check for this config (e.g. a General loop with no
+        verify_command) → deferring to budget BY DESIGN, not a failure. Only (a) is surfaced, so
+        "Done-ness check unavailable" is never said of a loop that never had one.
+
+        A check the shell denylist refuses won't recover by retrying: paused with the rule, for
+        the owner to change the command or the pattern. A judge that could not tell on cycles in
+        a row is asked about the same way, with its reason
+        (`supervisor.pause_when_its_judge_cannot_tell`). A CONFIRMED BLIND judge (the canary
+        proved it can't tell good from empty) won't recover either, so the loop halts to
+        NEEDS_INPUT with judge_blind rather than spinning on judge_error.
+        """
+        if not supervisor.has_done_check(loop, policy):
+            return
+        if refused := supervisor.refused_check(loop, policy):
+            gates.pause_for_refusal(cid, refused, self._publish)
+            return
+        if supervisor.pause_when_its_judge_cannot_tell(cid, self._publish):
+            return
+        fresh = store.get(cid)
+        if fresh is not None and (fresh.kind_config or {}).get("judge_calibrated") is False:
+            store.update_status(cid, LoopStatus.NEEDS_INPUT)
+            self._publish(cid, "judge_blind", {"loop_id": cid, "cycle": count})
+            return
+        self._publish(cid, "judge_error", {"loop_id": cid, "cycle": count})
+
     async def _poll_once(self) -> None:
         kinds.ensure_loaded()
         # The boot sweep runs ONCE, and BEFORE this poll reads a single loop: a loop persisted
@@ -1501,33 +1533,7 @@ class LoopWatchdog:
                         logger.warning("loop %s: done signal errored", cid, exc_info=True)
                         signal = None
                     if signal is None:
-                        # None has TWO meanings: (a) a loop that HAS a point-in-time
-                        # done-check genuinely couldn't assess (judge errored / verify
-                        # un-runnable) → degraded, surface it; (b) a loop whose policy
-                        # declares NO such check for this config (e.g. a General loop with
-                        # no verify_command) → deferring to budget BY DESIGN, not a failure.
-                        # Only flag (a), so we don't false-alarm "Done-ness check
-                        # unavailable" on a loop that never had one.
-                        if supervisor.has_done_check(loop, policy):
-                            # Distinguish a transient judge failure from a CONFIRMED
-                            # BLIND judge (the canary proved it can't tell good from empty).
-                            # A blind judge won't recover by retrying, so halt the loop to
-                            # NEEDS_INPUT with judge_blind rather than spinning on judge_error.
-                            # A check the shell denylist refuses won't either: paused with
-                            # the rule, for the owner to change the command or the pattern.
-                            fresh = store.get(cid)
-                            blind = (
-                                bool((fresh.kind_config or {}).get("judge_calibrated") is False)
-                                if fresh
-                                else False
-                            )
-                            if refused := supervisor.refused_check(loop, policy):
-                                gates.pause_for_refusal(cid, refused, self._publish)
-                            elif blind:
-                                store.update_status(cid, LoopStatus.NEEDS_INPUT)
-                                self._publish(cid, "judge_blind", {"loop_id": cid, "cycle": count})
-                            else:
-                                self._publish(cid, "judge_error", {"loop_id": cid, "cycle": count})
+                        self._surface_a_deferred_check(cid, loop, policy, count)
                     else:
                         # A non-None signal means the supervisor ran a third-party assessment
                         # and persisted whatever it produced. Publish the verdict it just

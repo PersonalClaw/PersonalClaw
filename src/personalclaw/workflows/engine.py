@@ -70,6 +70,7 @@ from personalclaw.workflows.judge_contract import (
 )
 from personalclaw.workflows.liveness import wait_with_progress
 from personalclaw.workflows.models import (
+    JUDGE_REFUSED,
     REFUSED_TO_START,
     Failure,
     FailureClass,
@@ -296,6 +297,9 @@ def _judge_gate_outcome(decision: JudgeVerdict, node: Node) -> tuple[InstanceSta
                 if decision.protocol_error
                 else "address the cited shortfall in the work and re-run the producing node"
             ),
+            # Set aside for what the work did: the judge's verdict on it. A judge that answered in
+            # the wrong shape is the step's, or its rubric's, to change.
+            terminal_reason="" if decision.protocol_error else JUDGE_REFUSED,
         )
     if decision.verdict is Verdict.PASS:
         return InstanceState.DONE, None
@@ -331,6 +335,7 @@ def _judge_gate_outcome(decision: JudgeVerdict, node: Node) -> tuple[InstanceSta
             failure_class=FailureClass.USER,
             cause_plain=f"judge returned REJECT: {decision.reasoning[:200]}",
             remediation="address the judge's rubric and re-run the producing node",
+            terminal_reason=JUDGE_REFUSED,
         )
     return InstanceState.FAILED, Failure(
         failure_class=FailureClass.INTERNAL,
@@ -2243,6 +2248,8 @@ def apply_judge_contract(
     payload: dict[str, Any] = dict(raw or {})
     payload.update(decision.to_dict())
     payload["contract_valid"] = decision.valid and not decision.protocol_error
+    # The engine's words, never the model's: a loop's next worker reads them beside the verdict.
+    payload["set_aside"] = decision.set_aside
     result.output = payload
     return result
 

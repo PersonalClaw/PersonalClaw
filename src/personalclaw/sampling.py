@@ -186,6 +186,8 @@ def _candidate_failure(exc: BaseException, use_case: str) -> dict[str, Any]:
     }
     if failure.retry_at is not None:
         out["retry_at"] = round(failure.retry_at, 3)
+    if failure.budget_scope:
+        out["budget_scope"] = failure.budget_scope
     return out
 
 

@@ -188,10 +188,13 @@ def _row(
     failure = ""
     work_id = ""
     printed = str(getattr(result, "stdout", "") or "") if result is not None else ""
-    if _held_by_a_spend_ceiling(result, exc):
+    if _held_by_a_spend_ceiling(result, exc, since=began):
         status = "needs_input"
         cap = budget_refusal(exc)
-        summary = trace = cap.sentence() if cap is not None else error
+        # The refusal's own sentence: the raised one's, or what the result said of it.
+        summary = trace = (
+            cap.sentence() if cap is not None else (error or failure_for_result(result))
+        )
     elif _failed(result, exc):
         status = "failure"
         why = error or (f"{type(exc).__name__}: {exc}" if exc is not None else "")
@@ -230,15 +233,27 @@ def _row(
     )
 
 
-def _held_by_a_spend_ceiling(result: Any, exc: BaseException | None) -> bool:
+def _held_by_a_spend_ceiling(result: Any, exc: BaseException | None, *, since: float = 0.0) -> bool:
     """Whether the day's spend ceiling refused a call the action made: it raised that refusal
-    (`guardrails.failure.budget_refusal`, its ``scope`` "day"). A run's own cap resets with
-    nothing, so its refusal is the automation's failure; and a result that only says "budget"
-    (`ActionResult.failure_class`) does not say which ceiling, so it is not held either."""
+    (`guardrails.failure.budget_refusal`, its ``scope`` "day"), or returned a failure classed
+    "budget" that says the day's ceiling refused it (`ActionResult.budget_scope`) when the ceiling
+    did refuse a call since the run began at *since* (`budgets.day_ceiling_refused_since`): an
+    app's action writes its own result, and its word alone is not the ceiling's. A run's own cap
+    resets with nothing, so its refusal is the automation's failure; and a result that says
+    "budget" and not which ceiling is not held either."""
+    from personalclaw.guardrails.budgets import day_ceiling_refused_since
     from personalclaw.guardrails.failure import budget_refusal
 
     cap = budget_refusal(exc) if exc is not None else None
-    return cap is not None and cap.scope == "day"
+    if cap is not None:
+        return cap.scope == "day"
+    return (
+        exc is None
+        and _failed(result, None)
+        and str(getattr(result, "failure_class", "") or "") == "budget"
+        and str(getattr(result, "budget_scope", "") or "") == "day"
+        and day_ceiling_refused_since(since)
+    )
 
 
 def _failed(result: Any, exc: BaseException | None) -> bool:
@@ -338,7 +353,7 @@ async def _record(
         return ""
     finished = time.time()
     yours = run_source.yours(source)
-    if _held_by_a_spend_ceiling(result, exc):
+    if _held_by_a_spend_ceiling(result, exc, since=started_at):
         # The day's spend ceiling refused a call the action made: held, as the pre-run hold
         # writes it (`schedule_history.HELD_BY_A_SPEND_CEILING`), so no exit and no count toward a
         # pause.

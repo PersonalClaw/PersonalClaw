@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Iterator
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows.failure_taxonomy import gave_its_own_reason
+from personalclaw.workflows.models import JUDGE_REFUSED as _JUDGE_REFUSED
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     Failure,
@@ -82,16 +83,21 @@ APPROVAL = "approval"
 REFUSAL = "refusal"
 #: A spend cap refused the model call a step needed, before it was made (`FailureClass.BUDGET`).
 SPEND_CAP = "spend_cap"
+#: A judge gate read the work and did not accept it (`models.JUDGE_REFUSED`): the work is what
+#: to change, not the gate.
+JUDGE_REFUSED = _JUDGE_REFUSED
 #: A step failed at its work, so the step is what to change.
 STEP = "step"
 
 #: Why a step or a loop handed the run to a person: the closed vocabulary an escalation record
 #: carries as ``cause``. Mirrored by `web/src/pages/workflows/attentionMeta.ts`'s `CAUSE_HEADLINE`.
-CAUSES = frozenset({BUDGET, JUDGE, APPROVAL_TIMEOUT, APPROVAL, REFUSAL, SPEND_CAP, STEP})
+CAUSES = frozenset(
+    {BUDGET, JUDGE, APPROVAL_TIMEOUT, APPROVAL, REFUSAL, SPEND_CAP, JUDGE_REFUSED, STEP}
+)
 
 #: The causes a failure names itself, as its `terminal_reason` (stamped where the step settled,
 #: `stage_settlement.reconcile_dispatched_stages`). Any other failure is the step's own.
-_FAILURE_CAUSES = frozenset({APPROVAL_TIMEOUT, APPROVAL, REFUSAL})
+_FAILURE_CAUSES = frozenset({APPROVAL_TIMEOUT, APPROVAL, REFUSAL, JUDGE_REFUSED})
 
 #: The way forward a step that failed at its work has: it is the step that needs changing.
 _CHANGE_THE_STEP = (
@@ -120,6 +126,10 @@ _REMEDY = {
         "A spend cap refused the call a step needed, so the workflow needs no change: raise or "
         "remove the cap in Settings › Security › Guardrails, or wait for it to reset, then retry "
         "the run."
+    ),
+    JUDGE_REFUSED: (
+        "The judge did not accept the work, and said why: fix what it found in the work, then fork "
+        "the run and start it again."
     ),
     STEP: _CHANGE_THE_STEP,
 }

@@ -8,6 +8,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **A workflow's judge passes no longer promise to end its loop: the bundled templates drop `stop_condition`, which nothing read, and a saved workflow that still declares it runs as before.**
+
+### Fixed
+
+- **An automation's workflow run, or its action, that the day's spend ceiling refused no longer counts toward pausing the automation: its run is held, as an agent the ceiling ended is, with the refusal's own sentence. A run its own spend cap stopped still counts, since nothing resets that cap. For apps, `personalclaw.sdk.action.ActionResult` has `budget_scope`: `"day"` on a failure classed `"budget"` that the day's ceiling refused, `"run"` for a run's own cap, and `""` when not said, which counts as before.**
+- **An automation's run is held as the day's spend ceiling's only when that ceiling refused a call during it. An app's action that said the day's ceiling stopped it, with nothing refused, put PersonalClaw's own advice to raise your ceiling on its run; such a run now counts as a failure, as any other does.**
+- **A workflow's judge gate that does not accept the work ends the run saying to fix what the judge found, not to change the step.**
+- **A loop's next cycle is told why the judge's last pass was set aside, in the general, open-ended goal and verifiable goal templates.**
+- **A workflow loop whose judge hands the decision to you stops after that round and asks you, in the judge's words, instead of running its next rounds first.**
+- **A General loop started with a document holds its judge's pass to that document being there, found where its Document panel finds it, as deep research's judge already was.**
+- **An open-ended goal loop's cycle judge can say it cannot tell whether the goal is met, and after two such cycles in a row the loop pauses and asks you with its reason, instead of running more cycles.**
+- **A workflow step whose helper a spend cap stopped ends as the cap's stop, saying how to lift the cap, with Retry, instead of telling you to change the step.**
+- **For apps, `personalclaw.sdk.channel.SubagentInfo` has `spend_cap`: the spend ceiling's own words when one refused a call the helper made (`headline`, `fix`, `scope`), `{}` otherwise. Core sets it; a channel app that builds a `SubagentInfo` needs no change.**
+
 ## [0.4.2] — 2026-11-27
 
 This release holds a turn, a run and a file to where they belong: a stopped turn runs nothing more, a rewound or regenerated answer and a run's history keep what happened, a tool call, a command or a fetch that reaches past what you allowed is asked about first, and a file the agent sends shows only in its own chat. Each app capability has its own switch, every incident is kept with why and who, and Settings › Updates splits the desktop app from its gateway.
