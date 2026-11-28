@@ -28,7 +28,7 @@ import { CallbackDetail } from './CallbackDetail'
 import { TriggerReview } from './TriggerReview'
 import { RestoreHoldNotice } from './RestoreHold'
 import { UnreadableNotice } from './UnreadableNotice'
-import { scheduleToTrigger, hookToTrigger, storeToTrigger, callbackToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, advisoryBadge, type Trigger } from './triggerMeta'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, callbackToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, advisoryBadge, hookRunTime, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { triggerStatusMeta, explainsCause, relFuture, runSourceMeta } from '../schedule/scheduleMeta'
@@ -448,6 +448,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                             <RungChip type={rungByProvider.get(t.actionProvider)!} ladder={ladder} />
                           )}
                           {t.kind === 'lifecycle' && t.runCount != null && <span>ran {t.runCount}×</span>}
+                          {t.kind === 'lifecycle' && hookRunTime(t.hook) && <span>last ran in {hookRunTime(t.hook)}</span>}
                           {/* An event trigger has no clock, so `fired N×` is its one live number. */}
                           {t.kind === 'event' && t.runCount != null && <span>fired {t.runCount}×</span>}
                           {/* 🔴 THE CAUSE, which this row never showed (issue 496). `last_error` has
