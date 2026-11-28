@@ -8,7 +8,8 @@ returns them, or ``--mode main`` over a pushed range.
 
 The rules:
   1. every commit carries ``Signed-off-by: <author name> <author email>`` as a line of its own,
-     Dependabot's own commits (by its one exact address) skipped;
+     Dependabot's own commits (by its one exact address) skipped, and, with ``--exempt-bot``,
+     the named App bot's own signed commits that change only the paths given;
   2. (main only) every committer is an identity ``MAINTAINERS`` lists;
   3. no commit a maintainer authored (by name or by email) carries a co-author, a tool or
      session trailer, a generated-with footer or a session link;
@@ -43,6 +44,18 @@ CONTRIBUTOR = ("Cy Contributor", "cy@example.org")
 OTHER = ("Dee Other", "dee@example.net")
 #: Dependabot's author identity, exactly as GitHub writes it on the bot's commits.
 DEPENDABOT = ("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com")
+#: A GitHub App bot's identity, as GitHub writes it on a commit the App makes.
+APP_BOT = ("pin-refresh[bot]", "251009812+pin-refresh[bot]@users.noreply.github.com")
+#: The identity GitHub commits a squash merge as.
+SQUASH = ("GitHub", "noreply@github.com")
+#: The exemption as the apps' workflows ask for it.
+LOCKS = (
+    "--exempt-bot",
+    "pin-refresh[bot]",
+    "--exempt-paths",
+    "core.lock",
+    ".github/bundle-lock/**",
+)
 
 _MAINTAINERS_FILE = (
     "# Identities allowed to commit on main.\n"
@@ -149,13 +162,17 @@ class Repo:
         title: str = "feat: a change",
         count: int | None = None,
         head: str | None = None,
+        changed_files: int | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """The given API items, with the event's head the last item's id unless one is named."""
         pages = "".join(json.dumps([item]) + "\n" for item in items)
         commits = self.root.parent / f"{self.root.name}-commits.json"
         commits.write_text(pages, encoding="utf-8")
         event = self.root.parent / f"{self.root.name}-event.json"
-        event.write_text(json.dumps({"pull_request": {"title": title}}), encoding="utf-8")
+        pull: dict = {"title": title}
+        if changed_files is not None:
+            pull["changed_files"] = changed_files
+        event.write_text(json.dumps({"pull_request": pull}), encoding="utf-8")
         if head is None:
             last = items[-1] if items else None
             named = isinstance(last, dict) and isinstance(last.get("sha"), str)
@@ -281,6 +298,353 @@ def test_the_dependabot_skip_is_its_one_exact_address(repo: Repo, author: tuple[
     repo.commit("build(deps): bump a thing", author=author, committer=MAINTAINER)
     for done in (repo.check_main(), repo.check_pr()):
         assert done.returncode == 1 and _rules(done) == [1], done.stdout
+
+
+# ── Rule 1: the one App bot a repository names, on its own signed commits ─────────────────
+
+
+def _bot_item(
+    sha: str,
+    author: tuple[str, str] = APP_BOT,
+    committer: tuple[str, str] | None = None,
+    message: str = "improvement: core.lock moves to core 27daa8d",
+    verified: bool | None = True,
+) -> dict:
+    """A commit as the pull request's commits API returns it, signed by GitHub unless not."""
+    item = _api_item(sha, author, committer or author, message)
+    if verified is not None:
+        item["commit"]["verification"] = {"verified": verified, "reason": "valid"}
+    return item
+
+
+def _files(tmp_path: Path, paths: list[str], renamed_from: dict[str, str] | None = None) -> Path:
+    """The pull request's files as `gh api --paginate .../pulls/N/files` writes them."""
+    renamed_from = renamed_from or {}
+    items = [
+        {
+            "filename": path,
+            **({"previous_filename": renamed_from[path]} if path in renamed_from else {}),
+        }
+        for path in paths
+    ]
+    pages = "".join(json.dumps(items[i : i + 30]) + "\n" for i in range(0, len(items), 30))
+    out = tmp_path / "pr-files.json"
+    out.write_text(pages or "[]\n", encoding="utf-8")
+    return out
+
+
+_LOCK_FILES = [
+    "core.lock",
+    ".github/bundle-lock/linux-x86_64/uv.lock",
+    ".github/bundle-lock/darwin-arm64/uv.lock",
+]
+
+
+def _bot_pr(
+    repo: Repo,
+    tmp_path: Path,
+    items: list[dict],
+    paths: list[str] = _LOCK_FILES,
+    *,
+    changed: int | None | str = "same",
+    renamed_from: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    files = _files(tmp_path, paths, renamed_from)
+    count = len(paths) if changed == "same" else changed
+    return repo.check_api(
+        items, *LOCKS, "--pr-files", str(files), changed_files=count  # type: ignore[arg-type]
+    )
+
+
+def test_the_bots_signed_commit_changing_only_the_locks_is_excused(
+    repo: Repo, tmp_path: Path
+) -> None:
+    done = _bot_pr(repo, tmp_path, [_bot_item("c" * 40)])
+    assert done.returncode == 0, done.stdout + done.stderr
+    # Not named, the same commit is held to rule 1 like any author's.
+    plain = repo.check_api([_bot_item("c" * 40)])
+    assert plain.returncode == 1 and _rules(plain) == [1], plain.stdout
+
+
+def test_the_bots_commit_is_not_excused_when_the_pull_request_changes_another_file(
+    repo: Repo, tmp_path: Path
+) -> None:
+    done = _bot_pr(repo, tmp_path, [_bot_item("c" * 40)], _LOCK_FILES + ["README.md"])
+    assert done.returncode == 1 and _rules(done) == [1], done.stdout
+    assert "the pull request changes README.md, outside --exempt-paths" in done.stdout
+
+
+def test_a_file_renamed_into_the_locks_still_changes_where_it_came_from(
+    repo: Repo, tmp_path: Path
+) -> None:
+    done = _bot_pr(
+        repo,
+        tmp_path,
+        [_bot_item("c" * 40)],
+        ["core.lock"],
+        renamed_from={"core.lock": "README.md"},
+    )
+    assert done.returncode == 1 and "README.md, outside --exempt-paths" in done.stdout
+
+
+@pytest.mark.parametrize(
+    "item,why",
+    [
+        (
+            _bot_item("c" * 40, author=("pin-refresh[bot]", "cy@example.org")),
+            "is not pin-refresh[bot] under its own address",
+        ),
+        (
+            _bot_item("c" * 40, author=("Cy Contributor", APP_BOT[1])),
+            "is not pin-refresh[bot] under its own address",
+        ),
+        (
+            _bot_item(
+                "c" * 40, author=("pin-refresh[bot]", "1+other-app[bot]@users.noreply.github.com")
+            ),
+            "is not pin-refresh[bot] under its own address",
+        ),
+        (_bot_item("c" * 40, verified=False), "GitHub has not verified its signature"),
+        (_bot_item("c" * 40, verified=None), "GitHub has not verified its signature"),
+        (
+            _bot_item("c" * 40, committer=MAINTAINER),
+            "committed by Ada Maintainer <ada@example.com>, not by pin-refresh[bot] itself",
+        ),
+        (_bot_item("c" * 40, committer=SQUASH), "not by pin-refresh[bot] itself"),
+    ],
+    ids=[
+        "a-human-named-like-the-bot",
+        "the-bots-address-under-a-human-name",
+        "another-bots-address",
+        "the-bots-name-and-address-unsigned",
+        "no-verification-at-all",
+        "the-bot-as-author-but-not-committer",
+        "github-as-committer-on-a-pull-request",
+    ],
+)
+def test_a_commit_that_does_not_prove_it_is_the_bots_own_is_not_excused(
+    repo: Repo, tmp_path: Path, item: dict, why: str
+) -> None:
+    done = _bot_pr(repo, tmp_path, [item])
+    assert done.returncode == 1 and _rules(done) == [1], done.stdout
+    assert "it is not excused as the bot's: " in done.stdout and why in done.stdout
+
+
+@pytest.mark.parametrize(
+    "listed,changed",
+    [(3000, 3000), (2, 3), (3, 2), (3, None)],
+    ids=["as-many-as-github-lists", "fewer-than-changed", "more-than-changed", "no-count"],
+)
+def test_a_file_list_that_may_be_cut_short_excuses_nothing(
+    repo: Repo, tmp_path: Path, listed: int, changed: int | None
+) -> None:
+    paths = [f".github/bundle-lock/x/{n}.lock" for n in range(listed)]
+    done = _bot_pr(repo, tmp_path, [_bot_item("c" * 40)], paths, changed=changed)
+    assert done.returncode == 1 and _rules(done) == [1], done.stdout[:400]
+    assert "not excused as the bot's" in done.stdout
+
+
+def test_the_other_commits_of_a_bot_pull_request_are_checked_as_ever(
+    repo: Repo, tmp_path: Path
+) -> None:
+    signed = _api_item("a" * 40, MAINTAINER, MAINTAINER, "fix: a\n\n" + _signoff(MAINTAINER))
+    unsigned = _api_item("b" * 40, CONTRIBUTOR, CONTRIBUTOR, "fix: b")
+    done = _bot_pr(repo, tmp_path, [_bot_item("c" * 40), signed, unsigned])
+    assert done.returncode == 1, done.stdout
+    assert done.stdout.splitlines()[0].startswith(f"{'b' * 40} rule 1 no "), done.stdout
+    assert "excused" not in done.stdout
+
+
+def test_an_excused_bot_commit_is_still_held_to_the_skip_marker_rule(
+    repo: Repo, tmp_path: Path
+) -> None:
+    item = _bot_item("c" * 40, message="improvement: core.lock moves to core 27daa8d [skip ci]")
+    done = _bot_pr(repo, tmp_path, [item])
+    assert done.returncode == 1 and _rules(done) == [5], done.stdout
+
+
+def _verification(tmp_path: Path, signed: dict[str, bool]) -> Path:
+    """`gh api repos/OWNER/REPO/commits/SHA` for each commit, one object after another."""
+    out = tmp_path / "verification.json"
+    out.write_text(
+        "".join(
+            json.dumps({"sha": sha, "commit": {"verification": {"verified": ok}}}) + "\n"
+            for sha, ok in signed.items()
+        ),
+        encoding="utf-8",
+    )
+    return out
+
+
+def _land(
+    repo: Repo, files: dict[str, str], author: tuple[str, str], committer: tuple[str, str]
+) -> str:
+    """A commit on main changing *files*, as a squash merge or the bot writes it."""
+    for rel, text in files.items():
+        path = repo.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    repo.git("add", "-A")
+    return repo.commit(
+        "improvement: core.lock moves to core 27daa8d", author=author, committer=committer
+    )
+
+
+@pytest.fixture
+def squashing(repo: Repo) -> Repo:
+    """The scratch main, with GitHub's squash identity listed as MAINTAINERS lists it."""
+    with repo.maintainers.open("a", encoding="utf-8") as listed:
+        listed.write("GitHub <noreply@github.com>  the squash merge of a pull request\n")
+    return repo
+
+
+_LOCK_CHANGE = {"core.lock": "27daa8d20056fbe25ecaed6b8450e4e98aa398c4\n"}
+
+
+def test_the_squash_of_the_bots_pull_request_is_excused_on_main(
+    squashing: Repo, tmp_path: Path
+) -> None:
+    sha = _land(
+        squashing, {**_LOCK_CHANGE, ".github/bundle-lock/a/uv.lock": "x\n"}, APP_BOT, SQUASH
+    )
+    done = squashing.check_main(*LOCKS, "--verification", str(_verification(tmp_path, {sha: True})))
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+@pytest.mark.parametrize(
+    "files,author,committer,signed,why",
+    [
+        (_LOCK_CHANGE, APP_BOT, SQUASH, False, "GitHub has not verified its signature"),
+        (_LOCK_CHANGE, APP_BOT, SQUASH, None, "GitHub has not verified its signature"),
+        (
+            _LOCK_CHANGE,
+            APP_BOT,
+            MAINTAINER,
+            True,
+            "not by pin-refresh[bot] or GitHub's squash merge",
+        ),
+        (
+            {**_LOCK_CHANGE, "README.md": "changed\n"},
+            APP_BOT,
+            SQUASH,
+            True,
+            "it changes README.md, outside --exempt-paths",
+        ),
+        (
+            _LOCK_CHANGE,
+            ("pin-refresh[bot]", "cy@example.org"),
+            SQUASH,
+            True,
+            "under its own address",
+        ),
+    ],
+    ids=[
+        "unsigned",
+        "not-in-the-verification-list",
+        "committed-by-a-maintainer",
+        "changing-another-file",
+        "a-human-named-like-the-bot",
+    ],
+)
+def test_a_commit_on_main_that_does_not_prove_it_is_the_bots_own_is_not_excused(
+    squashing: Repo,
+    tmp_path: Path,
+    files: dict[str, str],
+    author: tuple[str, str],
+    committer: tuple[str, str],
+    signed: bool | None,
+    why: str,
+) -> None:
+    sha = _land(squashing, files, author, committer)
+    answers = {} if signed is None else {sha: signed}
+    done = squashing.check_main(*LOCKS, "--verification", str(_verification(tmp_path, answers)))
+    assert done.returncode == 1 and 1 in _rules(done), done.stdout
+    assert "not excused as the bot's" in done.stdout and why in done.stdout
+
+
+def test_a_signed_squash_of_a_human_authored_pull_request_is_not_excused(
+    squashing: Repo, tmp_path: Path
+) -> None:
+    sha = _land(squashing, _LOCK_CHANGE, CONTRIBUTOR, SQUASH)
+    done = squashing.check_main(*LOCKS, "--verification", str(_verification(tmp_path, {sha: True})))
+    assert done.returncode == 1 and _rules(done) == [1], done.stdout
+    assert "excused" not in done.stdout
+
+
+@pytest.mark.parametrize(
+    "extra,why",
+    [
+        (("--exempt-bot", "pin-refresh[bot]"), "--exempt-bot needs --exempt-paths"),
+        (("--exempt-bot", "pin-refresh", "--exempt-paths", "core.lock"), "App bot's login"),
+        (("--exempt-bot=-pin-refresh[bot]", "--exempt-paths", "core.lock"), "App bot's login"),
+        (("--exempt-bot", "Pin-Refresh[bot]", "--exempt-paths", "core.lock"), "App bot's login"),
+        (("--exempt-bot", "a" * 40 + "[bot]", "--exempt-paths", "core.lock"), "App bot's login"),
+        (("--exempt-bot", "pin-refresh[bot]", "--exempt-paths", "/core.lock"), "relative"),
+        (("--exempt-bot", "pin-refresh[bot]", "--exempt-paths", "../core.lock"), "relative"),
+        (("--exempt-bot", "pin-refresh[bot]", "--exempt-paths", "locks/*.lock"), "relative"),
+        (("--exempt-bot", "pin-refresh[bot]", "--exempt-paths", "a/**/b"), "relative"),
+        (("--exempt-bot", "pin-refresh[bot]", "--exempt-paths", "/**"), "relative"),
+        (("--exempt-paths", "core.lock"), "go with --exempt-bot"),
+        (LOCKS, "needs --verification"),
+    ],
+    ids=[
+        "no-paths",
+        "not-a-bot",
+        "a-leading-hyphen",
+        "upper-case",
+        "too-long",
+        "an-absolute-path",
+        "a-parent-path",
+        "a-glob",
+        "a-glob-in-the-middle",
+        "everything",
+        "paths-without-a-bot",
+        "main-without-the-verification",
+    ],
+)
+def test_an_exemption_that_cannot_be_read_stops_the_check_on_main(
+    repo: Repo, extra: tuple[str, ...], why: str
+) -> None:
+    repo.commit("feat: a change\n\n" + _signoff(MAINTAINER))
+    done = repo.check_main(*extra)
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert why in done.stderr
+
+
+def test_a_pull_request_exemption_needs_its_file_list(repo: Repo) -> None:
+    done = repo.check_api([_bot_item("c" * 40)], *LOCKS, changed_files=1)
+    assert done.returncode == 2 and "needs --pr-files" in done.stderr, done.stderr
+
+
+@pytest.mark.parametrize(
+    "text", ["{not json", '{"filename": "core.lock"}\n', '[{"filename": 3}]\n', "[{}]\n"]
+)
+def test_a_file_list_that_is_not_one_cannot_be_checked(
+    repo: Repo, tmp_path: Path, text: str
+) -> None:
+    files = tmp_path / "pr-files.json"
+    files.write_text(text, encoding="utf-8")
+    done = repo.check_api([_bot_item("c" * 40)], *LOCKS, "--pr-files", str(files), changed_files=1)
+    assert done.returncode == 2, done.stdout + done.stderr
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{not json",
+        '{"sha": "c"}\n',
+        '{"sha": "' + "c" * 40 + '", "commit": {}}\n',
+        '{"sha": "' + "c" * 40 + '", "commit": {"verification": {"verified": "yes"}}}\n',
+    ],
+)
+def test_a_verification_list_that_is_not_one_cannot_be_checked(
+    squashing: Repo, tmp_path: Path, text: str
+) -> None:
+    _land(squashing, _LOCK_CHANGE, APP_BOT, SQUASH)
+    out = tmp_path / "verification.json"
+    out.write_text(text, encoding="utf-8")
+    done = squashing.check_main(*LOCKS, "--verification", str(out))
+    assert done.returncode == 2, done.stdout + done.stderr
 
 
 # ── Rule 2: a committer MAINTAINERS lists (main only) ────────────────────────────────────────
