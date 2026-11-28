@@ -347,9 +347,9 @@ class TestTheProfile:
         }
         defs["D20"] = {"type": "string"}
         params = {"type": "object", "properties": {"x": {"$ref": "#/$defs/D0"}}, "$defs": defs}
-        started = time.monotonic()
+        started = time.process_time()
         issues = schema_issues(params)
-        assert time.monotonic() - started < 5
+        assert time.process_time() - started < 5
         assert any("too deep or too large" in i.detail for i in issues)
 
     def test_a_nullable_union_collapses_and_a_real_union_is_kept(self):

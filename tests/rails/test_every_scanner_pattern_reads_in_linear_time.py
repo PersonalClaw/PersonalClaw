@@ -145,11 +145,14 @@ def _line(token: str, n: int) -> str:
 
 
 def _seconds(pattern: re.Pattern[str], text: str) -> float:
+    """The quickest of three reads, in this process's own CPU time (``process_time``): a read
+    that grows faster than its line still shows in it, and a busy machine's other work, which a
+    wall clock counts, does not."""
     best = float("inf")
     for _ in range(3):
-        start = time.perf_counter()
+        start = time.process_time()
         pattern.search(text)
-        best = min(best, time.perf_counter() - start)
+        best = min(best, time.process_time() - start)
     return best
 
 
