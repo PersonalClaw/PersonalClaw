@@ -20,6 +20,9 @@ whole order in one process, runs no one worker's sequence: it puts tests that ra
 workers into one process. ``--replay-order FILE`` runs one: exactly the tests the file lists, in
 its order, in one process. The file is a worker's order file, or one node id a line, and a listed
 test that was not collected stops the run, since a replay that drops a test is not that order.
+That process is the lone one (``-n 0``) or one xdist worker (``-n 1 --dist load``), which runs as
+the failing worker ran: with a worker id, a worker's temporary folder and the plugins' worker
+modes.
 ``tools/ci/bisect_pollution.py`` replays a failing worker's tests to find the one that left it
 failing.
 """
@@ -149,6 +152,21 @@ def _is_controller_of_workers(config) -> bool:
     return bool(numprocesses) and dist != "no"
 
 
+def _one_process_runs_it(config) -> bool:
+    """Whether one process runs every test: no xdist, ``-n 0``, or exactly one worker under
+    ``--dist load`` (the controller, or that worker), which runs its tests in the order the
+    worker collected them. A replay in a worker runs as the failing worker did: with a worker
+    id, a worker's temporary folder and the plugins' worker modes."""
+    workerinput = getattr(config, "workerinput", None)
+    if workerinput is not None:
+        # The controller held its run to one worker under --dist load before it started any.
+        return workerinput.get("workercount") == 1
+    if _is_controller_of_workers(config):
+        dist = getattr(config.option, "dist", "no")
+        return getattr(config.option, "numprocesses", None) == 1 and dist == "load"
+    return True
+
+
 class Replay:
     """Runs exactly the listed tests, in the listed order."""
 
@@ -179,12 +197,17 @@ def configure(config) -> None:
     if replay is not None:
         if seed is not None:
             raise pytest.UsageError("--replay-order runs the order it is given: drop the seed")
-        if _is_controller_of_workers(config) or getattr(config, "workerinput", None) is not None:
-            raise pytest.UsageError("--replay-order runs in one process: pass -n 0")
+        if not _one_process_runs_it(config):
+            raise pytest.UsageError(
+                "--replay-order runs in one process: pass -n 0, or -n 1 --dist load for one worker"
+            )
         try:
             nodeids = replayed(replay.read_text(encoding="utf-8"))
         except (OSError, ValueError, KeyError) as exc:
             raise pytest.UsageError(f"--replay-order could not read {replay}: {exc}") from None
-        config.pluginmanager.register(Replay(nodeids), "random-order-replay")
+        if not _is_controller_of_workers(config):
+            # The process that collects: the lone one, or the one worker, which xdist's load
+            # scheduling hands its tests in the order it collected them.
+            config.pluginmanager.register(Replay(nodeids), "random-order-replay")
     if seed is not None:
         config.pluginmanager.register(Plugin(config, seed), "random-order")
