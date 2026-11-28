@@ -410,8 +410,14 @@ grants, is refused before its message is sent, and the owner is told why.
   the store cannot fire its hooks, or a hook did not run to an exit of its own (its command could
   not start, was refused its sandbox or timed out, its action was held or refused, its provider
   failed). A hook that ran and exited with another code lets the call go on, as a non-blocking
-  error. A call no agent makes (Tools → Try it, a scheduled script's own tool call) has no bound
-  hooks to ask.
+  error. The matching policy commands (`bash`, `run-script`) run side by side, each under its own
+  timeout, so a call waits only for the slowest one; every other provider (a store's writer, a
+  delivery, an app's action) keeps its configured order, one after another
+  (`hooks.SIDE_BY_SIDE_ON_A_TOOL_CALL`), and so does every hook on any other event. Copies of one
+  hook (the same action, matcher, timeout and grant) run once. Their answers are read in the hooks' configured order: the first that blocks refuses the
+  call in its words, then one that did not answer refuses it, naming itself and the seconds it
+  was given. A call no agent makes (Tools → Try it, a scheduled script's own tool call) has no
+  bound hooks to ask.
 - **Credential screen** — `is_sensitive_bash_command`, run by the native bash tool
   (before its deny list), a bash action and the ACP permission hook. It refuses a command
   that names a file only its owner reads (`SensitivePaths` without the `$HOME`
