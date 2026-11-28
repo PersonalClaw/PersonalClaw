@@ -234,6 +234,27 @@ def status_of(name: str, capability: str) -> CapabilityStatus:
     )
 
 
+def registration_acts(app: str, capability: str, kind: str) -> bool:
+    """Whether a registration *app*'s code made acts now (#3843): one a capability's build made
+    (*capability*) while that capability is running; one its modules made as they loaded
+    (*capability* ``""``) while a capability of the app that declares *kind* among its
+    ``capabilities`` is running. A kind none of them declares is the app's own: it acts while
+    the app's code is loaded, and leaves with it (``app_code.release``)."""
+    from personalclaw.providers.registry import get_provider_registry
+
+    if capability:
+        owners = [capability]
+    else:
+        owners = [
+            rec.capability
+            for rec in get_provider_registry().list_for_app(app)
+            if kind and kind in rec.provider_config.capabilities and rec.capability
+        ]
+        if not owners:
+            return True
+    return any(status_of(app, owner).state == RUNNING for owner in owners)
+
+
 def capability_status(
     name: str,
     capability: str,
