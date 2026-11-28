@@ -46,6 +46,10 @@ other run is never read. ``--map`` reads files instead, a leg's record or severa
   it. An import-time break in such a module fails the change's own tests, which load the same
   harness, so nothing slips.
 
+**Census tests.** A test outside ``tests/rails`` that measures the whole production tree
+(:data:`CENSUS_TESTS`: the structural baseline) is named when a changed path is one it counts,
+whatever the record says. No rails leg records what it reads.
+
 **What is always selected:**
 
 - ``tests/rails/test_ci_contract.py`` (:data:`ALWAYS`);
@@ -84,6 +88,40 @@ SCHEMA = 1
 
 #: The rails every selection holds, whatever changed.
 ALWAYS = ("tests/rails/test_ci_contract.py",)
+
+#: The files the structural baseline (``scripts/generate_structural_baseline.py``) reads beside
+#: its census of ``src/personalclaw``: the baseline it compares, the generator and the modules
+#: its test imports, the release it reads from ``pyproject.toml``, and the test itself.
+STRUCTURAL_BASELINE_READS = frozenset(
+    {
+        "structural-baseline.json",
+        "scripts/generate_structural_baseline.py",
+        "scripts/generate_config_baseline.py",
+        "scripts/gate_report.py",
+        "pyproject.toml",
+        "tests/test_structural_baseline.py",
+    }
+)
+
+
+def _structural_baseline_counts(path: str) -> bool:
+    """Whether the structural baseline counts *path*: a production module under
+    ``src/personalclaw`` (its census; the few folders the census leaves out select it too, more
+    and never less), or one of :data:`STRUCTURAL_BASELINE_READS`."""
+    return (
+        path.startswith("src/personalclaw/") and path.endswith(".py")
+    ) or path in STRUCTURAL_BASELINE_READS
+
+
+#: Tests outside ``tests/rails`` that measure the whole production tree as a census, each with
+#: the changed paths that select it. No rails leg records what they read, so no record ever
+#: selects them, and a set built from this command left them out: on 2026-11-24 a change grew
+#: ``workflows/service.py`` from 2792 to 2815 lines, toward the structural baseline's 2900-line
+#: watch band, and no set ran ``test_the_watch_band_is_not_sitting_on_a_cliff``. A census test
+#: this checkout does not hold is never named.
+CENSUS_TESTS: dict[str, Callable[[str], bool]] = {
+    "tests/test_structural_baseline.py": _structural_baseline_counts,
+}
 
 #: How old a record may be before it names nothing and every rail runs.
 MAX_AGE = datetime.timedelta(days=1)
@@ -332,6 +370,21 @@ def select(
         for rail, reads in held.items():
             if reads.lists(folder):
                 pick(rail, f"lists {shown}, where {path} was added or removed")
+    return chosen
+
+
+def census_selected(paths: Iterable[str], exists: Callable[[str], bool]) -> dict[str, str]:
+    """Each test of :data:`CENSUS_TESTS` this checkout holds that a change of *paths* selects,
+    with the first path it counts. Whatever the record says, or when there is none."""
+    changed = list(paths)
+    chosen: dict[str, str] = {}
+    for test, counts in CENSUS_TESTS.items():
+        if not exists(test):
+            continue
+        for path in changed:
+            if counts(path):
+                chosen[test] = f"counts {path} in its census of the tree"
+                break
     return chosen
 
 
@@ -731,17 +784,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    chosen = select(
-        paths,
-        rails,
-        record,
-        now=now,
-        tree=tree,
-        exists=lambda p: (root / p).exists() or (root / p).is_symlink(),
-        why_none=why_none,
-    )
-    for rail in sorted(chosen):
-        print(f"{rail}\t{chosen[rail]}" if args.why else rail)
+
+    def exists(rel: str) -> bool:
+        return (root / rel).exists() or (root / rel).is_symlink()
+
+    chosen = select(paths, rails, record, now=now, tree=tree, exists=exists, why_none=why_none)
+    census = census_selected(paths, exists)
+    for name in sorted({**chosen, **census}):
+        why = chosen.get(name) or census[name]
+        print(f"{name}\t{why}" if args.why else name)
     if record is None:
         said = why_none
     else:
@@ -752,5 +803,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             said += f" ({record.source})"
         if tree is None:
             said += "; that commit is not in this clone, so every path counts as added or removed"
-    print(f"rails select: {len(chosen)} of {len(rails)} rails, from {said}", file=sys.stderr)
+    counted = f", and {len(census)} census test{'s' * (len(census) != 1)}" if census else ""
+    print(
+        f"rails select: {len(chosen)} of {len(rails)} rails{counted}, from {said}", file=sys.stderr
+    )
     return 0

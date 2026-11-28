@@ -587,13 +587,13 @@ def test_the_walk_follows_main_s_first_parents_newest_first() -> None:
 # ── A record of a commit this clone does not have ─────────────────────────────────────────────
 
 
-def _clone(tmp_path) -> tuple[Any, str]:
+def _clone(tmp_path, extra: tuple[str, ...] = ()) -> tuple[Any, str]:
     """A checkout holding the three planted rails and a file they read, committed: its root, and
-    its commit."""
+    its commit. *extra* plants more files."""
     import subprocess
 
     root = tmp_path / "clone"
-    for rel in (*RAILS, "src/pkg/a.py"):
+    for rel in (*RAILS, "src/pkg/a.py", *extra):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text("x = 1\n" if rel.endswith("a.py") else "def test_it():\n    pass\n")
     env = {
@@ -667,3 +667,75 @@ def test_a_record_of_a_commit_the_clone_has_selects_as_before(tmp_path, capsys) 
     assert code == 0, err
     assert set(out.split()) == {A, CONTRACT}
     assert "not in this clone" not in err
+
+
+# ── census tests: the structural baseline ───────────────────────────────────────────────────
+
+BASELINE = "tests/test_structural_baseline.py"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/personalclaw/workflows/service.py",
+        "structural-baseline.json",
+        "scripts/generate_structural_baseline.py",
+        "pyproject.toml",
+        BASELINE,
+    ],
+)
+def test_a_path_the_structural_baseline_counts_selects_it(path: str) -> None:
+    """What 2026-11-24 needed: ``workflows/service.py`` grew toward the watch band, and no set
+    built from this command ran the baseline test."""
+    chosen = rails_select.census_selected([path], exists=lambda p: p == BASELINE)
+    assert chosen == {BASELINE: f"counts {path} in its census of the tree"}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "docs/one.md",
+        "web/src/App.tsx",
+        "src/pkg/a.py",
+        "tests/test_other.py",
+        "src/personalclaw/x.json",
+    ],
+)
+def test_a_path_the_baseline_does_not_count_selects_nothing(path: str) -> None:
+    assert rails_select.census_selected([path], exists=lambda p: True) == {}
+
+
+def test_a_census_test_this_checkout_lacks_is_never_named() -> None:
+    assert rails_select.census_selected(["src/personalclaw/a.py"], exists=lambda p: False) == {}
+
+
+def test_every_census_test_and_what_it_reads_is_in_this_tree() -> None:
+    """Vacuity: each name is a file here, and each census test lives outside ``tests/rails``,
+    whose rails the record already selects."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for test in rails_select.CENSUS_TESTS:
+        assert (root / test).is_file(), test
+        assert not test.startswith("tests/rails/"), test
+    for rel in rails_select.STRUCTURAL_BASELINE_READS:
+        assert (root / rel).is_file(), rel
+
+
+def test_main_names_the_structural_baseline_beside_the_rails(tmp_path, capsys) -> None:
+    changed = "src/personalclaw/workflows/service.py"
+    root, head = _clone(tmp_path, extra=(changed, BASELINE))
+    record = _record(
+        {A: _reads(files=["src/pkg/a.py"]), B: _reads()}, recorded_at=_recent(), commit=head
+    )
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    code = rails_select.main(["--paths", changed, "--map", str(path), "--root", str(root), "--why"])
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    named = dict(line.split("\t", 1) for line in out.splitlines())
+    assert named == {
+        CONTRACT: "always selected",
+        BASELINE: f"counts {changed} in its census of the tree",
+    }
+    assert "1 of 3 rails, and 1 census test," in err
