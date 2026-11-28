@@ -99,7 +99,7 @@ jobs:
       - name: Install uv + build backend
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.12.15"
           # A release restores nothing another run left in the cache, main's pruned wheels
           # included (tests/rails/test_ci_uv_cache_is_pruned.py).
@@ -606,7 +606,7 @@ jobs:
       - name: Install uv + the venv the Makefile's pyinstaller target expects
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.12.15"
           # A release restores nothing another run left in the cache, main's pruned wheels
           # included (tests/rails/test_ci_uv_cache_is_pruned.py).
@@ -621,7 +621,7 @@ jobs:
         run: |
           set -euo pipefail
           uv sync --locked --no-editable --extra anthropic --extra openai --extra slack ${FROM_SOURCE:+--no-install-package "$FROM_SOURCE"}
-          uv pip install --python .venv/bin/python pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.8
+          uv pip install --python .venv/bin/python pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.10
       - name: Build cryptography from its locked sdist (Intel)
         # cryptography ships no Intel-Mac wheel past 48.0.1, so this leg builds the release uv.lock
         # pins from its sdist, checked against the lock's sha256 and size, with the runner's
@@ -808,7 +808,7 @@ jobs:
       - name: Install uv + the venv the Makefile's pyinstaller target expects
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.1"
+          version: "0.13.9"
           python-version: "3.12.15"
           # A release restores nothing another run left in the cache, main's pruned wheels
           # included (tests/rails/test_ci_uv_cache_is_pruned.py).
@@ -827,7 +827,7 @@ jobs:
         # a tag froze the bundle with whatever PyInstaller was newest that day.
         run: |
           uv sync --locked --no-editable --extra anthropic --extra openai --extra slack
-          uv pip install --python .venv/bin/python pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.8
+          uv pip install --python .venv/bin/python pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.10
       - name: Build unsigned AppImage + deb
         # make desktop-dist-linux = web-build (SPA) -> pyinstaller (the bundled
         # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist

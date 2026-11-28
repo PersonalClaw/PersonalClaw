@@ -31,7 +31,7 @@ weekly rehearsal runs, and writes their manifest. Every job that publishes waits
 `artifacts` keeps its files 30 days, as long as the `release` approval may wait.
 
 The desktop bundles are frozen with a pinned PyInstaller (`pyinstaller==6.22.3`,
-`pyinstaller-hooks-contrib==2026.8`, what v0.2.0 used), and electron-builder runs with
+`pyinstaller-hooks-contrib==2026.10`, what v0.2.0 used), and electron-builder runs with
 `--publish never`: the `notes` job is the only thing that attaches files to a Release.
 
 The wheel's SBOM is a scan of the wheel installed into a scratch venv over the **locked**
@@ -214,7 +214,7 @@ SBOM. A dependency change needs the same.
 uv lock
 ```
 
-Re-lock with the uv CI and the gateway image pin (`uvx --from 'uv==0.13.1' uv lock`, the
+Re-lock with the uv CI and the gateway image pin (`uvx --from 'uv==0.13.9' uv lock`, the
 `uv` version in `deploy/docker/Dockerfile.backend` and every workflow's setup-uv step) to keep
 the diff to the lines that moved: a newer uv may also rewrite the lockfile's `revision`.
 
