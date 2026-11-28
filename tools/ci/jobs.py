@@ -1272,6 +1272,314 @@ def diagnose(
     return {"argv": rerun_argv, "exit": code, "tests": listed}, reasons, interrupted
 
 
+# ── the replay rerun (a job whose ``rerun`` is ``replay-order``) ──────────────────────────────
+
+#: Where a seeded order's process writes the order it ran (``tests/random_order.py``'s
+#: ``FOLDER``), from the step's folder: ``order-<seed>-<worker>.jsonl``, one test a line.
+ORDERS = "reports/random-order"
+#: The folder run-job leaves a replay rerun's findings in, beside ``records``: one file a job (a
+#: shard), named as its record is: what the replay ran and found.
+REPLAYS = "replays"
+REPLAY_VERSION = 1
+#: A replayed test's outcomes. Only the first is a flake's evidence, for breadth's record and the
+#: release gate alone; the record's ``rerun_result`` stays null, so no other reader counts it.
+REPLAY_PASSED = "passed replayed in its worker's order"
+REPLAY_FAILED = "failed again replayed in its worker's order"
+REPLAY_DID_NOT_RUN = "the replay didn't run"
+#: The step options the replay sets itself: its workers, its order, its report, its temporary
+#: folder, and the collected-ids file it must never write over. Every other option is the step's.
+_REPLAY_OWNS = frozenset(
+    {
+        "-n",
+        "--numprocesses",
+        "--dist",
+        "--random-order-seed",
+        "--junitxml",
+        "--junit-xml",
+        "--basetemp",
+        "--shard-ids",
+    }
+)
+#: What a crashed or replaced xdist worker leaves in a failed case's message: never a flake's.
+_CRASHED = re.compile(r"crashed while running|node down|replacing crashed worker", re.IGNORECASE)
+
+
+def _option(argv: Sequence[str], name: str) -> str | None:
+    """The value *argv* gives option *name* (``name VALUE`` or ``name=VALUE``), else None."""
+    for i, arg in enumerate(argv):
+        if arg.startswith(name + "="):
+            return arg.partition("=")[2]
+        if arg == name and i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
+def replay_args(argv: Sequence[str]) -> list[str]:
+    """The step's own pytest arguments, less the options the replay sets itself
+    (:data:`_REPLAY_OWNS`): its paths, selection, markers, groups, timeouts and plugins stay."""
+    rest = _after_pytest(argv)
+    kept: list[str] = []
+    skip = False
+    for arg in rest:
+        if skip:
+            skip = False
+            continue
+        name = arg.partition("=")[0]
+        if name in _REPLAY_OWNS:
+            skip = "=" not in arg
+            continue
+        if re.fullmatch(r"-n\S+", arg):
+            continue
+        kept.append(arg)
+    return kept
+
+
+def worker_order(folder: Path, seed: str, test: str) -> tuple[Path | None, str]:
+    """The one order file of *seed* in *folder* that names *test*, and why there is none: the
+    test must be named exactly once across the seed's files, and its file must be one process's
+    sequence (positions 1, 2, … in turn), never a worker that was replaced."""
+    found: list[Path] = []
+    for path in sorted(folder.glob(f"order-{seed}-*.jsonl")):
+        try:
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        except (OSError, ValueError) as exc:
+            return None, f"its order file {path.name} is unreadable: {exc}"
+        named = sum(1 for row in rows if isinstance(row, dict) and row.get("nodeid") == test)
+        if named > 1:
+            return None, f"{path.name} names it {named} times"
+        if named:
+            positions = [row.get("position") for row in rows if isinstance(row, dict)]
+            if len(positions) != len(rows) or positions != list(range(1, len(rows) + 1)):
+                return None, f"{path.name} is not one process's order"
+            found.append(path)
+    if len(found) != 1:
+        return None, f"{len(found)} order files of seed {seed} name it, not one"
+    return found[0], ""
+
+
+def _security_marked(
+    argv: Sequence[str],
+    tests: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    host: Host,
+    scratch: run.Scratch,
+    grace: float,
+    timeout: float,
+) -> set[str] | None:
+    """Which of *tests* carry the ``security`` marker, as the step's own pytest collects them by
+    id under the repository's config (the step's other options are not passed: an id selects its
+    test whatever they choose); None when that could not be read."""
+    listing = scratch.tmp / f"security-{uuid.uuid4().hex}.txt"
+    collect = [
+        *argv[: list(argv).index("pytest") + 1],
+        "-p",
+        "no:cacheprovider",
+        "--collect-only",
+        "-q",
+        "-m",
+        "security",
+        *tests,
+    ]
+    result = run.run_job(
+        collect,
+        cwd=cwd,
+        scratch=scratch,
+        timeout=timeout,
+        path=host.path,
+        env=env,
+        grace=grace,
+        output=listing,
+    )
+    if result.returncode not in (0, 5) or result.interrupted:
+        return None
+    try:
+        lines = listing.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    return {line.strip() for line in lines if line.strip() in tests}
+
+
+def diagnose_replay(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    host: Host,
+    scratch: run.Scratch,
+    grace: float,
+    deadline: float,
+    started: float,
+) -> tuple[dict[str, object] | None, list[str], bool, dict[str, object] | None]:
+    """Replay the order of the worker a seeded step's one failed test failed in, whole, in one
+    xdist worker, to learn whether it fails again there. Returns the record's ``rerun``, the
+    reasons it adds, whether the runner was interrupted, and what run-job leaves in
+    :data:`REPLAYS`. It never changes the job's result: the first result is the result.
+
+    Only a step with exactly one failed test is replayed. Its order file is the one this job's
+    step wrote here (:func:`worker_order`); a case a crashed or replaced worker left is never
+    replayed. The replay runs ``-n 1 --dist load --replay-order <that file>`` with the step's own
+    other options (:func:`replay_args`), so every test that ran before it in that worker runs
+    before it again: a rail and a security-marked test too. Those rules say only which failed test
+    may be classified. It runs inside what is left of the job's time, and one that does not finish
+    is :data:`REPLAY_DID_NOT_RUN`. Its outcome is :data:`REPLAY_PASSED` only when the whole replay
+    passed and its report names the test once, passed. The record's ``rerun_result`` stays null:
+    only breadth's record and the release gate read a replay."""
+    junit = _junit_arg(argv)
+    seed = _option(_after_pytest(argv), "--random-order-seed")
+    if junit is None or seed is None:
+        return None, [], False, None
+    report = Path(junit) if Path(junit).is_absolute() else cwd / junit
+    try:
+        if not report.is_file() or report.stat().st_mtime < started:
+            return None, [], False, None
+        failed_cases = [
+            c for c in ET.parse(report).getroot().iter("testcase") if _case_result(c) == "failed"
+        ]
+    except (ET.ParseError, OSError):
+        return None, [], False, None
+    if not failed_cases:
+        return None, [], False, None
+    cases: dict[Key, list[ET.Element]] = {}
+    for case in failed_cases:
+        cases.setdefault(_key(case), []).append(case)
+    first = {key: _first_failure(found, _PYTEST_TIMED_OUT) for key, found in cases.items()}
+    paths = _test_paths(argv, cwd)
+    named = {key: _node_id(found[0], cwd, paths) for key, found in cases.items()}
+    labels = {key: named[key] or "::".join(key) for key in cases}
+    doc: dict[str, object] = {"version": REPLAY_VERSION, "seed": seed, "tests": []}
+
+    def ends(why: str, *, ran: list[str] | None = None, code: int | None = None, **more: object):
+        entries = [_entry(labels[k], None, why, first[k]) for k in cases]
+        for entry in entries:
+            _warn(entry)
+        tested = [{"test": labels[k], "outcome": REPLAY_DID_NOT_RUN, "why": why} for k in cases]
+        doc.update({"argv": ran, "exit": code, "tests": tested, **more})
+        return {"argv": ran, "exit": code, "tests": entries}, [], False, doc
+
+    if len(cases) != 1:
+        return ends(f"{len(cases)} tests failed in its order, so none is replayed")
+    [(key, found)] = cases.items()
+    test = named[key]
+    if test is None:
+        return ends(NOT_ONE_FILE)
+    if (cwd / test.split("::")[0]).resolve().is_relative_to((host.root / RAILS).resolve()):
+        return ends("a rail: red at once and never rerun")
+    if any(
+        _CRASHED.search(f.get("message") or "") or _CRASHED.search(f.text or "")
+        for c in found
+        for f in (*c.findall("failure"), *c.findall("error"))
+    ):
+        return ends("its worker crashed or was replaced, so it is never replayed")
+    order, why = worker_order(cwd / ORDERS, seed, test)
+    if order is None:
+        return ends(f"{REPLAY_DID_NOT_RUN}: {why}")
+    worker = order.name.removeprefix(f"order-{seed}-").removesuffix(".jsonl")
+    left = deadline - time.monotonic()
+    if left <= 0:
+        return ends(f"{REPLAY_DID_NOT_RUN}: the job's time ran out", worker=worker)
+    marked = _security_marked(
+        argv,
+        [test],
+        cwd=cwd,
+        env=env,
+        host=host,
+        scratch=scratch,
+        grace=grace,
+        timeout=min(left, 300.0),
+    )
+    if marked is None:
+        return ends(f"{REPLAY_DID_NOT_RUN}: whether it is security-marked could not be read")
+    if test in marked:
+        return ends("security-marked: never a flake, so it is not replayed", worker=worker)
+    left = deadline - time.monotonic()
+    if left < 1:
+        return ends(f"{REPLAY_DID_NOT_RUN}: the job's time ran out", worker=worker)
+    work = scratch.tmp / f"replay-{uuid.uuid4().hex}"
+    reasons: list[str] = []
+    try:
+        kept = _keep(report.parent, work / "kept")
+        listed = work / order.name
+        shutil.copy2(order, listed)
+    except OSError as exc:
+        return ends(f"{REPLAY_DID_NOT_RUN}: the step's reports could not be kept aside: {exc}")
+    out = work / "junit.xml"
+    basetemp = Path("/var/tmp") / f"pytest-replay-{seed}-{uuid.uuid4().hex[:8]}"
+    ran = [
+        *argv[: list(argv).index("pytest") + 1],
+        *replay_args(argv),
+        "-p",
+        "no:cacheprovider",
+        "-n",
+        "1",
+        "--dist",
+        "load",
+        "--replay-order",
+        str(listed),
+        f"--junitxml={out}",
+        "--basetemp",
+        str(basetemp),
+    ]
+    print(f"replay, in one worker, for diagnosis only: {shlex.join(ran)}", file=sys.stderr)
+    result = run.run_job(
+        ran,
+        cwd=cwd,
+        scratch=scratch,
+        timeout=left,
+        path=host.path,
+        env=env,
+        grace=grace,
+        before_stop=_hang_report(host),
+        watch=_overdue(ran, cwd),
+    )
+    code, interrupted = result.returncode, result.interrupted
+    other = [v for v in result.violations if not v.startswith("the job exited")]
+    reasons += [f"replay: {v}" for v in other]
+    try:
+        _put_back(report.parent, work / "kept", kept, work / "outputs")
+    except OSError as exc:
+        reasons.append(f"replay: the step's report folder could not be put back: {exc}")
+    shutil.rmtree(basetemp, ignore_errors=True)
+    outcome, why = REPLAY_DID_NOT_RUN, f"{REPLAY_DID_NOT_RUN}: exit {code}"
+    if interrupted or other:
+        why = f"{REPLAY_DID_NOT_RUN}: {'; '.join(other) or 'it was interrupted'}"
+    elif out.is_file():
+        try:
+            replayed = [c for c in ET.parse(out).getroot().iter("testcase") if _key(c) == key]
+        except (ET.ParseError, OSError) as exc:
+            why = f"{REPLAY_DID_NOT_RUN}: its report is unreadable: {exc}"
+        else:
+            results = {_case_result(c) for c in replayed}
+            if "failed" in results:
+                outcome, why = REPLAY_FAILED, REPLAY_FAILED
+            elif len(replayed) != 1 or results != {"passed"}:
+                why = f"{REPLAY_DID_NOT_RUN}: its report names it {len(replayed)} times"
+            elif code != 0:
+                why = f"{REPLAY_DID_NOT_RUN}: it passed, and the replay did not (exit {code})"
+            else:
+                outcome, why = REPLAY_PASSED, REPLAY_PASSED
+    entry = _entry(test, None, why, first[key])
+    _warn(entry)
+    doc.update(
+        {
+            "argv": ran,
+            "exit": code,
+            "worker": worker,
+            "order": order.name,
+            "listed": len(random_order_ids(listed)),
+            "tests": [{"test": test, "outcome": outcome, "why": why}],
+        }
+    )
+    return {"argv": ran, "exit": code, "tests": [entry]}, reasons, interrupted, doc
+
+
+def random_order_ids(path: Path) -> list[str]:
+    """The node ids an order file lists, by position."""
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    return [str(r["nodeid"]) for r in sorted(rows, key=lambda r: int(r["position"]))]
+
+
 # ── the web runners ────────────────────────────────────────────────────────────────────────
 
 #: The web-unit job's Vitest step, token for token, and the folder Vitest runs in.
@@ -2019,6 +2327,8 @@ def run_one(
     code = run.OK
     interrupted = False
     rerun: dict[str, object] | None = None
+    # A replay rerun's red step, replayed once every step has run (:func:`diagnose_replay`).
+    replay_due: tuple[list[str], int, Path, dict[str, str]] | None = None
     # A lint_feedback job's step went red and the others ran on; each red one's remediation is
     # left after the one before it.
     lint_red = False
@@ -2107,7 +2417,7 @@ def run_one(
             interrupted = result.interrupted
             # Only the job's first red step is diagnosed: the record holds one rerun, and a job
             # with two red steps is never a flake (verdict._pass_flakes), so a later one stops it.
-            if rerun is not None:
+            if rerun is not None or replay_due is not None:
                 break
             # A lint job's later red step is not diagnosed either: the job is red in two steps,
             # and only what the tool says is wanted, in the remediation.
@@ -2120,18 +2430,22 @@ def run_one(
             # the exit is the only one. Its failed tests are rerun once, alone, to classify them.
             # The job stays red.
             if "pytest" in argv and result.violations == (f"the job exited {TESTS_FAILED}",):
-                rerun, more, stopped = diagnose(
-                    argv,
-                    cwd=host.root / workdir,
-                    env={**base_env, **env},
-                    host=host,
-                    scratch=scratch,
-                    grace=options.grace,
-                    deadline=deadline,
-                    started=started,
-                )
-                reasons.extend(f"step {n}: {m}" for m in more)
-                interrupted = interrupted or stopped
+                if job.rerun == catalogue.RERUN_REPLAY:
+                    # Replayed once the job's steps have run, so a later order keeps its time.
+                    replay_due = (list(argv), n, host.root / workdir, {**base_env, **env})
+                else:
+                    rerun, more, stopped = diagnose(
+                        argv,
+                        cwd=host.root / workdir,
+                        env={**base_env, **env},
+                        host=host,
+                        scratch=scratch,
+                        grace=options.grace,
+                        deadline=deadline,
+                        started=started,
+                    )
+                    reasons.extend(f"step {n}: {m}" for m in more)
+                    interrupted = interrupted or stopped
             # The same for the web runners: Vitest's failed tests are rerun once, alone, and so
             # are the Playwright tests its own retry passed. The job stays red.
             elif result.violations == (f"the job exited {TESTS_FAILED}",):
@@ -2165,7 +2479,7 @@ def run_one(
             # them) leaves the job red, and the job's other steps run on, inside the same time:
             # what they leave is there for the jobs that read it, as a browser leg's later homes
             # leave the blobs `e2e` and `ui-quality` merge. Any other fault stops the job.
-            if rerun is not None and not interrupted:
+            if (rerun is not None or replay_due is not None) and not interrupted:
                 print(
                     f"[{key}] step {n}: its failed tests make the job red; its other steps run on",
                     file=sys.stderr,
@@ -2184,6 +2498,25 @@ def run_one(
                 )
                 continue
             break
+    if replay_due is not None and not interrupted:
+        replay_argv, replay_n, replay_cwd, replay_env = replay_due
+        rerun, more, stopped, replayed = diagnose_replay(
+            replay_argv,
+            cwd=replay_cwd,
+            env=replay_env,
+            host=host,
+            scratch=scratch,
+            grace=options.grace,
+            deadline=deadline,
+            started=started,
+        )
+        reasons.extend(f"step {replay_n}: {m}" for m in more)
+        interrupted = interrupted or stopped
+        if replayed is not None:
+            replayed["job"] = key
+            left_at = work / REPLAYS / f"{slug}.json"
+            left_at.parent.mkdir(parents=True, exist_ok=True)
+            left_at.write_text(json.dumps(replayed, indent=1, sort_keys=True) + "\n")
     quarantined: list[str] = []
     skipped: list[str] = []
     if code == run.OK:

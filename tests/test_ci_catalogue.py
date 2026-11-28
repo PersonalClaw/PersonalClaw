@@ -729,6 +729,25 @@ def test_a_job_is_the_pre_push_hook_s_unless_its_entry_leaves_it_to_ci() -> None
     assert all(job.prepush for job in cat.jobs if job.id != "rails")
 
 
+def test_a_rerun_outside_its_two_ways_is_refused() -> None:
+    text = _in_job("rails", "timeout_min = 10", 'timeout_min = 10\nrerun = "replay"')
+    assert "rails: rerun is one of alone, replay-order" in _refused(text)
+
+
+def test_a_replay_order_rerun_on_a_job_that_runs_no_seeded_order_is_refused() -> None:
+    """A replay reads the order file of the seed its failed step ran. A job with no seeded step
+    writes none, so each of its failures would go unclassified."""
+    text = _in_job("rails", "timeout_min = 10", 'timeout_min = 10\nrerun = "replay-order"')
+    problems = _refused(text)
+    assert "rails: rerun is replay-order, but no step of the job runs a seeded order" in problems
+    seeded = catalogue.load(
+        text.replace('reuse = "tree"\n', "", 1).replace('"tests/rails"]', _SEEDED, 1)
+    )
+    reruns = {job.id: job.rerun for job in seeded.jobs}
+    assert reruns.pop("rails") == catalogue.RERUN_REPLAY
+    assert set(reruns.values()) == {catalogue.RERUN_ALONE}
+
+
 def test_a_change_tier_job_may_be_the_lint_feedback_job() -> None:
     """rails is of the change tier, which pr.yml runs on every pull request (#3915)."""
     cat = catalogue.load(
