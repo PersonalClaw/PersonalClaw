@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.config.loader import AppConfig, resolve_session_workspace
-from personalclaw.dashboard import chat_phase, repeated_steps, turn_endings
+from personalclaw.dashboard import chat_phase, chat_reactions, repeated_steps, turn_endings
 from personalclaw.dashboard.chat_intake import MESSAGE_ID, RECEIPT, STEERED_INTO
 from personalclaw.dashboard.chat_queue import shown
 from personalclaw.dashboard.chat_utils import (
@@ -189,6 +189,7 @@ def steer(
     receipt: Mapping[str, Any] | None = None,
     steered_into: str = "",
     from_a_widget: bool = False,
+    reaction: Mapping[str, Any] | None = None,
 ) -> bool:
     """Send *message* into the turn running on *session*: True when that turn takes steers, so it
     will (``SessionManager.add_steer``); False when the caller queues it instead.
@@ -210,6 +211,8 @@ def steer(
         meta[PASTES] = [dict(p) for p in pastes]
     if from_a_widget:
         meta[WIDGET_ACTION] = True
+    if reaction:
+        meta[chat_reactions.REACTION] = dict(reaction)
     if message_id:
         meta.update({MESSAGE_ID: message_id, RECEIPT: dict(receipt or {})})
         meta[STEERED_INTO] = steered_into
@@ -244,6 +247,8 @@ def take_steer(state: DashboardState, session: _ChatSession, text: str) -> dict[
             **({PASTES: meta[PASTES]} if meta.get(PASTES) else {}),
             # A widget's message says so live, as its row does on a reload.
             **({WIDGET_ACTION: True} if came_from_a_widget(meta) else {}),
+            # A reaction's line is drawn as its row is on a reload.
+            **chat_reactions.carried_by([{"meta": meta}]),
         },
     )
     return row

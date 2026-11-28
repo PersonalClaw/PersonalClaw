@@ -27,6 +27,7 @@ from personalclaw.config.loader import (
 from personalclaw.dashboard import (
     chat_intake,
     chat_phase,
+    chat_reactions,
     chat_turns,
     headless_run,
     running_turn,
@@ -172,27 +173,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     agent = body.get("agent", "")
     session_name = body.get("session")
     color_theme = body.get("color_theme", "")
-    user_meta = body.get("meta")  # knowledge/files/pastes metadata from frontend
-    if not isinstance(user_meta, dict):
-        user_meta = None
-    if user_meta:
-        # A row's time is when the chat took its message in, which its receipt says; a page's own
-        # clock for it is not kept (the page keys its row by the message's id).
-        user_meta.pop("client_ts", None)
-        # Which of a row's words its sender typed, the saved prompt that ran in their place, and
-        # that a running turn took it as a steer, are said by the code that composes the row, never
-        # by the send: from a client they would let a message teach what it does not say, or show
-        # a prompt that never ran or a steer nobody sent.
-        user_meta.pop(OWN_WORDS, None)
-        user_meta.pop(RAN_PROMPT, None)
-        user_meta.pop(STEERED, None)
-        # The blocks she pasted, as many as are whole (`own_words.pastes_of`).
-        if _blocks := pastes_of(user_meta):
-            user_meta[PASTES] = _blocks
-        else:
-            user_meta.pop(PASTES, None)
-        if not user_meta:
-            user_meta = None
+    user_meta = _sent_meta(body.get("meta"))  # knowledge/files/pastes metadata from frontend
     # The composer sends each block she pasted in the message, where its marker stood in her draft.
     # A message that still holds a block's marker in its place would reach the model as the marker
     # alone and never as what she pasted, so it is refused before anything is kept or run.
@@ -279,6 +260,13 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # send still on its way is taking in is answered once that send is (`chat_intake.repeat_of`).
     if (_repeat := await chat_intake.repeat_of(session, message_id, digest)) is not None:
         return _repeat.response()
+    # A reaction to an answer sends the gateway's words for it, never the page's (`chat_reactions`).
+    reacted = _reaction_of(session, message, user_meta)
+    if isinstance(reacted, web.Response):
+        return reacted
+    if reacted is not None:
+        message = said = reacted.text
+        user_meta = {chat_reactions.REACTION: dict(reacted.record)}
     if not message:
         return web.json_response({"error": "message is required"}, status=400)
 
@@ -291,7 +279,8 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # Her own words, recorded on the turn's row only when the message holds more than them (a
     # pasted block, the dictation note): what every learning path reads of it (``own_words``).
     _own = typed_text(said, _pasted)
-    _own_recorded = _own if _own != message else None
+    # None of a reaction's words are hers: it teaches memory nothing by itself (`chat_reactions`).
+    _own_recorded = "" if reacted is not None else _own if _own != message else None
     heard = (user_meta or {}).get("input_origin") == "voice"
     _from_a_widget = came_from_a_widget(user_meta)  # a widget's words: none of its links are theirs
     if user_meta:
@@ -360,7 +349,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         session.color_theme = color_theme
     if reply_style is not None:
         session.reply_style = reply_style
-    if not _from_a_widget:
+    if not _from_a_widget and reacted is None:  # a reaction quotes the agent's links, not hers
         take_in_the_users_links(request.get("app", ""), session.key, message)
     if taken.disposition == chat_intake.REPLACED:
         chat_phase.restate(state, session)  # one more message waits behind the turn
@@ -494,6 +483,60 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         session.drain()
         session._has_reader = False
     return resp
+
+
+def _sent_meta(raw: object) -> dict | None:
+    """A send's ``meta`` as the chat keeps it: knowledge, files and pastes, without what only the
+    code that composes a row may say."""
+    if not isinstance(raw, dict):
+        return None
+    user_meta = raw
+    # A row's time is when the chat took its message in, which its receipt says; a page's own
+    # clock for it is not kept (the page keys its row by the message's id).
+    user_meta.pop("client_ts", None)
+    # Which of a row's words its sender typed, the saved prompt that ran in their place, and
+    # that a running turn took it as a steer, are said by the code that composes the row, never
+    # by the send: from a client they would let a message teach what it does not say, or show
+    # a prompt that never ran or a steer nobody sent.
+    user_meta.pop(OWN_WORDS, None)
+    user_meta.pop(RAN_PROMPT, None)
+    user_meta.pop(STEERED, None)
+    # The blocks she pasted, as many as are whole (`own_words.pastes_of`).
+    if _blocks := pastes_of(user_meta):
+        user_meta[PASTES] = _blocks
+    else:
+        user_meta.pop(PASTES, None)
+    return user_meta or None
+
+
+def _reaction_of(
+    session: "_ChatSession", message: str, user_meta: dict | None
+) -> chat_reactions.Entry | web.Response | None:
+    """What a send's reaction (``meta.reaction``) sends to the agent, the refusal of one the chat
+    does not take, or ``None`` for a send that carries none. A reaction carries no words of its
+    own: the gateway writes them (``chat_reactions.entry_for``)."""
+    asked = chat_reactions.requested(user_meta)
+    if asked is None:
+        return None
+    if isinstance(asked, chat_reactions.Refusal):
+        return _reaction_refused(asked)
+    if message:
+        return json_error(
+            "invalid_reaction", message="A reaction carries no words of its own.", status=400
+        )
+    entry = chat_reactions.entry_for(session.messages, *asked, running=session.running)
+    if isinstance(entry, chat_reactions.Refusal):
+        return _reaction_refused(entry)
+    return entry
+
+
+def _reaction_refused(refusal: chat_reactions.Refusal) -> web.Response:
+    """The answer to a reaction the chat did not take, each code a literal the registry reads."""
+    if refusal.code == "reaction_not_an_answer":
+        return json_error("reaction_not_an_answer", message=refusal.message, status=refusal.status)
+    if refusal.code == "reaction_unchanged":
+        return json_error("reaction_unchanged", message=refusal.message, status=refusal.status)
+    return json_error("invalid_reaction", message=refusal.message, status=refusal.status)
 
 
 def _default_mid_turn_mode() -> str:

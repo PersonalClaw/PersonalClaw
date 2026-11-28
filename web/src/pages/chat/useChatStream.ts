@@ -24,7 +24,7 @@ import type { RoutingSuggestion } from './RoutingChip'
 import type { TurnPaste } from './PasteChip'
 import type { TurnEnding } from '../../ui/turnEnding'
 import { ShownCards } from './shownCards'
-import { type ChatTurn, type Segment, type ApprovalSegment, type QuestionSegment, appendThinking, type SubagentCard, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, foldStepLine, noteOf, rowText, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, imageDeliveryOf, noticeSegment, fileSegmentOf } from './chatTypes'
+import { type ChatTurn, type Segment, type ApprovalSegment, type QuestionSegment, appendThinking, type SubagentCard, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, foldStepLine, noteOf, rowText, ranPromptOf, replyCutOf, type ReplyCut, pastesOf, shownText, servedModelOf, imageDeliveryOf, noticeSegment, fileSegmentOf, withAnswerStamp, withReactionRow } from './chatTypes'
 
 // ── The chat's stream: the open session as the gateway tells it ───────────────────────────────
 //
@@ -1029,7 +1029,8 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
           // reload does (`turnRuns`). Not once the next turn runs: the answer at the end is its.
           if (!streamingRef.current) {
             const read = hydrateTurns(d.messages || [])
-            setTurns((prev) => withRowRuns(prev, read))
+            // And the answer's row time, which a reaction to it names it by.
+            setTurns((prev) => withAnswerStamp(withRowRuns(prev, read), read))
           }
           const byTs = new Map<string, MemoryCitation[]>()
           let lastCites: MemoryCitation[] | null = null
@@ -1187,7 +1188,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
           endTextRun()
           shownCards.clear()  // the answer goes on below their bubble, as a new one
           setSteered((prev) => prev.filter((s) => s.id !== d.message_id))
-          setTurns((prev) => [...prev, { ...sentTurn, steered: true }])
+          setTurns((prev) => withReactionRow(prev, { ...sentTurn, steered: true }, d.reaction))
           markStreaming(true)
           break
         }
@@ -1196,7 +1197,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         dropTextRun()
         setFollowups([])  // a new turn is starting (queued drain) — clear stale chips
         setFollowupsNeed('')
-        setTurns((prev) => [...prev, sentTurn])
+        setTurns((prev) => withReactionRow(prev, sentTurn, d.reaction))
         // The gateway sends this only as it STARTS the turn, so the turn is running whatever
         // this page believed a moment ago. After a Stop the composer has already settled, and a
         // message queued behind the stopping turn starts next ("Session reset — processing next

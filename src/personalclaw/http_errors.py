@@ -368,6 +368,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The message holds a pasted block's marker where the pasted text belongs, so the agent "
         "would never see what was pasted. Send it with the pasted text in place of the marker."
     ),
+    # ── a reaction to an answer (dashboard/chat_reactions.py) ──
+    # 400: a send's `meta.reaction` is not `{to, pick}` with `pick` one of the five or null, or the
+    # send carries words of its own beside it (the gateway writes a reaction's words).
+    "invalid_reaction": (
+        "That reaction can't be sent: it names an answer and one of the five reactions."
+    ),
+    # 404 or 409: `to` names no row of the chat, or a row that is no turn's final answer, or the
+    # answer of a turn still running.
+    "reaction_not_an_answer": "A reaction goes on an agent's finished answer.",
+    # 409: the answer has that reaction already, or none to take back.
+    "reaction_unchanged": "That answer's reaction is already what was sent.",
     # ── chat plan mode (dashboard/chat_plan.py) ──
     "session_not_found": "No such chat session.",
     "plan_session_missing": "The session has no plan in progress.",

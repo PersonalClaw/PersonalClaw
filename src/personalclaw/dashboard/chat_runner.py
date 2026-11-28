@@ -46,6 +46,7 @@ from personalclaw.dashboard import (
     chat_intake,
     chat_phase,
     chat_questions,
+    chat_reactions,
     chat_refusals,
     headless_run,
     parked_chat_turns,
@@ -5275,6 +5276,7 @@ async def run_chat(
                 # What the queued messages came with besides their words (`chat_intake.CARRIED`):
                 # their files, knowledge items and artifacts, which the turn reads as its own.
                 queued_meta: dict[str, Any] = chat_intake.what_they_carry(consumed)
+                queued_meta.update(chat_reactions.carried_by(consumed))  # a reaction's record
                 # And which of the row's words their senders typed (`queued_words`).
                 if (_queued_own := queued_words(consumed)) is not None:
                     queued_meta[OWN_WORDS] = _queued_own
@@ -5317,6 +5319,8 @@ async def run_chat(
                             "ts": session.messages[-1].get("ts", ""),
                             "message_id": session.messages[-1]["meta"][chat_intake.MESSAGE_ID],
                             **({PASTES: _pasted} if _pasted else {}),
+                            # A reaction's line is drawn as its row is on a reload.
+                            **chat_reactions.carried_by(consumed),
                             # A widget's message says so live, as its row does on a reload.
                             **(
                                 {WIDGET_ACTION: True}
