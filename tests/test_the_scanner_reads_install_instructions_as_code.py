@@ -503,14 +503,16 @@ _LONG = [
 
 @pytest.mark.parametrize("unit", _LONG)
 def test_a_long_line_scans_in_under_a_second_on_both_surfaces(tmp_path, unit: str) -> None:
+    # The scan's own CPU time (``process_time``): a scan that grows faster than its line still
+    # takes past a second, and a busy machine's other work, which a wall clock counts, does not.
     line = (unit * (20_000 // len(unit) + 1))[:20_000]
-    start = time.perf_counter()
+    start = time.process_time()
     default_scanner.scan_text(line, surface="instructions")
-    assert time.perf_counter() - start < 1.0, "instructions"
+    assert time.process_time() - start < 1.0, "instructions"
     bundle = _app(tmp_path, {"scripts/setup.sh": line + "\n"})
-    start = time.perf_counter()
+    start = time.process_time()
     scan_dir(bundle)
-    assert time.perf_counter() - start < 1.0, "a bundled script"
+    assert time.process_time() - start < 1.0, "a bundled script"
 
 
 _TOO_DEEP = "this file couldn't be read safely: nested too deeply"
@@ -532,9 +534,9 @@ def test_a_bundled_file_nested_past_the_parser_is_refused_without_raising(tmp_pa
 
 def test_a_line_of_dd_words_scans_in_under_a_second() -> None:
     line = ("dd of= " * 15_000)[:100_000]
-    start = time.perf_counter()
+    start = time.process_time()
     default_scanner.scan_text(line, surface="script")
-    assert time.perf_counter() - start < 1.0
+    assert time.process_time() - start < 1.0
 
 
 # ── a line longer than the execution rules read at once ─────────────────────────────────────
