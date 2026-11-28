@@ -86,7 +86,9 @@ describe('a goal loop starts from a new thread\'s composer', () => {
   it('a started chat\'s + menu does not offer it: it is a thread already', async () => {
     const user = userEvent.setup()
     open(SESSION)
-    await waitFor(() => expect(h.chatSessionDetail).toHaveBeenCalled())
+    // The chat has loaded before its + menu opens: a menu opened while the load is still under way,
+    // as on a busy run, never offers a started chat's rows.
+    await screen.findByText('Hello again.')
     await user.click(await screen.findByRole('button', { name: 'Add to message' }))
     // The chat has started: the menu offers what a started chat's does.
     await screen.findByRole('button', { name: /Plan this first/ })
